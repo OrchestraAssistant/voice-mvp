@@ -142,6 +142,14 @@ crisp edge.
 
 Add **`?glow=1`** to the demo app's URL to force the rim on without a
 live mic session, which is how to look at it without an OpenAI key.
+A **square/rounded corner switch** sits at the bottom of the
+interpreter panel (and on the stress page) — temporary, and confined to
+`rimCornersDev.js` plus its two call sites so it's one file to delete.
+Rounding changes nothing about the falloff: the mask is untouched, so
+every contour including the inner fade is identical. It only clips away
+the outer arc — which is where the rim peaks (`1-(1-0.53)^2 = 0.78`, the
+same value the original's separable 2D blur gives at a corner), so
+rounded reads slightly cooler despite nothing having moved.
 
 **Verify it yourself** at **http://interpreter.hub.tailnet:5173/stress.html**
 — a deliberately hostile page that is *not* the demo app: the widget's

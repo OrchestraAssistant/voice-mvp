@@ -1,6 +1,7 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ListeningGlow } from "./voice/ListeningGlow.jsx";
+import { useRimCorners, setRimCorners } from "./voice/rimCornersDev.js"; // TEMPORARY
 
 /**
  * Entry point for stress.html -- the "host app we don't know" harness.
@@ -15,7 +16,9 @@ import { ListeningGlow } from "./voice/ListeningGlow.jsx";
  */
 function StressHarness() {
   const [active, setActive] = useState(true);
-  const [corners, setCorners] = useState("square");
+  // Shared with the interpreter panel's switch rather than local state, so
+  // there's one source of truth for the rim's shape. TEMPORARY.
+  const corners = useRimCorners();
 
   return (
     <>
@@ -27,7 +30,7 @@ function StressHarness() {
         <button
           id="toggle-corners"
           type="button"
-          onClick={() => setCorners((c) => (c === "square" ? "rounded" : "square"))}
+          onClick={() => setRimCorners(corners === "square" ? "rounded" : "square")}
         >
           Corners: {corners}
         </button>

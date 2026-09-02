@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useInterpreter } from "./VoiceProvider.jsx";
+import { useRimCorners, setRimCorners } from "./rimCornersDev.js"; // TEMPORARY
 
 const MODES = [
   { id: "continuous", label: "Continuous" },
@@ -33,6 +34,7 @@ export function InterpreterPanel() {
   } = useInterpreter();
   const [textInput, setTextInput] = useState("");
   const connected = status === "connected";
+  const rimCorners = useRimCorners(); // TEMPORARY
 
   const holdLabel = mode === "ptt" ? (holding ? "Listening..." : "Hold to talk") : holding ? "Muted" : "Hold to mute";
 
@@ -117,6 +119,23 @@ export function InterpreterPanel() {
         />
         <button type="submit">Send</button>
       </form>
+
+      {/* TEMPORARY -- rim shape comparison, see rimCornersDev.js. Reuses the
+          mode-selector styling so it needs no CSS of its own, and lives at
+          the bottom so it doesn't read as a second voice mode. */}
+      <span className="hold-hint">Rim corners (temporary)</span>
+      <div className="mode-selector">
+        {["square", "rounded"].map((shape) => (
+          <button
+            key={shape}
+            type="button"
+            className={rimCorners === shape ? "mode-active" : ""}
+            onClick={() => setRimCorners(shape)}
+          >
+            {shape === "square" ? "Square" : "Rounded"}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
