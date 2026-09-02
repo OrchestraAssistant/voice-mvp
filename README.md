@@ -146,7 +146,7 @@ live mic session, which is how to look at it without an OpenAI key.
 temporary, and confined to `rimTuningDev.js` plus its call sites so
 they're one file to delete once the numbers are settled. `width` scales
 the whole `FALLOFF` curve proportionally, so the decay keeps its shape
-at any size. `cornerRadius` is signed, ±300, and shapes the *inner*
+at any size. `cornerRadius` is signed, ±500, and shapes the *inner*
 corner where the glow turns to follow the next edge — the outer corner
 stays square either way.
 

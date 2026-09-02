@@ -128,7 +128,7 @@ export function InterpreterPanel() {
         <span className="hold-hint">Rim geometry (temporary)</span>
         {[
           { key: "width", label: "Width", min: 8, max: 300 },
-          { key: "corner", label: "Inner corner — bloom ‹ 0 › carve", min: -300, max: 300 },
+          { key: "corner", label: "Inner corner — bloom ‹ 0 › carve", min: -500, max: 500 },
         ].map(({ key, label, min, max }) => (
           <label key={key}>
             <span>
