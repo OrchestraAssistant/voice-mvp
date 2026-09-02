@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { VoiceProvider } from "../src/VoiceProvider.jsx";
 import { InterpreterBubble } from "../src/InterpreterBubble.jsx";
+import { ListeningGlow } from "../src/ListeningGlow.jsx";
 
 // The inline mount has no shadow root to inject into, so the stylesheet has
 // to reach the document the way a host app's `import "@yourco/voice/styles.css"`
@@ -65,9 +66,14 @@ document.addEventListener("keydown", (e) => {
   if (label) inWidget(`.interpreter-widget button[aria-label="${label}"]`)?.click();
 });
 
+// ?glow=1 mounts the listening rim alongside the panel. That is the only way
+// to reproduce anything about how our TWO overlays interact -- each is a
+// separate top-layer popover, and the interesting bugs are the ones that need
+// both of them raised at once.
 createRoot(document.getElementById("widget-mount")).render(
   <StrictMode>
     <VoiceProvider>
+      {params.has("glow") && <ListeningGlow active />}
       <InterpreterBubble mount={MOUNT} />
     </VoiceProvider>
   </StrictMode>,
@@ -84,6 +90,18 @@ createRoot(document.getElementById("widget-mount")).render(
 // unwrapped down to 188 as the width animated out, so the panel ballooned
 // before settling. `inner` holding steady while `outer` moves is what a
 // healthy transition looks like.
+// Top-layer churn counter. Two overlays that both re-raise themselves when
+// anything else enters the top layer will re-raise each other forever, and a
+// runaway shows up here as a number climbing by thousands rather than sitting
+// at a handful.
+if (params.has("trace")) {
+  let toggles = 0;
+  document.addEventListener("toggle", () => toggles++, true);
+  setInterval(() => {
+    document.getElementById("toggles").textContent = `toggle events: ${toggles}`;
+  }, 200);
+}
+
 if (params.has("trace")) {
   const out = document.getElementById("trace");
   const record = () => {

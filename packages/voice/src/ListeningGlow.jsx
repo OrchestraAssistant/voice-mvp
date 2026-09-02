@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { ScreenOverlay } from "./ScreenOverlay.jsx";
+import { OVERLAY_LAYER, ScreenOverlay } from "./ScreenOverlay.jsx";
 
 /**
  * The animated rainbow rim around the screen edge, signaling real listening
@@ -224,7 +224,7 @@ const GLOW_CSS = `
  */
 export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
   return (
-    <ScreenOverlay css={GLOW_CSS} active={active}>
+    <ScreenOverlay css={GLOW_CSS} active={active} layer={OVERLAY_LAYER.rim}>
       <AnimatePresence>
         {active && (
           <motion.div

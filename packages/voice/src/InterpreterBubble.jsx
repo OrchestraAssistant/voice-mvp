@@ -19,7 +19,7 @@ import widgetCss from "./styles.css?inline";
 
 import { cn } from "@/lib/utils";
 import { useInterpreter } from "./VoiceProvider.jsx";
-import { ScreenOverlay } from "./ScreenOverlay.jsx";
+import { OVERLAY_LAYER, ScreenOverlay } from "./ScreenOverlay.jsx";
 
 /**
  * Click-outside, hand-written rather than pulling in usehooks-ts for a
@@ -466,6 +466,7 @@ export function InterpreterBubble({ mount = "shadow" }) {
     <ScreenOverlay
       css={widgetCss}
       active={selected !== null}
+      layer={OVERLAY_LAYER.panel}
       onHost={(host, root) => setOverlay({ host, root })}
     >
       {widget}

@@ -75,6 +75,12 @@ moves toward it; `inner` moving too means the content is reflowing mid-
 transition and the panel will visibly overshoot, and `inner` reading as the
 *sum* of both panes means the outgoing one never left the flow.
 
+`?glow=1` mounts the listening rim alongside the panel, which is the only way
+to reproduce anything about how our *two* overlays interact — each is its own
+top-layer popover, and that pairing has its own failure mode (see the gotcha
+below). With `?trace=1` the page also counts `toggle` events: a handful is
+healthy, thousands means two overlays are re-raising each other.
+
 `?shadow=open` forces every shadow root open so the path that actually ships
 can be inspected — nothing else can see inside it, since a closed root has no
 `.shadowRoot` and defeats both selectors and devtools. Pair it with
@@ -136,6 +142,16 @@ root — a live A/B of the CSS-collision problem.
   you're rebuilding. `ps aux | grep vite` before debugging a "nothing
   changed" mystery.
 - **`rimTuningDev.js`** is temporary (rim geometry sliders in the flat panel).
+- **Two overlays in the top layer need an explicit order.** The top layer is a
+  plain stack — last to `showPopover()` wins — so each `ScreenOverlay`
+  re-raises itself when anything else enters it. With the rim and the panel
+  both up, each answered the other's raise with a raise of its own: ~1800
+  `toggle` events a second, the two swapping places every iteration, seen as
+  the panel flickering above and below the rim. `OVERLAY_LAYER` in
+  `ScreenOverlay.jsx` now declares the order, and an overlay only fights a
+  sibling that belongs *below* it. Anything the host opens still wins a raise,
+  unconditionally. Reproduce with
+  `bubble.html?mount=shadow&shadow=open&glow=1&trace=1`.
 - **A widget that renders but looks unstyled** is almost always one of the
   three cascade traps in DESIGN-CHOICES §3, not a React problem: theme tokens
   reaching `:root` where `--iv-*` isn't defined, our own rules sitting

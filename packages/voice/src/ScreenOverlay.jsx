@@ -107,9 +107,24 @@ function raise(host) {
   }
 }
 
-function mount(css) {
+/**
+ * Stacking order among OUR OWN overlays, which the top layer cannot work out
+ * for itself -- it is a plain stack, so the last one to call showPopover()
+ * wins regardless of what it is. Higher sits above.
+ */
+export const OVERLAY_LAYER = {
+  /** Ambient chrome. Full-viewport, pointer-events: none, purely decorative. */
+  rim: 0,
+  /** Interactive surface, and the one the user is actually looking at. */
+  panel: 10,
+};
+
+function mount(css, layer) {
   const host = document.createElement("div");
-  host.setAttribute("data-interpreter-overlay", "");
+  // The value is load-bearing, not just a marker: it is how a *sibling*
+  // overlay decides whether the thing that just entered the top layer is
+  // meant to be above it or below it. See onToggle.
+  host.setAttribute("data-interpreter-overlay", String(layer));
   host.setAttribute("aria-hidden", "true");
   host.setAttribute("popover", "manual"); // "manual" => no light-dismiss, no
   // backdrop darkening, and it never closes anything else the host has open.
@@ -167,13 +182,13 @@ function mount(css) {
  * the host page, so the root is still closed as far as anyone outside is
  * concerned.
  */
-export function ScreenOverlay({ children, css, active, onHost }) {
+export function ScreenOverlay({ children, css, active, onHost, layer = OVERLAY_LAYER.rim }) {
   const [mounted, setMounted] = useState(null);
   const onHostRef = useRef(onHost);
   onHostRef.current = onHost;
 
   useEffect(() => {
-    const instance = mount(css);
+    const instance = mount(css, layer);
     setMounted(instance);
     // The host is the only handle on this subtree that EVENTS give a caller:
     // the root is closed, so events from inside retarget to it and
@@ -187,7 +202,7 @@ export function ScreenOverlay({ children, css, active, onHost }) {
       onHostRef.current?.(null, null);
       instance.dispose();
     };
-  }, [css]);
+  }, [css, layer]);
 
   useEffect(() => {
     if (!mounted || !active) return;
@@ -210,6 +225,22 @@ export function ScreenOverlay({ children, css, active, onHost }) {
     //     changing somewhere, not on the host app's ordinary re-renders.
     const onToggle = (event) => {
       if (event.target === host || event.newState !== "open") return;
+
+      // Another overlay of OURS, rather than something the host opened.
+      // Raising unconditionally here is a runaway: our raise fires a toggle,
+      // which the other overlay answers with a raise of its own, which fires
+      // a toggle... Measured at ~1800 events/second, with the two of them
+      // swapping places every iteration -- which is what a user sees as the
+      // panel flickering above and below the rim.
+      //
+      // So only fight a sibling that is supposed to be BELOW us. The one
+      // above ignores the one below, the exchange terminates after a single
+      // raise, and the order it terminates in is the one OVERLAY_LAYER
+      // declares rather than whichever happened to open last.
+      const siblingLayer =
+        event.target instanceof Element ? event.target.getAttribute("data-interpreter-overlay") : null;
+      if (siblingLayer !== null && Number(siblingLayer) >= layer) return;
+
       raise(host);
     };
     document.addEventListener("toggle", onToggle, true);
@@ -223,7 +254,7 @@ export function ScreenOverlay({ children, css, active, onHost }) {
       document.removeEventListener("toggle", onToggle, true);
       dialogs.disconnect();
     };
-  }, [mounted, active]);
+  }, [mounted, active, layer]);
 
   return mounted ? createPortal(children, mounted.shadow) : null;
 }
