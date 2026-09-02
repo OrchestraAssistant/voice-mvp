@@ -20,7 +20,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
-    "stress": "vite --config vite.dev.config.js"
+    "stress": "vite --config vite.dev.config.js",
+    "test": "node --test test/*.test.mjs"
   },
   "peerDependencies": {
     "react": ">=18",
@@ -35,6 +36,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^5.1.4",
     "clsx": "^2.1.1",
+    "playwright": "^1.62.1",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.2"

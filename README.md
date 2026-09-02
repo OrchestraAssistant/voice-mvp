@@ -181,24 +181,65 @@ earlier modifications instead of reverting to the source structure.
 
 ## Testing
 
-A local Chromium is installed but missing system libs, and there's no root to
-fix that — so `npm`-side tooling can't drive a browser. The hub's browser can,
-against `https://interpreter.hub.tailnet:<port>/`, and that is the thing to
-reach for on anything visual. **Computed style beats a screenshot** whenever
-the question has a factual answer: the entire theme-token bug in
-DESIGN-CHOICES §3 was invisible in screenshots (a transparent panel on a white
-page looks like a white panel) and obvious the moment
-`background-color` read back `rgba(0, 0, 0, 0)`.
+`npm test` builds the package and runs both suites (16 tests, about a minute).
+
+```
+packages/voice/test/stylesheet.test.mjs   the compiled CSS, no browser
+packages/voice/test/widget.test.mjs       real layout, real shadow root
+```
+
+The browser suite is not decoration. Every bug it covers shipped, and every one
+of them looked correct in a screenshot: a transparent panel over a white page
+looks like a white panel, a 350ms overshoot is invisible in a still, and a
+stacking failure inside the shadow root behaves perfectly at `mount="inline"`.
+So the tests assert numbers, and they drive the mount that ships rather than
+the convenient one.
+
+It runs Playwright against a Vite dev server on an ephemeral port, so it never
+collides with `dev:stress`. Reaching into the widget asks for `.shadowRoot`
+deliberately, which works because the root is open; a plain `querySelector`
+does not descend into one.
+
+**Browser setup.** The bundled Chromium needs shared libraries and fonts this
+read-only image lacks. They live in a micromamba env, and `test/harness.mjs`
+puts them on `LD_LIBRARY_PATH` / `FONTCONFIG_PATH` before launching, so
+`npm test` needs no wrapper:
+
+```bash
+micromamba create -y -n browser -c conda-forge \
+  glib nss nspr atk at-spi2-atk at-spi2-core dbus expat libdrm libxcb \
+  libxkbcommon xorg-libx11 xorg-libxcomposite xorg-libxdamage xorg-libxext \
+  xorg-libxfixes xorg-libxrandr xorg-libxtst pango cairo alsa-lib libgbm \
+  libcups fontconfig font-ttf-dejavu-sans-mono fonts-conda-ecosystem
+```
+
+Set `CHROMIUM_ENV` if you put it somewhere else. The fonts are load-bearing:
+without them `ch` units compute to zero and anything sized in them collapses to
+a zero box, which reads exactly like a layout bug.
+
+**Changing these tests.** Each one is a bug that shipped, so check a change
+still fails for the right reason before trusting it. Reverting a fix should
+turn exactly one test red with a message naming the cause. All five have been
+checked that way:
+
+| revert | expected failure |
+|---|---|
+| `@theme inline reference` to `@theme` | `bg-background resolved to nothing; theme tokens are inert` |
+| our rules out of `@layer base` | `selected tab is transparent; our reset outranks our utilities` |
+| `AnimatePresence root` | `wrapper measured 398px against a tallest pane of 210px` |
+| the wrapper's pinned width | `measured wrapper changed width` |
+| a second `OverlayProvider` | `more than one overlay host` |
+
+Still true, and still what to reach for beyond the suite:
 
 - `npm run build:pkg && npm run build -w demo-app` catches every import/JSX
   error.
 - `curl` against the four endpoints above covers the whole server path.
 - `curl 'http://localhost:5174/@fs/<abs-path>/src/styles.css?direct'` returns
-  the *compiled* stylesheet. Read this before theorising about the cascade —
-  it is what actually shipped, layers and all.
-- **jsdom** is genuinely useful for DOM semantics — it settled the shadow-DOM
-  retargeting question (`composedPath()` truncates on a *closed* root, so the
-  click-outside check must compare against the overlay host). Reach for it
-  before theorising about DOM behaviour.
-- Taste — does it *look* right — is still a human call. Correctness mostly
-  isn't; check it.
+  the *compiled* stylesheet. Read this before theorising about the cascade.
+- The hub's browser drives `https://interpreter.hub.tailnet:<port>/` for
+  anything exploratory; `dev/bubble.html` has the switches for it.
+- **jsdom** settled the shadow-DOM retargeting question (`composedPath()`
+  truncates on a *closed* root). Reach for it before theorising about DOM
+  behaviour.
+- Taste is still a human call. Correctness mostly isn't; check it.
