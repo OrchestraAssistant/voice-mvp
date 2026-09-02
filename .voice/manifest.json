@@ -1,0 +1,149 @@
+{
+  "generatedAt": "static-analysis",
+  "routes": [
+    {
+      "path": "/",
+      "component": "Dashboard"
+    },
+    {
+      "path": "/tasks/new",
+      "component": "NewTask"
+    },
+    {
+      "path": "/tasks/:id",
+      "component": "TaskDetail"
+    },
+    {
+      "path": "/settings",
+      "component": "Settings"
+    }
+  ],
+  "queries": [
+    {
+      "name": "tasks",
+      "description": "List tasks, optionally filtered by a search string",
+      "method": "GET",
+      "endpoint": "/api/tasks",
+      "params": [
+        {
+          "name": "search",
+          "type": "string",
+          "required": false,
+          "source": "query-string"
+        }
+      ]
+    },
+    {
+      "name": "task",
+      "description": "Auto-detected read query from useTask",
+      "method": "GET",
+      "endpoint": "/api/tasks/{id}",
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "source": "url"
+        }
+      ]
+    },
+    {
+      "name": "settings",
+      "description": "Auto-detected read query from useSettings",
+      "method": "GET",
+      "endpoint": "/api/settings",
+      "params": []
+    }
+  ],
+  "actions": [
+    {
+      "name": "createTask",
+      "description": "Auto-detected write action from useCreateTask",
+      "method": "POST",
+      "endpoint": "/api/tasks",
+      "requiresConfirmation": false,
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "dueDate",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "notes",
+          "required": false,
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "updateTask",
+      "description": "Update fields on an existing task, such as marking it done/not done or changing its title",
+      "method": "PUT",
+      "endpoint": "/api/tasks/{id}",
+      "requiresConfirmation": false,
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "source": "url"
+        }
+      ],
+      "bodyFields": [
+        { "name": "done", "required": false, "type": "boolean" },
+        { "name": "title", "required": false, "type": "string" }
+      ]
+    },
+    {
+      "name": "deleteTask",
+      "description": "Auto-detected write action from useDeleteTask",
+      "method": "DELETE",
+      "endpoint": "/api/tasks/{id}",
+      "requiresConfirmation": true,
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "source": "url"
+        }
+      ],
+      "bodyFields": []
+    },
+    {
+      "name": "updateSettings",
+      "description": "Auto-detected write action from useUpdateSettings",
+      "method": "PUT",
+      "endpoint": "/api/settings",
+      "requiresConfirmation": false,
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "email",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "theme",
+          "required": true,
+          "type": "enum",
+          "enumValues": [
+            "light",
+            "dark"
+          ]
+        }
+      ]
+    }
+  ]
+}

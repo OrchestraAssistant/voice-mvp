@@ -1,0 +1,286 @@
+:root {
+  --text: #333;
+  --bg: #fff;
+  --border: #e2e2e2;
+  --accent: #5b3bff;
+  --danger: #d3392e;
+  font: 15px/1.5 system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 100vh;
+}
+
+/* "base" rules (unused now, kept commented for reference -- matches
+   ListeningGlow.base.jsx, the literal 1:1 port of the pasted component).
+   Confirmed to block real content: see that file's header comment.
+.listening-glow {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  pointer-events: none;
+}
+.listening-glow::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--bg);
+  filter: blur(24px);
+}
+*/
+
+/* The screen-edge listening indicator's CSS deliberately does NOT live
+   here any more. A host app that installs the widget won't have this
+   stylesheet, so the rules ship inside ListeningGlow.jsx and are injected
+   into the overlay's shadow root -- see ScreenOverlay.jsx. */
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.content {
+  padding: 24px 32px;
+}
+
+.page {
+  max-width: 560px;
+}
+
+.page h1 {
+  font-size: 22px;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+form label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+form input,
+form select,
+form textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+form button {
+  margin-top: 14px;
+  align-self: flex-start;
+}
+
+button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #fafafa;
+  cursor: pointer;
+  font: inherit;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.task-list {
+  list-style: none;
+  padding: 0;
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.due-date {
+  margin-left: auto;
+  color: #888;
+  font-size: 13px;
+}
+
+/* --- Interpreter panel (usable standalone, or inside the bubble below) --- */
+
+.interpreter-panel {
+  width: 320px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- Interpreter bubble: floating toggle + the panel above it --- */
+
+.interpreter-bubble-root {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  z-index: 1000;
+}
+
+.interpreter-bubble-toggle {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.interpreter-bubble-toggle.status-connected {
+  background: var(--danger);
+}
+
+.interpreter-bubble-toggle.status-connecting {
+  background: #d3a52e;
+}
+
+.interpreter-bubble-toggle.status-error {
+  background: #888;
+}
+
+.mode-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-selector button {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.mode-selector .mode-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.mic-button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  align-self: flex-start;
+}
+
+.mic-connected {
+  background: var(--danger);
+}
+
+.hold-button {
+  width: 100%;
+  padding: 14px;
+  font-weight: 600;
+  background: #f0eefc;
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  user-select: none;
+  touch-action: none;
+}
+
+.hold-button.holding {
+  background: var(--accent);
+  color: #fff;
+}
+
+.hold-hint {
+  font-size: 11px;
+  color: #888;
+  text-align: center;
+}
+
+.voice-status {
+  font-size: 12px;
+  color: #888;
+}
+
+.confirm-banner {
+  background: #fff8e1;
+  border: 1px solid #f0d580;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.confirm-banner button {
+  margin-right: 6px;
+  margin-top: 6px;
+}
+
+.transcript {
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.turn {
+  margin: 4px 0;
+}
+
+.turn-user {
+  color: #333;
+}
+
+.turn-assistant {
+  color: var(--accent);
+}
+
+.interpreter-panel form {
+  flex-direction: row;
+  margin-top: 0;
+}
+
+.interpreter-panel form input {
+  flex: 1;
+}
