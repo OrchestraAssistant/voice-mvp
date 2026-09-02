@@ -9,7 +9,10 @@
 // image: mic starts live and VAD keeps driving turns, caller mutes only
 // while held, e.g. to say something off to the side without being heard).
 export async function connectRealtimeSession({ onToolCall, onStatus, onTranscript, initialMode = "continuous", relayUrl = "" }) {
-  onStatus?.("requesting-session");
+  // Transport states only. Whether the user is actually being listened to is
+  // a separate question -- see isListening() -- because a connection can be
+  // up with no microphone attached to it.
+  onStatus?.("connecting");
   const sessionRes = await fetch(`${relayUrl}/voice/session`, { method: "POST" });
   const sessionData = await sessionRes.json();
   if (!sessionRes.ok) {
@@ -33,7 +36,7 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
   const dc = pc.createDataChannel("oai-events");
 
   dc.addEventListener("open", () => {
-    onStatus?.("connected");
+    onStatus?.("ready");
     if (initialMode === "ptt") {
       // Session is minted with server_vad by default; ptt needs manual
       // turn detection so button-release (not silence) decides the turn.
@@ -42,7 +45,7 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
       );
     }
   });
-  dc.addEventListener("close", () => onStatus?.("disconnected"));
+  dc.addEventListener("close", () => onStatus?.("closed"));
 
   dc.addEventListener("message", async (event) => {
     let msg;
@@ -103,7 +106,6 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  onStatus?.("connecting");
   const sdpRes = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
     headers: {
@@ -123,7 +125,7 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
       dc.close();
       pc.getSenders().forEach((s) => s.track?.stop());
       pc.close();
-      onStatus?.("disconnected");
+      onStatus?.("closed");
     },
     sendTextTurn(text) {
       dc.send(

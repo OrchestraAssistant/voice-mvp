@@ -41,7 +41,8 @@ async function apiFetch(method, url, body) {
  *   onPendingAction(action | null)  -- fires when a destructive action is
  *     staged for confirmation, and again with null when it's resolved.
  *   onModeChange(mode)              -- fires on continuous/ptt/ptnt switch.
- *   onStatusChange(status)          -- fires on connection status change.
+ *   onTransportChange(transport)    -- fires on connection state change. Not the
+ *     same as "the mic is live"; see isListening().
  *
  * Two host integration points, both optional, both injected rather than
  * imported. The widget deliberately does not depend on react-router or
@@ -68,10 +69,19 @@ export function VoiceProvider({
   onTranscript,
   onPendingAction,
   onModeChange,
-  onStatusChange,
+  onTransportChange,
 }) {
   const [manifest, setManifest] = useState(null);
-  const [status, setStatus] = useState("idle"); // idle | connecting | connected | disconnected | error
+  // TRANSPORT only: is the realtime connection up. Deliberately says nothing
+  // about whether a microphone is attached to it, because those come apart --
+  // a session can be established and held with no mic on it at all. Conflating
+  // the two is what made `status === "connected"` mean "listening", which is
+  // wrong the moment a connection exists before the user has asked to talk.
+  const [transport, setTransport] = useState("idle"); // idle | connecting | ready | error
+  // Whether a microphone is attached to the session. Combined with mode and
+  // holding by isListening(), which is what should drive any "we can hear you"
+  // affordance.
+  const [micAttached, setMicAttached] = useState(false);
   const [transcript, setTranscript] = useState([]);
   const [pendingAction, setPendingActionState] = useState(null); // { name, description, args }
   const [error, setError] = useState(null);
@@ -96,7 +106,7 @@ export function VoiceProvider({
   // Callback props are read through refs so their identity churning on
   // every parent render never forces us to re-create executeTool/effects.
   const callbacksRef = useRef({});
-  callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onStatusChange, onAfterAction };
+  callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onTransportChange, onAfterAction };
 
   const setPendingAction = (value) => {
     pendingRef.current = value ? { action: value.action, args: value.args } : null;
@@ -191,7 +201,7 @@ export function VoiceProvider({
 
   const start = async () => {
     setError(null);
-    setStatus("connecting");
+    setTransport("connecting");
     try {
       const session = await connectRealtimeSession({
         onToolCall: async (name, args) => {
@@ -200,8 +210,10 @@ export function VoiceProvider({
           return result;
         },
         onStatus: (s) => {
-          setStatus(s);
-          callbacksRef.current.onStatusChange?.(s);
+          const next = s === "closed" ? "idle" : s;
+          setTransport(next);
+          if (next === "idle") setMicAttached(false);
+          callbacksRef.current.onTransportChange?.(next);
         },
         onTranscript: (turn) => {
           setTranscript((t) => [...t, turn]);
@@ -211,16 +223,21 @@ export function VoiceProvider({
         relayUrl,
       });
       sessionRef.current = session;
+      // Today the mic is acquired as part of connecting, so this is true as soon
+      // as the session exists. It is tracked separately so that stops being an
+      // assumption the rest of the widget is built on.
+      setMicAttached(true);
     } catch (err) {
       setError(String(err.message || err));
-      setStatus("error");
+      setTransport("error");
     }
   };
 
   const stop = () => {
     sessionRef.current?.stop();
     sessionRef.current = null;
-    setStatus("idle");
+    setTransport("idle");
+    setMicAttached(false);
     setHolding(false);
   };
 
@@ -313,7 +330,8 @@ export function VoiceProvider({
   return (
     <InterpreterContext.Provider
       value={{
-        status,
+        transport,
+        micAttached,
         transcript,
         pendingAction,
         error,

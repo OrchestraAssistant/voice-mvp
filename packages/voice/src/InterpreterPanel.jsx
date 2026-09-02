@@ -17,7 +17,8 @@ const MODES = [
  */
 export function InterpreterPanel() {
   const {
-    status,
+    transport,
+    micAttached,
     transcript,
     pendingAction,
     error,
@@ -33,7 +34,7 @@ export function InterpreterPanel() {
     holdEnd,
   } = useInterpreter();
   const [textInput, setTextInput] = useState("");
-  const connected = status === "connected";
+  const live = transport === "ready" && micAttached;
   const rim = useRimTuning(); // TEMPORARY
 
   const holdLabel = mode === "ptt" ? (holding ? "Listening..." : "Hold to talk") : holding ? "Muted" : "Hold to mute";
@@ -55,13 +56,13 @@ export function InterpreterPanel() {
 
       <button
         id="voice-mic-button"
-        className={`mic-button mic-${status}`}
-        onClick={status === "connected" || status === "connecting" ? stop : start}
+        className={`mic-button mic-${transport}`}
+        onClick={live || transport === "connecting" ? stop : start}
       >
-        {status === "connected" ? "Stop" : status === "connecting" ? "Connecting..." : "Talk"}
+        {live ? "Stop" : transport === "connecting" ? "Connecting..." : "Talk"}
       </button>
 
-      {connected && mode !== "continuous" && (
+      {live && mode !== "continuous" && (
         <button
           id="voice-hold-button"
           type="button"
@@ -81,9 +82,9 @@ export function InterpreterPanel() {
           {holdLabel}
         </button>
       )}
-      {connected && mode !== "continuous" && <span className="hold-hint">or hold Ctrl+Space</span>}
+      {live && mode !== "continuous" && <span className="hold-hint">or hold Ctrl+Space</span>}
 
-      <span className="voice-status">{status}</span>
+      <span className="voice-status">{live ? transport : `${transport} (mic off)`}</span>
       {error && <p className="error">{error}</p>}
 
       {pendingAction && (

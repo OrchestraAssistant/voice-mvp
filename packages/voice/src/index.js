@@ -9,6 +9,14 @@
 //   <InterpreterBubble/> -- the default drop-in: floating bubble that
 //                          expands into the panel.
 //
+// Connection state and listening state are separate throughout:
+//   transport    -- "idle" | "connecting" | "ready" | "error". Is the realtime
+//                   connection up. Says nothing about the microphone.
+//   micAttached  -- is a microphone actually on that session.
+//   isListening({ transport, micAttached, mode, holding })
+//                -- the only thing that should drive a "we can hear you"
+//                   affordance. A connection can be up with no mic on it.
+//
 // <VoiceProvider> is required around all of them: besides the session, it
 // mounts the single overlay every piece of chrome draws into. <ListeningGlow>
 // needs no position of its own -- it renders into that overlay, outside the
@@ -21,4 +29,5 @@ import "./styles.css";
 export { VoiceProvider, useInterpreter } from "./VoiceProvider.jsx";
 export { InterpreterBubble } from "./InterpreterBubble.jsx";
 export { InterpreterPanel } from "./InterpreterPanel.jsx";
-export { ListeningGlow, isListening } from "./ListeningGlow.jsx";
+export { ListeningGlow } from "./ListeningGlow.jsx";
+export { isListening } from "./listening.js";

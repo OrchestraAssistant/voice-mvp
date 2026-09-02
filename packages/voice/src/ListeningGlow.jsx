@@ -255,15 +255,3 @@ export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
     </OverlayLayer>
   );
 }
-
-/**
- * Derives "is the mic actually capturing audio right now" from mode +
- * connection + hold state. Not the same thing as `status === "connected"`:
- * ptt only listens while held, ptnt listens except while held.
- */
-export function isListening({ status, mode, holding }) {
-  if (status !== "connected") return false;
-  if (mode === "ptt") return holding;
-  if (mode === "ptnt") return !holding;
-  return true; // continuous
-}

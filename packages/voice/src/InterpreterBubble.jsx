@@ -155,20 +155,23 @@ function ExpandedTabs({ tabs, className, selected, setSelected, setDirection }) 
   );
 }
 
-/** Live/idle indicator, borrowed from the skiper list rows. */
-function StatusDot({ status }) {
-  const color =
-    status === "connected"
-      ? "bg-emerald-500"
-      : status === "connecting"
-        ? "bg-amber-500"
-        : status === "error"
-          ? "bg-red-500"
-          : "bg-muted-foreground";
+/**
+ * Live/idle indicator, borrowed from the skiper list rows. It reports the
+ * MICROPHONE, not the connection: the ping is the widget saying "you are being
+ * heard", so a warm connection with no mic on it has no business animating it.
+ */
+function StatusDot({ transport, live }) {
+  const color = live
+    ? "bg-emerald-500"
+    : transport === "connecting"
+      ? "bg-amber-500"
+      : transport === "error"
+        ? "bg-red-500"
+        : "bg-muted-foreground";
 
   return (
     <span className={cn("size-2 rounded-2xl", color)}>
-      {status === "connected" && <span className={cn("block size-2 animate-ping rounded-2xl", color)} />}
+      {live && <span className={cn("block size-2 animate-ping rounded-2xl", color)} />}
     </span>
   );
 }
@@ -176,7 +179,8 @@ function StatusDot({ status }) {
 /** Talk tab: connect/disconnect, push-to-talk, transcript, typed commands. */
 function TalkTabContent() {
   const {
-    status,
+    transport,
+    micAttached,
     transcript,
     pendingAction,
     error,
@@ -191,8 +195,8 @@ function TalkTabContent() {
     holdEnd,
   } = useInterpreter();
   const [textInput, setTextInput] = useState("");
-  const connected = status === "connected";
-  const busy = connected || status === "connecting";
+  const live = transport === "ready" && micAttached;
+  const busy = live || transport === "connecting";
 
   const holdLabel = mode === "ptt" ? (holding ? "Listening…" : "Hold to talk") : holding ? "Muted" : "Hold to mute";
 
@@ -200,16 +204,16 @@ function TalkTabContent() {
     <div className="mb-2 flex flex-col gap-0.5">
       <button type="button" onClick={busy ? stop : start} className={ROW}>
         <span className="flex items-center gap-2">
-          {connected ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-          {connected ? "Stop listening" : status === "connecting" ? "Connecting…" : "Start listening"}
+          {live ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+          {live ? "Stop listening" : transport === "connecting" ? "Connecting…" : "Start listening"}
         </span>
         <span className="text-muted-foreground flex items-center gap-3 text-xs">
-          {status}
-          <StatusDot status={status} />
+          {live ? "live" : transport}
+          <StatusDot transport={transport} live={live} />
         </span>
       </button>
 
-      {connected && mode !== "continuous" && (
+      {live && mode !== "continuous" && (
         <button
           type="button"
           className={cn(ROW, "touch-none select-none", holding && "bg-foreground/4")}

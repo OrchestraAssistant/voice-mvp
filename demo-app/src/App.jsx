@@ -21,8 +21,8 @@ const FORCE_GLOW = params.has("glow");
 const MOUNT = params.get("mount") === "inline" ? "inline" : "shadow";
 
 export default function App() {
-  const { status, mode, holding } = useInterpreter();
-  const listening = FORCE_GLOW || isListening({ status, mode, holding });
+  const { transport, micAttached, mode, holding } = useInterpreter();
+  const listening = FORCE_GLOW || isListening({ transport, micAttached, mode, holding });
 
   return (
     <div className="app">
