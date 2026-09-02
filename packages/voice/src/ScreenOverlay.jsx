@@ -283,13 +283,22 @@ export function OverlayProvider({ children }) {
  * root -- each piece of chrome carries its own styles rather than the provider
  * knowing about all of them.
  *
+ * `enabled: false` makes the whole thing inert: no claim, no stylesheet, and
+ * `{ container: null, root: null }`. That is for a component rendering into
+ * the host's tree instead of the overlay, which must not vote on the top
+ * layer, and must not be handed a `root` -- see below for why that one
+ * matters.
+ *
  * Returns `{ container, root }`. `container` is the portal target. `root` is
- * the shadow root, which callers need because a shadow root is its own style
- * scope: anything injecting a stylesheet at runtime must be told to put it
- * here rather than in `document.head`, where it would silently not apply.
- * framer-motion's AnimatePresence takes it as `root` for exactly that reason.
+ * the shadow root, and it is deliberately null when disabled rather than
+ * "the root, in case you want it". A shadow root is its own style scope, so
+ * anything injecting a stylesheet at runtime has to be told which tree its
+ * elements are actually in: framer-motion's AnimatePresence takes exactly
+ * this as its `root`, and pointing it at a tree the elements are NOT in fails
+ * silently, the same way `document.head` does for elements that are. Tying
+ * `root` to `container` means a caller cannot hold one without the other.
  */
-export function useOverlayLayer(name, { active = false, css } = {}) {
+export function useOverlayLayer(name, { active = false, css, enabled = true } = {}) {
   const context = useContext(OverlayContext);
   if (!context) {
     throw new Error("Widget chrome must be rendered inside <VoiceProvider>, which mounts the overlay.");
@@ -297,20 +306,22 @@ export function useOverlayLayer(name, { active = false, css } = {}) {
   const { instance, setClaim } = context;
 
   useEffect(() => {
+    if (!enabled) return;
     setClaim(name, active);
     return () => setClaim(name, false);
-  }, [name, active, setClaim]);
+  }, [name, active, enabled, setClaim]);
 
   useEffect(() => {
-    if (!instance || !css) return;
+    if (!enabled || !instance || !css) return;
     const style = document.createElement("style");
     style.textContent = css;
     // Ahead of the layer containers, so author order inside the root is
     // stylesheets first and content after.
     instance.shadow.prepend(style);
     return () => style.remove();
-  }, [instance, css]);
+  }, [enabled, instance, css]);
 
+  if (!enabled) return { container: null, root: null };
   return {
     container: instance?.layers[name] ?? null,
     root: instance?.shadow ?? null,

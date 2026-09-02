@@ -362,10 +362,22 @@ export function InterpreterBubble({ mount = "shadow" }) {
   const containerRef = useRef(null);
   useOnClickOutside(containerRef, () => setSelected(null));
 
+  // "inline" renders into the host's own tree, where its stylesheet reaches
+  // us -- kept as a switch so the difference stays observable rather than
+  // arguable. "shadow" is the real default, and the only one that uses the
+  // overlay: inline must not claim a layer (it would have an empty overlay
+  // fighting host modals for the top layer on behalf of nothing), must not
+  // inject the stylesheet into a root it never renders into, and above all
+  // must not be handed that root -- popLayout would then style a tree its
+  // panes are not in, which is the same silent failure in the other
+  // direction.
+  const inline = mount === "inline";
+
   // `active` is this layer's vote on holding the top of the top layer: an
   // idle pill shouldn't displace a host's open modal, an expanded panel
   // should sit above one.
   const { container, root } = useOverlayLayer("panel", {
+    enabled: !inline,
     active: selected !== null,
     css: widgetCss,
   });
@@ -460,10 +472,7 @@ export function InterpreterBubble({ mount = "shadow" }) {
     </div>
   );
 
-  // "inline" renders into the host's own tree, where its stylesheet reaches
-  // us -- kept as a switch so the difference can be observed rather than
-  // argued about. "shadow" is the real default.
-  if (mount === "inline") return widget;
+  if (inline) return widget;
 
   return container ? createPortal(widget, container) : null;
 }

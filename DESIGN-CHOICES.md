@@ -101,6 +101,11 @@ What closed cost was larger:
   The fix is one prop — `AnimatePresence` takes `root?: HTMLElement |
   ShadowRoot` and appends there instead (`const parent = root ?? document.head`
   in its `PopChild`) — but finding it meant reading framer-motion's source.
+  Note that it points *both* ways: handing that same `root` to the panel while
+  it was mounted `inline` reproduced the identical bug in the other direction,
+  styling a tree its panes were not in. `useOverlayLayer` therefore returns
+  `root` and `container` together or neither, so no caller can hold a root
+  that doesn't match where it renders.
   **The general lesson is the one to keep:** a fix verified only at
   `mount="inline"` is not verified. Anything that injects styles, measures
   against `document`, or looks up an element by id needs checking in the
