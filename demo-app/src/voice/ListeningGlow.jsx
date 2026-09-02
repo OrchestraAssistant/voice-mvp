@@ -116,14 +116,48 @@ function cornerHole(x, y) {
   return (
     `radial-gradient(circle 100vmax at ${x} ${y}, ` +
     "rgba(0, 0, 0, 0) 0px, " +
-    "rgba(0, 0, 0, 0.5) calc(var(--rim-corner) * 0.55), " +
-    "rgba(0, 0, 0, 1) var(--rim-corner))"
+    "rgba(0, 0, 0, 0.5) calc(var(--rim-carve) * 0.55), " +
+    "rgba(0, 0, 0, 1) var(--rim-carve))"
   );
+}
+
+/**
+ * The other direction: a bloom centred on the *screen* corner, unioned in
+ * with `add`, so the rim reaches further into the page there instead of
+ * being cut back.
+ *
+ * Same FALLOFF curve as the edges, in radial form, scaled to `--rim-bulge`.
+ * Scaled to the bulge alone and not to `width + bulge`, so that a bulge of 0
+ * collapses every stop onto the centre and the last colour -- transparent --
+ * takes the whole plane, making the layer a no-op that `add` unions in for
+ * free. Anchoring it at `width + bulge` instead would leave a quarter-disc
+ * of glow sitting at each corner at the default, which is exactly the thing
+ * a signed control has to avoid: 0 must mean *untouched*.
+ *
+ * The consequence to know about: the square corner already reaches
+ * width * sqrt(2) along the diagonal, so a bulge only starts changing the
+ * *shape* once it passes that (~113px at the default width). Below it the
+ * bloom sits inside the existing band and just fills the corner in.
+ */
+function cornerBloom(x, y) {
+  const stops = FALLOFF.map(
+    ([px, alpha]) =>
+      `rgba(0, 0, 0, ${alpha}) ${px === 0 ? "0px" : `calc(var(--rim-bulge) * ${px / REFERENCE_WIDTH})`}`,
+  );
+  return `radial-gradient(circle 100vmax at ${x} ${y}, ${stops.join(", ")})`;
 }
 
 const NEAR = "var(--rim-width)";
 const FAR = "calc(100% - var(--rim-width))";
+const CORNERS = [
+  ["0px", "0px"],
+  ["100%", "0px"],
+  ["0px", "100%"],
+  ["100%", "100%"],
+];
+
 const HOLES = [cornerHole(NEAR, NEAR), cornerHole(FAR, NEAR), cornerHole(NEAR, FAR), cornerHole(FAR, FAR)];
+const BLOOMS = CORNERS.map(([x, y]) => cornerBloom(x, y));
 
 /* Scoped inside the overlay's shadow root, so these class names are ours
    alone and can't collide with the host app's.
@@ -135,12 +169,18 @@ const HOLES = [cornerHole(NEAR, NEAR), cornerHole(FAR, NEAR), cornerHole(NEAR, F
    covered). Corners come out brighter than the edges in both, by the same
    amount, without clipping.
 
-   Layers composite bottom-up while the list reads top-first, so the two edge
-   masks (last) union into the square-cornered rim and the four corner holes
-   (above them) each multiply into it. `-webkit-mask-composite` is a
-   different keyword set and is deliberately not emitted: on an engine too
-   old for the standard property every layer just unions, which loses the
-   corner rounding and keeps everything else. */
+   Layers composite bottom-up while the list reads top-first: the two edge
+   masks (last) union into the square-cornered rim, the four blooms union
+   into it, and the four holes then multiply. Only one of blooms/holes is
+   ever live -- they're the two signs of one control, and the other side is
+   sitting at its no-op -- so their relative order doesn't matter.
+
+   `-webkit-mask-composite` is a different keyword set and is deliberately
+   not emitted: on an engine too old for the standard property every layer
+   just unions, which loses the corner shaping and keeps everything else. */
+const MASK_LAYERS = [...HOLES, ...BLOOMS, edgeMask("right"), edgeMask("bottom")].join(", ");
+const MASK_COMPOSITE = "intersect, intersect, intersect, intersect, add, add, add, add, add, add";
+
 const GLOW_CSS = `
   .frame {
     position: absolute;
@@ -148,9 +188,9 @@ const GLOW_CSS = `
     pointer-events: none;
     overflow: hidden;
 
-    -webkit-mask-image: ${HOLES.join(", ")}, ${edgeMask("right")}, ${edgeMask("bottom")};
-    mask-image: ${HOLES.join(", ")}, ${edgeMask("right")}, ${edgeMask("bottom")};
-    mask-composite: intersect, intersect, intersect, intersect, add, add;
+    -webkit-mask-image: ${MASK_LAYERS};
+    mask-image: ${MASK_LAYERS};
+    mask-composite: ${MASK_COMPOSITE};
   }
 
   /* Viewport-sized, exactly like the original's \`absolute size-full\`. The
@@ -170,10 +210,17 @@ const GLOW_CSS = `
  *   `width` -- how far the rim reaches inward before it's fully gone. Scales
  *      the whole FALLOFF curve proportionally, so the shape of the decay is
  *      the same at any width; 80 is the reference's Gaussian extent.
- *   `cornerRadius` -- how much the *inner* corner is rounded off. 0 leaves
- *      the square inner corner the two edge masks produce naturally, which
- *      is the reference's own shape. Note this is the inner boundary only:
- *      the outer corner stays square regardless, hard against the screen.
+ *   `cornerRadius` -- signed shaping of the *inner* corner, where the glow
+ *      turns to follow the next edge. 0 leaves the square corner the two
+ *      edge masks produce naturally, which is the reference's own shape.
+ *      Positive cuts that corner back towards the screen corner, so the rim
+ *      thins there. Negative blooms it the other way, reaching further into
+ *      the page. Either way the *outer* corner stays square, hard against
+ *      the screen.
+ *
+ * The sign is split here into two one-sided lengths, because a mask layer
+ * has no notion of a negative radius: each side has its own family of
+ * layers, and the inactive one sits at 0, where it's a no-op.
  */
 export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
   return (
@@ -182,7 +229,11 @@ export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
         {active && (
           <motion.div
             className="frame"
-            style={{ "--rim-width": `${width}px`, "--rim-corner": `${cornerRadius}px` }}
+            style={{
+              "--rim-width": `${width}px`,
+              "--rim-carve": `${Math.max(0, cornerRadius)}px`,
+              "--rim-bulge": `${Math.max(0, -cornerRadius)}px`,
+            }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

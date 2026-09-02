@@ -146,14 +146,28 @@ live mic session, which is how to look at it without an OpenAI key.
 temporary, and confined to `rimTuningDev.js` plus its call sites so
 they're one file to delete once the numbers are settled. `width` scales
 the whole `FALLOFF` curve proportionally, so the decay keeps its shape
-at any size. `cornerRadius` rounds off the *inner* corner: the two edge
-masks union into a square one, and four `mask-composite: intersect`
-layers punch a soft hole where they meet, at `(width, width)` in from
-each screen corner. At 0 those layers multiply through as a no-op, so
-the default is exactly the reference's own square corner. Both ride on
-CSS custom properties rather than the stylesheet text, since
-`ScreenOverlay` keys its mount effect on that string and would rebuild
-the whole overlay on every frame of a drag.
+at any size. `cornerRadius` is signed, ±300, and shapes the *inner*
+corner where the glow turns to follow the next edge — the outer corner
+stays square either way.
+
+The two edge masks union into a square inner corner, and each sign gets
+its own family of layers, since a mask layer has no notion of a negative
+radius. **Positive** punches a soft hole with `mask-composite: intersect`
+where the two edges meet, at `(width, width)` in from each screen
+corner, cutting the corner back. **Negative** unions in a bloom centred
+on the screen corner itself, reaching further into the page. Both
+collapse to a no-op at 0, so the default is exactly the reference's own
+square corner — verified rather than assumed, since "0 means untouched"
+is the whole contract of a signed control.
+
+One consequence worth knowing: a square corner already reaches
+`width × √2` along the diagonal, so the bloom only starts changing the
+corner's *shape* past about 113px at the default width. Below that it
+sits inside the existing band and just fills the corner in.
+
+All of it rides on CSS custom properties rather than the stylesheet
+text, since `ScreenOverlay` keys its mount effect on that string and
+would rebuild the whole overlay on every frame of a drag.
 
 Watch out for `mask-composite: subtract` here — it's source-OUT
 (*source minus destination*), not destination minus source. Compositing
