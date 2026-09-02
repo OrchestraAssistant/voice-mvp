@@ -142,14 +142,23 @@ crisp edge.
 
 Add **`?glow=1`** to the demo app's URL to force the rim on without a
 live mic session, which is how to look at it without an OpenAI key.
-A **square/rounded corner switch** sits at the bottom of the
-interpreter panel (and on the stress page) — temporary, and confined to
-`rimCornersDev.js` plus its two call sites so it's one file to delete.
-Rounding changes nothing about the falloff: the mask is untouched, so
-every contour including the inner fade is identical. It only clips away
-the outer arc — which is where the rim peaks (`1-(1-0.53)^2 = 0.78`, the
-same value the original's separable 2D blur gives at a corner), so
-rounded reads slightly cooler despite nothing having moved.
+**Rim geometry sliders** sit at the bottom of the interpreter panel —
+temporary, and confined to `rimTuningDev.js` plus its call sites so
+they're one file to delete once the numbers are settled. `width` scales
+the whole `FALLOFF` curve proportionally, so the decay keeps its shape
+at any size. `cornerRadius` rounds off the *inner* corner: the two edge
+masks union into a square one, and four `mask-composite: intersect`
+layers punch a soft hole where they meet, at `(width, width)` in from
+each screen corner. At 0 those layers multiply through as a no-op, so
+the default is exactly the reference's own square corner. Both ride on
+CSS custom properties rather than the stylesheet text, since
+`ScreenOverlay` keys its mount effect on that string and would rebuild
+the whole overlay on every frame of a drag.
+
+Watch out for `mask-composite: subtract` here — it's source-OUT
+(*source minus destination*), not destination minus source. Compositing
+a disc that way replaces the rim with "disc outside rim", which at
+radius 0 erases the rim from the screen entirely.
 
 **Verify it yourself** at **http://interpreter.hub.tailnet:5173/stress.html**
 — a deliberately hostile page that is *not* the demo app: the widget's

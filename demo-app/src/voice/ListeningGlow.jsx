@@ -70,17 +70,60 @@ const FALLOFF = [
   [80, 0],
 ];
 
+/* The table above is written at its natural 80px scale; the band width is
+   then a live multiplier on it, so every stop stays in proportion and the
+   curve's shape is preserved at any width. Expressed against a CSS variable
+   rather than baked into the string, because ScreenOverlay keys its mount
+   effect on the stylesheet: a width that changed this text would tear down
+   and rebuild the whole overlay on every frame of a slider drag. */
+const REFERENCE_WIDTH = 80;
+const at = (px) => (px === 0 ? "0px" : `calc(var(--rim-width) * ${px / REFERENCE_WIDTH})`);
+
 /* One axis of the mask: strongest at both edges, transparent through the
-   middle. Pixel stops throughout -- "20px" means exactly that, with none of
-   the percentage/aspect-ratio reinterpretation that made earlier
-   radial-gradient attempts come out at the wrong scale. */
+   middle. Lengths throughout -- no percentage/aspect-ratio reinterpretation
+   like the earlier failed radial-gradient attempts. */
 function edgeMask(direction) {
   const stops = [
-    ...FALLOFF.map(([px, alpha]) => `rgba(0, 0, 0, ${alpha}) ${px}px`),
-    ...[...FALLOFF].reverse().map(([px, alpha]) => `rgba(0, 0, 0, ${alpha}) calc(100% - ${px}px)`),
+    ...FALLOFF.map(([px, alpha]) => `rgba(0, 0, 0, ${alpha}) ${at(px)}`),
+    ...[...FALLOFF].reverse().map(([px, alpha]) => `rgba(0, 0, 0, ${alpha}) calc(100% - ${at(px)})`),
   ];
   return `linear-gradient(to ${direction}, ${stops.join(", ")})`;
 }
+
+/**
+ * An opaque plane with a soft hole punched at one inner corner, multiplied
+ * into the rim by `mask-composite: intersect`.
+ *
+ * The two edge masks union into a *square* inner corner: the glow runs the
+ * full band width along both edges right up to the point where they meet,
+ * at (width, width) in from the screen corner. Rounding that off means
+ * taking glow away around that point, so each layer here is transparent at
+ * that point and back to fully opaque by `--rim-corner`.
+ *
+ * Punching a hole and intersecting, rather than drawing a disc and
+ * subtracting: `mask-composite: subtract` is source-OUT, i.e. *source minus
+ * destination*, not destination minus source. A disc composited that way
+ * replaces the rim with "disc outside rim" and, at radius 0, wipes the rim
+ * off the screen entirely.
+ *
+ * The ending shape is a fixed 100vmax with the *stops* carrying the radius,
+ * rather than sizing the circle by the variable, so that radius 0 degrades
+ * safely: the stops collapse onto the centre point, everything past it takes
+ * the last colour -- opaque -- and the layer multiplies through as a no-op.
+ * That's what makes 0 a safe default rather than a special case.
+ */
+function cornerHole(x, y) {
+  return (
+    `radial-gradient(circle 100vmax at ${x} ${y}, ` +
+    "rgba(0, 0, 0, 0) 0px, " +
+    "rgba(0, 0, 0, 0.5) calc(var(--rim-corner) * 0.55), " +
+    "rgba(0, 0, 0, 1) var(--rim-corner))"
+  );
+}
+
+const NEAR = "var(--rim-width)";
+const FAR = "calc(100% - var(--rim-width))";
+const HOLES = [cornerHole(NEAR, NEAR), cornerHole(FAR, NEAR), cornerHole(NEAR, FAR), cornerHole(FAR, FAR)];
 
 /* Scoped inside the overlay's shadow root, so these class names are ours
    alone and can't collide with the host app's.
@@ -90,21 +133,24 @@ function edgeMask(direction) {
    matters at the corners: it lands them at 1-(1-0.53)^2 = 0.78, which is
    what the original's separable 2D blur gives there too (0.47 x 0.47
    covered). Corners come out brighter than the edges in both, by the same
-   amount, without clipping. */
+   amount, without clipping.
+
+   Layers composite bottom-up while the list reads top-first, so the two edge
+   masks (last) union into the square-cornered rim and the four corner holes
+   (above them) each multiply into it. `-webkit-mask-composite` is a
+   different keyword set and is deliberately not emitted: on an engine too
+   old for the standard property every layer just unions, which loses the
+   corner rounding and keeps everything else. */
 const GLOW_CSS = `
   .frame {
     position: absolute;
     inset: 0;
     pointer-events: none;
     overflow: hidden;
-    /* Set inline per-render so toggling it doesn't change this stylesheet's
-       identity, which would tear down and rebuild the whole overlay. */
-    border-radius: var(--rim-corner-radius, 0px);
 
-    -webkit-mask-image: ${edgeMask("right")}, ${edgeMask("bottom")};
-    -webkit-mask-composite: source-over, source-over;
-    mask-image: ${edgeMask("right")}, ${edgeMask("bottom")};
-    mask-composite: add, add;
+    -webkit-mask-image: ${HOLES.join(", ")}, ${edgeMask("right")}, ${edgeMask("bottom")};
+    mask-image: ${HOLES.join(", ")}, ${edgeMask("right")}, ${edgeMask("bottom")};
+    mask-composite: intersect, intersect, intersect, intersect, add, add;
   }
 
   /* Viewport-sized, exactly like the original's \`absolute size-full\`. The
@@ -119,28 +165,24 @@ const GLOW_CSS = `
 `;
 
 /**
- * `corners`:
+ * Geometry, both in px:
  *
- *   "square"  (default) -- the original's shape. The mask reaches its full
- *      0.53 at both edges of a corner, so source-over compositing lands the
- *      corner itself at 1-(1-0.53)^2 = 0.78: the hottest point of the whole
- *      rim, and fully visible.
- *   "rounded" -- clips that outer corner to a 14px arc. Worth knowing what
- *      this does and doesn't change: the mask is untouched, so every
- *      iso-alpha contour, including the inner edge where the glow fades
- *      into the page, is identical between the two. `border-radius` only
- *      cuts the outermost arc away -- which happens to remove the 0.78 peak,
- *      so rounded corners read slightly cooler even though nothing about
- *      the falloff moved.
+ *   `width` -- how far the rim reaches inward before it's fully gone. Scales
+ *      the whole FALLOFF curve proportionally, so the shape of the decay is
+ *      the same at any width; 80 is the reference's Gaussian extent.
+ *   `cornerRadius` -- how much the *inner* corner is rounded off. 0 leaves
+ *      the square inner corner the two edge masks produce naturally, which
+ *      is the reference's own shape. Note this is the inner boundary only:
+ *      the outer corner stays square regardless, hard against the screen.
  */
-export function ListeningGlow({ active, corners = "square" }) {
+export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
   return (
     <ScreenOverlay css={GLOW_CSS} active={active}>
       <AnimatePresence>
         {active && (
           <motion.div
             className="frame"
-            style={{ "--rim-corner-radius": corners === "rounded" ? "14px" : "0px" }}
+            style={{ "--rim-width": `${width}px`, "--rim-corner": `${cornerRadius}px` }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useInterpreter } from "./VoiceProvider.jsx";
-import { useRimCorners, setRimCorners } from "./rimCornersDev.js"; // TEMPORARY
+import { useRimTuning, setRimTuning, resetRimTuning } from "./rimTuningDev.js"; // TEMPORARY
 
 const MODES = [
   { id: "continuous", label: "Continuous" },
@@ -34,7 +34,7 @@ export function InterpreterPanel() {
   } = useInterpreter();
   const [textInput, setTextInput] = useState("");
   const connected = status === "connected";
-  const rimCorners = useRimCorners(); // TEMPORARY
+  const rim = useRimTuning(); // TEMPORARY
 
   const holdLabel = mode === "ptt" ? (holding ? "Listening..." : "Hold to talk") : holding ? "Muted" : "Hold to mute";
 
@@ -120,21 +120,32 @@ export function InterpreterPanel() {
         <button type="submit">Send</button>
       </form>
 
-      {/* TEMPORARY -- rim shape comparison, see rimCornersDev.js. Reuses the
-          mode-selector styling so it needs no CSS of its own, and lives at
-          the bottom so it doesn't read as a second voice mode. */}
-      <span className="hold-hint">Rim corners (temporary)</span>
-      <div className="mode-selector">
-        {["square", "rounded"].map((shape) => (
-          <button
-            key={shape}
-            type="button"
-            className={rimCorners === shape ? "mode-active" : ""}
-            onClick={() => setRimCorners(shape)}
-          >
-            {shape === "square" ? "Square" : "Rounded"}
-          </button>
+      {/* TEMPORARY -- rim geometry tuning, see rimTuningDev.js. At the bottom
+          so it doesn't read as part of the voice controls. The rim only
+          draws while listening, so `?glow=1` is the way to tune it without a
+          live session. */}
+      <div className="rim-tuning">
+        <span className="hold-hint">Rim geometry (temporary)</span>
+        {[
+          { key: "width", label: "Width", min: 8, max: 200 },
+          { key: "corner", label: "Inner corner", min: 0, max: 200 },
+        ].map(({ key, label, min, max }) => (
+          <label key={key}>
+            <span>
+              {label} <b>{rim[key]}px</b>
+            </span>
+            <input
+              type="range"
+              min={min}
+              max={max}
+              value={rim[key]}
+              onChange={(e) => setRimTuning({ [key]: Number(e.target.value) })}
+            />
+          </label>
         ))}
+        <button type="button" onClick={resetRimTuning}>
+          Reset to 80 / 0
+        </button>
       </div>
     </div>
   );

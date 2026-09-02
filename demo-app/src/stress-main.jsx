@@ -1,7 +1,7 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ListeningGlow } from "./voice/ListeningGlow.jsx";
-import { useRimCorners, setRimCorners } from "./voice/rimCornersDev.js"; // TEMPORARY
+import { useRimTuning } from "./voice/rimTuningDev.js"; // TEMPORARY
 
 /**
  * Entry point for stress.html -- the "host app we don't know" harness.
@@ -16,23 +16,16 @@ import { useRimCorners, setRimCorners } from "./voice/rimCornersDev.js"; // TEMP
  */
 function StressHarness() {
   const [active, setActive] = useState(true);
-  // Shared with the interpreter panel's switch rather than local state, so
-  // there's one source of truth for the rim's shape. TEMPORARY.
-  const corners = useRimCorners();
+  // Shares the panel's tuning store, so a rim dialled in on the demo app
+  // shows up here on the dark background too. TEMPORARY.
+  const rim = useRimTuning();
 
   return (
     <>
-      <ListeningGlow active={active} corners={corners} />
+      <ListeningGlow active={active} width={rim.width} cornerRadius={rim.corner} />
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button id="toggle-glow" type="button" onClick={() => setActive((a) => !a)}>
           {active ? "Stop listening" : "Start listening"}
-        </button>
-        <button
-          id="toggle-corners"
-          type="button"
-          onClick={() => setRimCorners(corners === "square" ? "rounded" : "square")}
-        >
-          Corners: {corners}
         </button>
         <button id="open-dialog" type="button" onClick={() => document.getElementById("host-dialog").showModal()}>
           Open host modal

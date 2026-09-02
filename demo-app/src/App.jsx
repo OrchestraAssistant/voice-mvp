@@ -6,7 +6,7 @@ import Settings from "./pages/Settings.jsx";
 import { InterpreterBubble } from "./voice/InterpreterBubble.jsx";
 import { ListeningGlow, isListening } from "./voice/ListeningGlow.jsx";
 import { useInterpreter } from "./voice/VoiceProvider.jsx";
-import { useRimCorners } from "./voice/rimCornersDev.js"; // TEMPORARY
+import { useRimTuning } from "./voice/rimTuningDev.js"; // TEMPORARY
 
 // `?glow=1` forces the listening rim on without a live mic session, so the
 // visual can be looked at (and screenshotted) on the real app's real
@@ -19,11 +19,11 @@ const FORCE_GLOW = new URLSearchParams(window.location.search).has("glow");
 export default function App() {
   const { status, mode, holding } = useInterpreter();
   const listening = FORCE_GLOW || isListening({ status, mode, holding });
-  const corners = useRimCorners(); // TEMPORARY
+  const rim = useRimTuning(); // TEMPORARY
 
   return (
     <div className="app">
-      <ListeningGlow active={listening} corners={corners} />
+      <ListeningGlow active={listening} width={rim.width} cornerRadius={rim.corner} />
       <nav className="sidebar">
         <h2>Tasker</h2>
         <Link to="/">Dashboard</Link>
