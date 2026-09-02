@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bubble — clean-host harness</title>
+    <style>
+      /* Deliberately almost nothing. The point of this page is the opposite
+         of stress.html: a host with NO opinions, so what you see is the
+         widget's own stylesheet and nothing else. That makes it a faithful
+         stand-in for the shadow-root render while still being reachable by
+         a selector, which a closed shadow root is not.
+
+         Every rule here is scoped to .page for that reason. An unscoped
+         `p {}` is enough to break the illusion: at mount="inline" it
+         outranks a layered Tailwind utility, so the panel's own
+         `text-destructive` came out host-grey -- a true finding about
+         inline mounting (DESIGN-CHOICES §1) but noise from THIS page,
+         whose job is to have no opinions. stress.html is where host rules
+         are supposed to fight us. */
+      body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: #333; background: #fbfbfd; }
+      .page { padding: 24px 28px; max-width: 60ch; }
+      .page h1 { font-size: 20px; margin: 0 0 8px; }
+      .page p { color: #6b6b76; margin: 0 0 12px; }
+      .page code { background: #ecedf1; padding: 1px 5px; border-radius: 4px; }
+
+      /* ?bg=dark. The widget is a light-themed panel, so a dark page is how
+         you tell a real surface from one that only looked white because the
+         host behind it was: every token being inert renders as transparent,
+         which is invisible on a white page and unmissable here. */
+      body.dark { background: #101014; color: #e8e8ee; }
+      body.dark .page p { color: #b9b9c9; }
+      body.dark .page code { background: #26263a; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>Bubble harness</h1>
+      <p>
+        A host page with no styles of its own, so the widget renders exactly as it
+        does inside the shadow root. Defaults to <code>mount="inline"</code> so the
+        panel can be driven by a selector; add <code>?mount=shadow</code> for the
+        real overlay path, <code>?bg=dark</code> to catch a surface that is
+        actually transparent, and <code>?trace=1</code> to record the resize
+        of every transition frame by frame below.
+      </p>
+    </div>
+    <div id="widget-mount"></div>
+    <pre id="trace" style="font: 11px/1.35 ui-monospace, monospace; padding: 0 28px"></pre>
+    <script type="module" src="./bubble-main.jsx"></script>
+  </body>
+</html>

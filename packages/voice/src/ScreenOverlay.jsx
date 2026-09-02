@@ -158,6 +158,14 @@ function mount(css) {
  * host app. `active` doesn't gate rendering -- the overlay stays mounted so
  * exit animations can finish -- it gates only whether we fight for the top of
  * the top-layer stack, so an idle indicator never displaces a host's modal.
+ *
+ * `onHost(host, root)` hands back both the shadow host element and the shadow
+ * root itself. The root is not decoration: code that injects a stylesheet at
+ * runtime has to put it in the tree it is meant to style, and inside a shadow
+ * root `document.head` is the wrong tree. Handing it to our own components
+ * costs nothing -- the reference stays in this module and is never exposed to
+ * the host page, so the root is still closed as far as anyone outside is
+ * concerned.
  */
 export function ScreenOverlay({ children, css, active, onHost }) {
   const [mounted, setMounted] = useState(null);
@@ -167,14 +175,16 @@ export function ScreenOverlay({ children, css, active, onHost }) {
   useEffect(() => {
     const instance = mount(css);
     setMounted(instance);
-    // The host is the only handle a caller gets on this subtree: the root
-    // is closed, so events from inside retarget to it and composedPath()
-    // stops at it. That makes "event.target === host" the one reliable
-    // "this came from inside the overlay" signal.
-    onHostRef.current?.(instance.host);
+    // The host is the only handle on this subtree that EVENTS give a caller:
+    // the root is closed, so events from inside retarget to it and
+    // composedPath() stops at it. That makes "event.target === host" the one
+    // reliable "this came from inside the overlay" signal. The root is handed
+    // over separately because no amount of DOM traversal can recover it --
+    // `host.shadowRoot` is null for a closed root, by design.
+    onHostRef.current?.(instance.host, instance.shadow);
     return () => {
       setMounted(null);
-      onHostRef.current?.(null);
+      onHostRef.current?.(null, null);
       instance.dispose();
     };
   }, [css]);

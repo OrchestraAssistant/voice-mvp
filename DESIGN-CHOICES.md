@@ -64,6 +64,23 @@ rebalanced.
   It works off `event.target === overlayHost`, which is reliable precisely
   because everything inside retargets to it. (This cost us two broken
   iterations before it was understood.)
+- **Runtime-injected stylesheets land in the wrong tree.** A library that
+  injects a `<style>` into `document.head` at runtime has no effect on our
+  nodes, and fails *silently* — no error, no warning, just a rule that never
+  matches. framer-motion's `AnimatePresence mode="popLayout"` is exactly this:
+  it takes the outgoing child out of flow with an injected
+  `[data-motion-pop-id] { position: absolute !important }` block, so inside
+  the shadow root the outgoing pane stayed in flow and the panel animated to
+  the *sum* of both panes' heights (188 + 210 = 398) before snapping back.
+  It behaved perfectly at `mount="inline"` throughout.
+
+  The fix is one prop — `AnimatePresence` takes `root?: HTMLElement |
+  ShadowRoot` and appends there instead (`const parent = root ?? document.head`
+  in its `PopChild`) — but finding it meant reading framer-motion's source.
+  **The general lesson is the one to keep:** a fix verified only at
+  `mount="inline"` is not verified. Anything that injects styles, measures
+  against `document`, or looks up an element by id needs checking in the
+  root, which is what `dev/bubble.html?mount=shadow&shadow=open` is for.
 - Focus, `aria-*` relationships, and form participation don't cross the
   boundary for free.
 - Host tooling and any library that queries `document` can't see inside.
@@ -193,17 +210,72 @@ injected safely, since it could no longer reach the host document.
 
 ---
 
-## 3. Theme tokens map through `@theme`, not `:root`
+## 3. Theme tokens map through `@theme inline reference`, not `:root`
 
-**Chosen:** `@theme { --color-background: var(--iv-surface); ... }`, with the
-concrete values defined in a rule scoped to the widget's roots.
+**Chosen:** `@theme inline reference { --color-background: var(--iv-surface); ... }`,
+with the concrete values defined in a rule scoped to the widget's roots.
 
 **Why:** shadcn components are written against `bg-background`, `bg-muted`,
 `text-foreground`. Defining `--color-*` values directly on `:root` would
 overwrite the same variables in any host that also uses Tailwind v4.
 
+**Why the two modifiers, and not a plain `@theme`:** a plain `@theme` emits
+the names to `:root` and has the utilities *reference* them —
+`.bg-background { background-color: var(--color-background) }`. That silently
+does not work, and it is worth being precise about why, because the failure is
+invisible: a custom property whose value contains `var()` is substituted at
+**computed-value time on the element it is declared on**, not deferred to
+whoever reads it later. On `:root`, `--iv-surface` does not exist, so
+`--color-background` computes to the guaranteed-invalid value and *inherits
+down in that state*; defining `--iv-surface` further in never gets a second
+look. Every semantic utility in the widget resolved to `transparent` /
+`unset`. It looked fine only because the panel sat on white hosts — on
+`dev/bubble.html?bg=dark` the whole panel is see-through.
+
+- `inline` pastes the value into the utility itself —
+  `.bg-background { background-color: var(--iv-surface) }` — so the lookup
+  happens at the **use** site, inside our subtree, where `--iv-surface` is
+  defined.
+- `reference` then stops the (now unreferenced) `--color-*` names being
+  emitted to `:root` at all, which is what this section wanted in the first
+  place.
+
 **Cost:** the utilities are inert outside our subtree — fine, and arguably
 correct, but surprising if someone expects them to work anywhere.
+
+### Related: our own rules live in `@layer base`
+
+Same class of bug, same stylesheet. The scoped preflight-equivalent reset
+(`:where(.interpreter-panel, .interpreter-widget) button { background:
+transparent }`) was written at zero specificity on the theory that "utilities
+always win". They don't: for normal declarations **unlayered beats layered**
+regardless of specificity, and Tailwind's utilities are in `@layer utilities`.
+So the reset beat `bg-foreground/4` and the selected tab never highlighted.
+`@layer theme, base, components, utilities;` up front, with everything of ours
+in `base`, puts the two in a defined order — and it is the same mechanism that
+makes ID-scoping unworkable in §1.
+
+### Related: the measured wrapper is pinned to the panel width
+
+`useMeasure` watches a wrapper that would otherwise be as wide as the
+container animating around it. Collapsed, that container is 56px, so at the
+first frame of an open the content wrapped and measured **348px** tall, then
+unwrapped to 188 as the width caught up — the panel ballooned and collapsed
+instead of just growing. Measuring at the final width (`style={{ width:
+PANEL_WIDTH }}`) makes the transition monotonic in all four directions; the
+container's `overflow-hidden` does the revealing, and the tab strip is
+unaffected because it is absolute against the container, not the wrapper.
+The original never hits this because 200 → 290 is too small a change to
+rewrap anything. `dev/bubble.html?trace=1` is what this was diagnosed with.
+
+### Related: `@source "./"` is explicit
+
+Tailwind's automatic content detection keys off the *build's* root, not the
+stylesheet's. The library build (root `packages/voice`) found `src/`; the dev
+server (root `dev/`) silently did not, and served a stylesheet with almost
+none of the utilities the components are built from — so the same component
+looked correct in one and unstyled in the other. Declaring `@source "./"`
+relative to the stylesheet makes the scanned set the same for every consumer.
 
 ---
 

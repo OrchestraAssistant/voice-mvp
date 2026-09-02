@@ -32,8 +32,29 @@
  * to plain CSS in dist/voice.css -- customers never install Tailwind, and
  * only the utilities we actually used are emitted.
  * ------------------------------------------------------------------- */
+
+/* Layer order is declared up front, and every rule of ours goes into
+ * `base`. Without this our rules would be *unlayered*, and for normal
+ * declarations unlayered beats layered no matter the specificity -- so the
+ * zero-specificity `:where(...) button { background: transparent }` reset
+ * below would quietly beat `bg-foreground/4` from @layer utilities, and the
+ * selected tab would never highlight. Specificity is not what decides that
+ * fight; layer order is. `base` sits below `utilities`, so utilities now
+ * win inside our subtree, which is what a component assembled out of them
+ * needs. (This is also why the ID-scoping alternative in DESIGN-CHOICES §1
+ * fails: there, the shield outranks our own utilities too.) */
+@layer theme, base, components, utilities;
+
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
+
+/* Which files Tailwind scans for class names. Stated explicitly because the
+ * automatic detection keys off the *build's* root rather than this file's --
+ * so the library build (root: packages/voice) found src/ while the dev
+ * server (root: dev/) silently did not, and emitted a stylesheet with almost
+ * none of the utilities the components are built from. Relative to this
+ * file, so it resolves to the same set either way. */
+@source "./";
 
 
 /* shadcn/skiper components are written against semantic token names
@@ -43,8 +64,24 @@
  * :root -- so a host that also uses Tailwind v4 doesn't get its own
  * --color-background quietly overwritten by ours. The utilities resolve
  * correctly inside our subtree and are simply inert outside it.
+ *
+ * `inline reference` is load-bearing, not a tidy-up. A plain @theme emits these to
+ * :root and has the utilities reference them -- `.bg-background {
+ * background-color: var(--color-background) }` -- and a custom property
+ * whose value contains var() is substituted at computed-value time on the
+ * element it is DECLARED on. On :root, --iv-surface doesn't exist, so
+ * --color-background computes to the guaranteed-invalid value and inherits
+ * down that way; redefining --iv-surface further in never gets a second
+ * look. Every semantic utility silently rendered as `transparent` /
+ * `unset`. `@theme inline` instead pastes the value straight into the
+ * utility -- `.bg-background { background-color: var(--iv-surface) }` --
+ * so the lookup happens at the USE site, inside our subtree where
+ * --iv-surface is defined. `reference` then stops the (now unreferenced)
+ * --color-* names being emitted to :root at all, which is what §3 of
+ * DESIGN-CHOICES was after: a host that also uses Tailwind v4 keeps its
+ * own --color-background.
  */
-@theme {
+@theme inline reference {
   --color-background: var(--iv-surface);
   --color-foreground: var(--iv-text);
   --color-muted: var(--iv-muted-surface);
@@ -55,219 +92,233 @@
 }
 
 
-.interpreter-panel,
-.interpreter-widget {
-  --iv-text: #333;
-  --iv-surface: #fff;
-  --iv-border: #e2e2e2;
-  --iv-accent: #5b3bff;
-  --iv-danger: #d3392e;
-  --iv-muted: #888;
-  --iv-muted-surface: #f1f2f4;
+@layer base {
+  .interpreter-panel,
+  .interpreter-widget {
+    --iv-text: #333;
+    --iv-surface: #fff;
+    --iv-border: #e2e2e2;
+    --iv-accent: #5b3bff;
+    --iv-danger: #d3392e;
+    --iv-muted: #888;
+    --iv-muted-surface: #f1f2f4;
 
-  box-sizing: border-box;
-  font: 15px/1.5 system-ui, sans-serif;
-  color: var(--iv-text);
-}
+    box-sizing: border-box;
+    font: 15px/1.5 system-ui, sans-serif;
+    color: var(--iv-text);
+  }
 
-.interpreter-panel *,
-.interpreter-widget * {
-  box-sizing: border-box;
-}
+  .interpreter-panel *,
+  .interpreter-widget * {
+    box-sizing: border-box;
+  }
 
-/* Base control styling the host may not provide (and whose own version we
-   don't want to inherit). */
-/* Preflight-equivalent button reset, scoped to us. We excluded Tailwind's
-   preflight (it would restyle the host's whole document), but its button
-   reset is what lets utilities compose from a neutral base -- without it,
-   an unstyled tab button inherits a decorated default and every utility
-   has to fight it. So: neutral here, decoration on the classes that want
-   it. :where() keeps specificity at zero so utilities always win. */
-:where(.interpreter-panel, .interpreter-widget) button {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  border-radius: 0;
-}
+  /* Preflight-equivalent control reset, scoped to us. We excluded Tailwind's
+     preflight (it would restyle the host's whole document), but its button
+     reset is what lets utilities compose from a neutral base -- without it,
+     an unstyled tab button inherits a decorated default and every utility
+     has to fight it. So: neutral here, decoration on the classes that want
+     it. Being in @layer base is what makes that true; :where() only keeps
+     us from outranking each other *within* the layer. */
+  :where(.interpreter-panel, .interpreter-widget) button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    border-radius: 0;
+  }
 
-/* The flat panel's plain buttons (Send / Confirm / Cancel) still want a
-   default look, since nothing else styles them. */
-:where(.interpreter-panel) button,
-:where(.interpreter-widget) form button {
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--iv-border);
-  background: #fafafa;
-}
+  :where(.interpreter-panel, .interpreter-widget) :is(input, select, textarea) {
+    font: inherit;
+    color: inherit;
+  }
 
-:where(.interpreter-panel, .interpreter-widget) :is(input, select, textarea) {
-  padding: 6px 8px;
-  border: 1px solid var(--iv-border);
-  border-radius: 4px;
-  font: inherit;
-  color: inherit;
-  background: var(--iv-surface);
-}
+  :where(.interpreter-panel, .interpreter-widget) :is(p, h1, h2, h3, h4) {
+    margin: 0;
+  }
 
-:where(.interpreter-panel, .interpreter-widget) form {
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
-  margin: 0;
-}
+  /* --- Flat panel (usable standalone, or embedded by a host) ---
+   *
+   * The panel is plain CSS end to end: it predates the Tailwind components
+   * and has no utilities in it, so it needs the decorated defaults the reset
+   * above just took away. The BUBBLE deliberately gets none of this -- it
+   * styles every control with utilities, and a `form button {}` rule here
+   * would land on its command input's send button and fight them. */
 
-:where(.interpreter-panel, .interpreter-widget) form input {
-  flex: 1;
-}
+  .interpreter-panel {
+    width: 320px;
+    border: 1px solid var(--iv-border);
+    border-radius: 10px;
+    background: var(--iv-surface);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
 
-/* --- Panel (usable standalone, or inside the bubble) --- */
+  :where(.interpreter-panel) button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--iv-border);
+    background: #fafafa;
+  }
 
-.interpreter-panel {
-  width: 320px;
-  border: 1px solid var(--iv-border);
-  border-radius: 10px;
-  background: var(--iv-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+  :where(.interpreter-panel) :is(input, select, textarea) {
+    padding: 6px 8px;
+    border: 1px solid var(--iv-border);
+    border-radius: 4px;
+    background: var(--iv-surface);
+  }
 
-/* --- Tabbed widget: the floating pill that expands into the panel --- */
+  :where(.interpreter-panel) form {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    margin: 0;
+  }
 
-.interpreter-widget {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 1000;
-  /* The overlay host pins `pointer-events: none` so the listening rim never
-     eats clicks meant for the host app. The panel is the one part that does
-     want them, so it opts back in for its own subtree. */
-  pointer-events: auto;
-}
+  :where(.interpreter-panel) form input {
+    flex: 1;
+  }
 
-/* --- Panel internals --- */
+  /* --- The floating bubble ---
+   *
+   * Everything inside it is Tailwind; the only job left for plain CSS is
+   * parking it in the corner of the viewport. */
 
-.mode-selector {
-  display: flex;
-  gap: 4px;
-}
+  .interpreter-widget {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1000;
+    /* The overlay host pins `pointer-events: none` so the listening rim never
+       eats clicks meant for the host app. The panel is the one part that does
+       want them, so it opts back in for its own subtree. */
+    pointer-events: auto;
+  }
 
-.mode-selector button {
-  flex: 1;
-  font-size: 11px;
-  padding: 4px 6px;
-}
+  /* --- Panel internals --- */
 
-.mode-selector .mode-active {
-  background: var(--iv-accent);
-  color: #fff;
-  border-color: var(--iv-accent);
-}
+  .mode-selector {
+    display: flex;
+    gap: 4px;
+  }
 
-.mic-button {
-  padding: 6px 14px;
-  border-radius: 6px;
-  background: var(--iv-accent);
-  color: #fff;
-  border: none;
-  font-weight: 600;
-  align-self: flex-start;
-}
+  .mode-selector button {
+    flex: 1;
+    font-size: 11px;
+    padding: 4px 6px;
+  }
 
-.mic-connected {
-  background: var(--iv-danger);
-}
+  .mode-selector .mode-active {
+    background: var(--iv-accent);
+    color: #fff;
+    border-color: var(--iv-accent);
+  }
 
-.hold-button {
-  width: 100%;
-  padding: 14px;
-  border-radius: 6px;
-  font-weight: 600;
-  background: #f0eefc;
-  border: 2px solid var(--iv-accent);
-  color: var(--iv-accent);
-  user-select: none;
-  touch-action: none;
-}
+  .mic-button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    background: var(--iv-accent);
+    color: #fff;
+    border: none;
+    font-weight: 600;
+    align-self: flex-start;
+  }
 
-.hold-button.holding {
-  background: var(--iv-accent);
-  color: #fff;
-}
+  .mic-connected {
+    background: var(--iv-danger);
+  }
 
-.hold-hint {
-  font-size: 11px;
-  color: var(--iv-muted);
-  text-align: center;
-}
+  .hold-button {
+    width: 100%;
+    padding: 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    background: #f0eefc;
+    border: 2px solid var(--iv-accent);
+    color: var(--iv-accent);
+    user-select: none;
+    touch-action: none;
+  }
 
-.voice-status {
-  font-size: 12px;
-  color: var(--iv-muted);
-}
+  .hold-button.holding {
+    background: var(--iv-accent);
+    color: #fff;
+  }
 
-.confirm-banner {
-  background: #fff8e1;
-  border: 1px solid #f0d580;
-  border-radius: 6px;
-  padding: 8px;
-  font-size: 13px;
-}
+  .hold-hint {
+    font-size: 11px;
+    color: var(--iv-muted);
+    text-align: center;
+  }
 
-.confirm-banner button {
-  margin-right: 6px;
-  margin-top: 6px;
-}
+  .voice-status {
+    font-size: 12px;
+    color: var(--iv-muted);
+  }
 
-.transcript {
-  max-height: 140px;
-  overflow-y: auto;
-  font-size: 13px;
-  border-top: 1px solid var(--iv-border);
-  padding-top: 6px;
-}
+  .confirm-banner {
+    background: #fff8e1;
+    border: 1px solid #f0d580;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 13px;
+  }
 
-.turn {
-  margin: 4px 0;
-}
+  .confirm-banner button {
+    margin-right: 6px;
+    margin-top: 6px;
+  }
 
-.turn-user {
-  color: var(--iv-text);
-}
+  .transcript {
+    max-height: 140px;
+    overflow-y: auto;
+    font-size: 13px;
+    border-top: 1px solid var(--iv-border);
+    padding-top: 6px;
+  }
 
-.turn-assistant {
-  color: var(--iv-accent);
-}
+  .turn {
+    margin: 4px 0;
+  }
 
-/* TEMPORARY -- rim geometry sliders in the panel. Goes when
-   rimTuningDev.js does. */
-.rim-tuning {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid var(--iv-border);
-  padding-top: 8px;
-}
+  .turn-user {
+    color: var(--iv-text);
+  }
 
-.rim-tuning label {
-  display: flex;
-  flex-direction: column;
-  font-size: 11px;
-  color: var(--iv-muted);
-}
+  .turn-assistant {
+    color: var(--iv-accent);
+  }
 
-.rim-tuning input[type="range"] {
-  width: 100%;
-  accent-color: var(--iv-accent);
-}
+  /* TEMPORARY -- rim geometry sliders in the panel. Goes when
+     rimTuningDev.js does. */
+  .rim-tuning {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-top: 1px solid var(--iv-border);
+    padding-top: 8px;
+  }
 
-.rim-tuning button {
-  font-size: 11px;
-  padding: 3px 6px;
-  align-self: flex-start;
+  .rim-tuning label {
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    color: var(--iv-muted);
+  }
+
+  .rim-tuning input[type="range"] {
+    width: 100%;
+    accent-color: var(--iv-accent);
+  }
+
+  .rim-tuning button {
+    font-size: 11px;
+    padding: 3px 6px;
+    align-self: flex-start;
+  }
 }

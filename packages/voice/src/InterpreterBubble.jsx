@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "framer-motion";
-import { Mic, Settings } from "lucide-react";
+import {
+  AudioLines,
+  Check,
+  CornerDownLeft,
+  Hand,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Settings2,
+} from "lucide-react";
 import useMeasure from "react-use-measure";
 
 // ?inline hands us the *compiled* stylesheet as a string (Tailwind already
@@ -54,49 +63,58 @@ function useOnClickOutside(ref, handler, shadowHost) {
 }
 
 const TABS = [
-  { key: "voice", title: "Talk", icon: Mic },
-  { key: "settings", title: "Settings", icon: Settings },
+  { title: "Talk", icon: Mic },
+  { title: "Settings", icon: Settings2 },
 ];
 
-const labelTransition = {
+const transition = {
   delay: 0.1,
   type: "spring",
   bounce: 0,
   duration: 0.6,
 };
 
-// Content slides in from the side the new tab sits on, so movement always
-// matches the direction the selection travelled.
-// TEMPORARY -- set false (or delete the block that uses it) once the resize
-// animation is settled.
-const DEBUG_HEIGHT = true;
+// Collapsed, the pill is exactly one icon-only tab plus the strip's own
+// padding; open, it's the content width. 52 = the strip's h-9 (36px) inside
+// its p-2 (8px a side).
+const COLLAPSED_WIDTH = 56;
+const COLLAPSED_HEIGHT = 52;
+const PANEL_WIDTH = 290;
 
-// Collapsed pill fits one icon-only tab; open panel is the content width.
-const COLLAPSED_WIDTH = 68;
-const COLLAPSED_HEIGHT = 50;
-const PANEL_WIDTH = 320;
-
-const contentVariants = {
+// Content slides in from the side the new tab sits on, so the movement
+// always matches the direction the selection travelled.
+const variants = {
   initial: (direction) => ({ x: `${110 * direction}%`, opacity: 0 }),
   active: { x: "0%", opacity: 1 },
   exit: (direction) => ({ x: `${-110 * direction}%`, opacity: 0 }),
 };
+
+// The one row shape everything in the panel is built from: full width, icon
+// and label on the left, a quiet detail on the right.
+const ROW =
+  "flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-xl px-2 text-sm font-medium hover:bg-muted";
 
 /**
  * The tab strip. Only the selected tab reveals its label; the rest stay
  * icon-only, and the whole strip is a single icon-width pill while
  * nothing is selected.
  */
-function ExpandedTabs({ tabs, selected, setSelected, setDirection }) {
+function ExpandedTabs({ tabs, className, selected, setSelected, setDirection }) {
   const handleTabSelect = (index) => {
-    if (selected === null) return setSelected(index);
-    if (selected === index) return setSelected(null);
+    if (selected === null) {
+      setSelected(index);
+      return;
+    }
+    if (selected === index) {
+      setSelected(null);
+      return;
+    }
     setDirection(index > selected ? 1 : -1);
     setSelected(index);
   };
 
   return (
-    <div className="flex h-9 w-full items-center justify-center gap-1">
+    <div className={cn("flex h-9 w-full items-center justify-center gap-1", className)}>
       {tabs.map((tab, index) => (
         <motion.button
           key={tab.title}
@@ -107,7 +125,9 @@ function ExpandedTabs({ tabs, selected, setSelected, setDirection }) {
             paddingLeft: selected === index ? "1rem" : ".5rem",
             paddingRight: selected === index ? "1rem" : ".5rem",
           }}
-          onClick={() => handleTabSelect(index)}
+          onClick={() => {
+            handleTabSelect(index);
+          }}
           aria-label={tab.title}
           className={cn(
             "relative flex h-full items-center justify-center rounded-2xl px-4 text-sm font-medium transition-colors duration-300 after:absolute after:right-0 after:top-0 after:h-full after:w-3 after:translate-x-full after:content-['']",
@@ -116,14 +136,14 @@ function ExpandedTabs({ tabs, selected, setSelected, setDirection }) {
               : "text-muted-foreground hover:bg-muted hover:text-foreground",
           )}
         >
-          <tab.icon className="size-4" />
+          {tab.icon && <tab.icon className="size-4" />}
           <AnimatePresence initial={false}>
             {selected === index && (
               <motion.span
                 initial={{ width: 0, opacity: 0 }}
                 animate={{ width: "auto", opacity: 1 }}
                 exit={{ width: 0, opacity: 0 }}
-                transition={labelTransition}
+                transition={transition}
                 className="overflow-hidden whitespace-nowrap font-medium tracking-tight"
               >
                 {tab.title}
@@ -136,9 +156,41 @@ function ExpandedTabs({ tabs, selected, setSelected, setDirection }) {
   );
 }
 
-/** Voice tab: connect/disconnect, push-to-talk, transcript, typed commands. */
-function VoiceTabContent() {
-  const { status, transcript, mode, holding, start, stop, sendText, holdStart, holdEnd } = useInterpreter();
+/** Live/idle indicator, borrowed from the skiper list rows. */
+function StatusDot({ status }) {
+  const color =
+    status === "connected"
+      ? "bg-emerald-500"
+      : status === "connecting"
+        ? "bg-amber-500"
+        : status === "error"
+          ? "bg-red-500"
+          : "bg-muted-foreground";
+
+  return (
+    <span className={cn("size-2 rounded-2xl", color)}>
+      {status === "connected" && <span className={cn("block size-2 animate-ping rounded-2xl", color)} />}
+    </span>
+  );
+}
+
+/** Talk tab: connect/disconnect, push-to-talk, transcript, typed commands. */
+function TalkTabContent() {
+  const {
+    status,
+    transcript,
+    pendingAction,
+    error,
+    mode,
+    holding,
+    start,
+    stop,
+    sendText,
+    confirmManually,
+    cancelManually,
+    holdStart,
+    holdEnd,
+  } = useInterpreter();
   const [textInput, setTextInput] = useState("");
   const connected = status === "connected";
   const busy = connected || status === "connecting";
@@ -146,70 +198,116 @@ function VoiceTabContent() {
   const holdLabel = mode === "ptt" ? (holding ? "Listening…" : "Hold to talk") : holding ? "Muted" : "Hold to mute";
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <button type="button" className={cn("mic-button", connected && "mic-connected")} onClick={busy ? stop : start}>
-          {connected ? "Stop" : status === "connecting" ? "Connecting…" : "Talk"}
-        </button>
-        <span className="voice-status">{status}</span>
-      </div>
+    <div className="mb-2 flex flex-col gap-0.5">
+      <button type="button" onClick={busy ? stop : start} className={ROW}>
+        <span className="flex items-center gap-2">
+          {connected ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+          {connected ? "Stop listening" : status === "connecting" ? "Connecting…" : "Start listening"}
+        </span>
+        <span className="text-muted-foreground flex items-center gap-3 text-xs">
+          {status}
+          <StatusDot status={status} />
+        </span>
+      </button>
 
       {connected && mode !== "continuous" && (
-        <>
-          <button
-            type="button"
-            className={cn("hold-button", holding && "holding")}
-            onMouseDown={holdStart}
-            onMouseUp={holdEnd}
-            onMouseLeave={holdEnd}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              holdStart();
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              holdEnd();
-            }}
-          >
+        <button
+          type="button"
+          className={cn(ROW, "touch-none select-none", holding && "bg-foreground/4")}
+          onMouseDown={holdStart}
+          onMouseUp={holdEnd}
+          onMouseLeave={holdEnd}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            holdStart();
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            holdEnd();
+          }}
+        >
+          <span className="flex items-center gap-2">
+            <Hand className="size-4" />
             {holdLabel}
-          </button>
-          <span className="hold-hint">or hold Ctrl+Space</span>
-        </>
+          </span>
+          <span className="text-muted-foreground text-xs">Ctrl+Space</span>
+        </button>
       )}
 
+      {pendingAction && (
+        <div className="bg-foreground/4 mt-1 flex flex-col gap-2 rounded-xl p-2">
+          <p className="text-sm">
+            Confirm <span className="font-medium">{pendingAction.description}</span>?
+          </p>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={confirmManually}
+              className="bg-foreground text-background h-8 flex-1 cursor-pointer rounded-lg text-xs font-medium"
+            >
+              Confirm
+            </button>
+            <button
+              type="button"
+              onClick={cancelManually}
+              className="hover:bg-muted h-8 flex-1 cursor-pointer rounded-lg text-xs font-medium"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-destructive px-2 py-1 text-xs">{error}</p>}
+
       {transcript.length > 0 && (
-        <div className="transcript">
-          {transcript.slice(-5).map((turn, i) => (
-            <p key={i} className={`turn turn-${turn.role}`}>
-              <strong>{turn.role}:</strong> {turn.text}
+        <div className="mt-1 max-h-44 space-y-1 overflow-y-auto p-1">
+          {transcript.slice(-8).map((turn, i) => (
+            <p
+              key={i}
+              className={cn(
+                "rounded-xl px-2 py-1 text-sm",
+                turn.role === "assistant" ? "text-muted-foreground" : "bg-foreground/4",
+              )}
+            >
+              {turn.text}
             </p>
           ))}
         </div>
       )}
 
       <form
+        className="bg-foreground/4 mt-1 flex h-10 items-center gap-2 rounded-xl px-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (textInput.trim()) sendText(textInput.trim());
           setTextInput("");
         }}
       >
+        <MessageSquare className="text-muted-foreground size-4 shrink-0" />
         <input
           aria-label="Type a command"
-          placeholder="Or type a command…"
+          placeholder="Type a command…"
           value={textInput}
           onChange={(e) => setTextInput(e.target.value)}
+          className="placeholder:text-muted-foreground h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-sm outline-none"
         />
-        <button type="submit">Send</button>
+        <button
+          type="submit"
+          aria-label="Send"
+          className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+        >
+          <CornerDownLeft className="size-4" />
+        </button>
       </form>
     </div>
   );
 }
 
 const MODES = [
-  { id: "continuous", label: "Continuous", hint: "Always listening; pauses end your turn." },
-  { id: "ptt", label: "Push to talk", hint: "Muted until you hold." },
-  { id: "ptnt", label: "Push to not talk", hint: "Listening until you hold." },
+  { id: "continuous", label: "Continuous", icon: AudioLines },
+  { id: "ptt", label: "Push to talk", icon: Mic },
+  { id: "ptnt", label: "Push to not talk", icon: MicOff },
 ];
 
 /** Settings tab: mic mode today, more later. */
@@ -217,19 +315,20 @@ function SettingsTabContent() {
   const { mode, setMode } = useInterpreter();
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="mb-2 flex flex-col gap-0.5">
+      <span className="text-muted-foreground px-2 py-1 text-xs">Microphone</span>
       {MODES.map((m) => (
         <button
           key={m.id}
           type="button"
           onClick={() => setMode(m.id)}
-          className={cn(
-            "hover:bg-muted flex cursor-pointer flex-col items-start gap-0.5 rounded-xl px-2 py-2 text-left text-sm",
-            mode === m.id && "bg-foreground/4",
-          )}
+          className={cn(ROW, mode === m.id && "bg-foreground/4")}
         >
-          <span className="font-medium">{m.label}</span>
-          <span className="text-muted-foreground text-xs">{m.hint}</span>
+          <span className="flex items-center gap-2">
+            <m.icon className="size-4" />
+            {m.label}
+          </span>
+          {mode === m.id && <Check className="size-4 shrink-0" />}
         </button>
       ))}
     </div>
@@ -257,22 +356,27 @@ function SettingsTabContent() {
  * rather than being traded against each other.
  */
 export function InterpreterBubble({ mount = "shadow" }) {
-  const [selected, setSelected] = useState(null);
   const [direction, setDirection] = useState(1);
-  const [contentRef, bounds] = useMeasure();
-  const containerRef = useRef(null);
-  const [overlayHost, setOverlayHost] = useState(null);
+  const [ref, bounds] = useMeasure();
+  const [selected, setSelected] = useState(null);
 
-  useOnClickOutside(containerRef, () => setSelected(null), overlayHost);
+  const containerRef = useRef(null);
+  const [overlay, setOverlay] = useState({ host: null, root: null });
+  useOnClickOutside(containerRef, () => setSelected(null), overlay.host);
 
   // Settings only exists once the panel is open; indices stay stable
-  // (voice 0, settings 1) so `selected` survives the array growing.
+  // (talk 0, settings 1) so `selected` survives the array growing.
   const tabs = selected === null ? TABS.slice(0, 1) : TABS;
 
   const content = useMemo(() => {
-    if (selected === 0) return <VoiceTabContent />;
-    if (selected === 1) return <SettingsTabContent />;
-    return <div></div>;
+    switch (selected) {
+      case 0:
+        return <TalkTabContent />;
+      case 1:
+        return <SettingsTabContent />;
+      default:
+        return <div></div>;
+    }
   }, [selected]);
 
   const widget = (
@@ -284,35 +388,48 @@ export function InterpreterBubble({ mount = "shadow" }) {
             height: selected === null ? COLLAPSED_HEIGHT : bounds.height,
             width: selected === null ? COLLAPSED_WIDTH : PANEL_WIDTH,
           }}
-          className="bg-background relative mx-auto overflow-hidden rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.16)]"
-        >
-          {/* TEMPORARY -- live readout for the resize animation. Absolutely
-              positioned and outside the measured div, so it cannot affect the
-              number it reports. Delete along with DEBUG_HEIGHT. */}
-          {DEBUG_HEIGHT && (
-            <div
-              style={{
-                position: "absolute",
-                top: 2,
-                right: 6,
-                zIndex: 10,
-                font: "10px/1.4 ui-monospace, monospace",
-                color: "#b00",
-                pointerEvents: "none",
-              }}
-            >
-              measured {Math.round(bounds.height)} · tab {String(selected)}
-            </div>
+          className={cn(
+            "bg-background relative mx-auto overflow-hidden rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.16)]",
           )}
+        >
+          {/* The animated pane sits inside this measured wrapper and the tab
+              strip is absolutely positioned *within* it, so bounds.height is
+              the content's height and the strip never adds to it (the pane's
+              pb-11 reserves its room).
 
-          {/* Structure below is skiper96's, unchanged: measured wrapper with
-              no styling of its own, the animated pane inside it, and the tab
-              strip absolutely positioned *within* that same wrapper. */}
-          <div ref={contentRef}>
-            <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+              The pinned width is the one addition to the original's markup,
+              and it is what makes the open/close resize monotonic. Left to
+              size itself, this wrapper is as wide as the animating container
+              -- so at the start of an open it is 56px wide, the content wraps,
+              and it measures 348px tall before unwrapping down to 188 as the
+              width catches up. The panel visibly ballooned and then collapsed.
+              Measuring at the final width instead means the only thing that
+              changes during the transition is how much of it is revealed:
+              height goes 52 -> 188 and stops. The container's overflow-hidden
+              does the clipping, and the tab strip is unaffected because it is
+              absolute against the container, not against this wrapper.
+
+              The original gets away without this because it moves 200 -> 290,
+              which is too small a change to rewrap anything. */}
+          <div ref={ref} style={{ width: PANEL_WIDTH }}>
+            {/* `root` is what makes popLayout work inside the shadow root, and
+                without it this component is subtly broken in the only mount
+                that ships. popLayout takes the outgoing pane out of flow by
+                injecting a `[data-motion-pop-id] { position: absolute }` style
+                block at runtime -- into `document.head` unless told otherwise
+                (framer-motion's PopChild: `const parent = root ?? document.head`).
+                A stylesheet in document.head does not apply inside a shadow
+                root, so the rule silently never matched, the outgoing pane
+                stayed in flow, and the wrapper measured BOTH panes stacked:
+                the panel jumped to their combined height and the incoming
+                content sat below the empty space where the outgoing one still
+                was. It looked correct at mount="inline" the whole time, which
+                is exactly why it was worth being suspicious of a fix verified
+                only there. */}
+            <AnimatePresence mode="popLayout" initial={false} custom={direction} root={overlay.root ?? undefined}>
               <motion.div
                 key={selected}
-                variants={contentVariants}
+                variants={variants}
                 initial="initial"
                 animate="active"
                 exit="exit"
@@ -346,7 +463,11 @@ export function InterpreterBubble({ mount = "shadow" }) {
   // shouldn't displace a host's open modal, but an expanded panel should
   // sit above it.
   return (
-    <ScreenOverlay css={widgetCss} active={selected !== null} onHost={setOverlayHost}>
+    <ScreenOverlay
+      css={widgetCss}
+      active={selected !== null}
+      onHost={(host, root) => setOverlay({ host, root })}
+    >
       {widget}
     </ScreenOverlay>
   );
