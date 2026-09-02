@@ -345,14 +345,14 @@ function SettingsTabContent() {
  * button inside does. Otherwise reaching Settings would mean going live
  * on the mic first.
  *
- * Renders through <ScreenOverlay>, i.e. into a closed shadow root mounted
- * on <body>, not into the host app's tree. That isn't decoration: a host's
- * bare `button {}` / `form {}` rules are the same specificity as our own
- * base rules and load after ours, so in the host's document they simply
- * win -- and raising our specificity to answer them would then stomp the
- * Tailwind utilities this component is built out of. Inside the shadow
- * root neither side can reach the other, so both problems stop existing
- * rather than being traded against each other.
+ * Renders into the shared overlay's `panel` layer -- a shadow root mounted
+ * on <body> by <VoiceProvider> -- not into the host app's tree. That isn't
+ * decoration: a host's bare `button {}` / `form {}` rules are the same
+ * specificity as our own base rules and load after ours, so in the host's
+ * document they simply win, and raising our specificity to answer them
+ * would then stomp the Tailwind utilities this component is built out of.
+ * Inside the shadow root neither side can reach the other, so both problems
+ * stop existing rather than being traded against each other.
  */
 export function InterpreterBubble({ mount = "shadow" }) {
   const [direction, setDirection] = useState(1);

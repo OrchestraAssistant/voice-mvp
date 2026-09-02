@@ -9,9 +9,10 @@
 //   <InterpreterBubble/> -- the default drop-in: floating bubble that
 //                          expands into the panel.
 //
-// <VoiceProvider> is required around any of them. <ListeningGlow> is
-// independent -- it renders into its own overlay outside the host's DOM,
-// so it can be mounted anywhere inside the provider.
+// <VoiceProvider> is required around all of them: besides the session, it
+// mounts the single overlay every piece of chrome draws into. <ListeningGlow>
+// needs no position of its own -- it renders into that overlay, outside the
+// host's DOM -- so it can go anywhere inside the provider.
 
 // Imported here so the build emits dist/voice.css; consumers still
 // import it explicitly via "@yourco/voice/styles.css".
