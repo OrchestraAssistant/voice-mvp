@@ -81,13 +81,12 @@ top-layer popover, and that pairing has its own failure mode (see the gotcha
 below). With `?trace=1` the page also counts `toggle` events: a handful is
 healthy, thousands means two overlays are re-raising each other.
 
-`?shadow=open` forces every shadow root open so the path that actually ships
-can be inspected — nothing else can see inside it, since a closed root has no
-`.shadowRoot` and defeats both selectors and devtools. Pair it with
-`?mount=shadow`. Selectors still can't drive the panel from outside, and a
-click on this page would close it via click-outside before the proxied click
-landed, so the harness drives it from the keyboard instead: **1** toggles the
-Talk tab, **2** toggles Settings.
+Selectors still can't drive the panel from outside: `document.querySelector`
+does not descend into a shadow root even an open one, and a click on this page
+would close the panel via click-outside before any proxied click landed. So
+the harness drives it from the keyboard: **1** toggles the Talk tab, **2**
+toggles Settings, and **3** dispatches a press *inside* the panel, which must
+not close it.
 
 **Verify in the shadow root, not just inline.** A bug can be invisible at
 `mount="inline"` and present in every build that ships — see DESIGN-CHOICES
@@ -142,16 +141,15 @@ root — a live A/B of the CSS-collision problem.
   you're rebuilding. `ps aux | grep vite` before debugging a "nothing
   changed" mystery.
 - **`rimTuningDev.js`** is temporary (rim geometry sliders in the flat panel).
-- **Two overlays in the top layer need an explicit order.** The top layer is a
-  plain stack — last to `showPopover()` wins — so each `ScreenOverlay`
-  re-raises itself when anything else enters it. With the rim and the panel
-  both up, each answered the other's raise with a raise of its own: ~1800
-  `toggle` events a second, the two swapping places every iteration, seen as
-  the panel flickering above and below the rim. `OVERLAY_LAYER` in
-  `ScreenOverlay.jsx` now declares the order, and an overlay only fights a
-  sibling that belongs *below* it. Anything the host opens still wins a raise,
-  unconditionally. Reproduce with
-  `bubble.html?mount=shadow&shadow=open&glow=1&trace=1`.
+- **All chrome shares one overlay.** `VoiceProvider` mounts it; the rim and
+  the panel each claim an ordered layer inside it via `useOverlayLayer`. Two
+  hosts could not agree an order in the top layer without re-raising
+  themselves at each other, which was a ~1800-events-a-second loop seen as the
+  panel flickering above and below the rim. Watch the counter in
+  `bubble.html?mount=shadow&glow=1&trace=1`: a handful is healthy.
+- **`document.head` is the wrong tree.** Anything injecting a stylesheet at
+  runtime must be told to put it in the shadow root. It fails silently
+  otherwise, and only in the build that ships.
 - **A widget that renders but looks unstyled** is almost always one of the
   three cascade traps in DESIGN-CHOICES §3, not a React problem: theme tokens
   reaching `:root` where `--iv-*` isn't defined, our own rules sitting

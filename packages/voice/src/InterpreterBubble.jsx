@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import {
   AudioLines,
@@ -19,7 +20,7 @@ import widgetCss from "./styles.css?inline";
 
 import { cn } from "@/lib/utils";
 import { useInterpreter } from "./VoiceProvider.jsx";
-import { OVERLAY_LAYER, ScreenOverlay } from "./ScreenOverlay.jsx";
+import { useOverlayLayer } from "./ScreenOverlay.jsx";
 
 /**
  * Click-outside, hand-written rather than pulling in usehooks-ts for a
@@ -27,19 +28,18 @@ import { OVERLAY_LAYER, ScreenOverlay } from "./ScreenOverlay.jsx";
  * along for ten lines. The handler goes through a ref so its identity
  * churning between renders doesn't resubscribe the listener every time.
  *
- * Three cases, because a click "inside us" looks different depending on
- * where we're mounted:
+ * composedPath() carries the whole story, in both places we mount. In the
+ * host's tree it is the ordinary ancestor chain; from inside the overlay's
+ * shadow root, `event.target` is retargeted to the shadow host but the path
+ * still lists the real nodes it passed through, so the same check works.
  *
- *   - in the host's tree: contains(event.target) works normally.
- *   - inside an OPEN shadow root: target is retargeted to the host, but
- *     composedPath() still reveals the real path, so we check that.
- *   - inside a CLOSED shadow root (what ScreenOverlay uses): target is
- *     retargeted AND composedPath() truncates at the boundary, so neither
- *     of the above can see in -- verified, not assumed. The one reliable
- *     signal left is that the retargeted target IS our overlay host,
- *     which only ever happens for events originating inside it.
+ * That is true because the root is OPEN. A closed root truncates
+ * composedPath() at the boundary -- verified, not assumed -- and this hook
+ * then needed a third branch comparing against the overlay host, because
+ * neither contains() nor the path could see in. Opening the root deleted
+ * that branch along with the two broken iterations it originally cost.
  */
-function useOnClickOutside(ref, handler, shadowHost) {
+function useOnClickOutside(ref, handler) {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
 
@@ -47,7 +47,6 @@ function useOnClickOutside(ref, handler, shadowHost) {
     const listener = (event) => {
       const el = ref.current;
       if (!el) return;
-      if (shadowHost && event.target === shadowHost) return; // closed root
       const path = typeof event.composedPath === "function" ? event.composedPath() : null;
       const inside = path ? path.includes(el) : el.contains(event.target);
       if (inside) return;
@@ -59,7 +58,7 @@ function useOnClickOutside(ref, handler, shadowHost) {
       document.removeEventListener("mousedown", listener);
       document.removeEventListener("touchstart", listener);
     };
-  }, [ref, shadowHost]);
+  }, [ref]);
 }
 
 const TABS = [
@@ -361,8 +360,15 @@ export function InterpreterBubble({ mount = "shadow" }) {
   const [selected, setSelected] = useState(null);
 
   const containerRef = useRef(null);
-  const [overlay, setOverlay] = useState({ host: null, root: null });
-  useOnClickOutside(containerRef, () => setSelected(null), overlay.host);
+  useOnClickOutside(containerRef, () => setSelected(null));
+
+  // `active` is this layer's vote on holding the top of the top layer: an
+  // idle pill shouldn't displace a host's open modal, an expanded panel
+  // should sit above one.
+  const { container, root } = useOverlayLayer("panel", {
+    active: selected !== null,
+    css: widgetCss,
+  });
 
   // Settings only exists once the panel is open; indices stay stable
   // (talk 0, settings 1) so `selected` survives the array growing.
@@ -426,7 +432,7 @@ export function InterpreterBubble({ mount = "shadow" }) {
                 was. It looked correct at mount="inline" the whole time, which
                 is exactly why it was worth being suspicious of a fix verified
                 only there. */}
-            <AnimatePresence mode="popLayout" initial={false} custom={direction} root={overlay.root ?? undefined}>
+            <AnimatePresence mode="popLayout" initial={false} custom={direction} root={root ?? undefined}>
               <motion.div
                 key={selected}
                 variants={variants}
@@ -459,17 +465,5 @@ export function InterpreterBubble({ mount = "shadow" }) {
   // argued about. "shadow" is the real default.
   if (mount === "inline") return widget;
 
-  // `active` gates only top-layer raising, not rendering: an idle pill
-  // shouldn't displace a host's open modal, but an expanded panel should
-  // sit above it.
-  return (
-    <ScreenOverlay
-      css={widgetCss}
-      active={selected !== null}
-      layer={OVERLAY_LAYER.panel}
-      onHost={(host, root) => setOverlay({ host, root })}
-    >
-      {widget}
-    </ScreenOverlay>
-  );
+  return container ? createPortal(widget, container) : null;
 }

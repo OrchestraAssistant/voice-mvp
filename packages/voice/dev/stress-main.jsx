@@ -1,6 +1,7 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ListeningGlow } from "../src/ListeningGlow.jsx";
+import { OverlayProvider } from "../src/ScreenOverlay.jsx";
 import { useRimTuning } from "../src/rimTuningDev.js"; // TEMPORARY
 
 /**
@@ -10,6 +11,11 @@ import { useRimTuning } from "../src/rimTuningDev.js"; // TEMPORARY
  * VoiceProvider, no index.css. Just the rim, mounted into a hostile page's
  * DOM the way a customer's app would mount it, so what's being tested is
  * the overlay itself and not any support the demo app happens to give it.
+ *
+ * <OverlayProvider> is the one piece that has to be here. It mounts the
+ * single overlay all widget chrome draws into, and an app normally gets it
+ * from <VoiceProvider> -- which this page deliberately does without, since
+ * a realtime session has nothing to do with what is being tested.
  *
  * `active` is driven by a button here rather than by a live mic session,
  * so the visual can be checked without an OpenAI key.
@@ -21,7 +27,7 @@ function StressHarness() {
   const rim = useRimTuning();
 
   return (
-    <>
+    <OverlayProvider>
       <ListeningGlow active={active} width={rim.width} cornerRadius={rim.corner} />
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button id="toggle-glow" type="button" onClick={() => setActive((a) => !a)}>
@@ -34,7 +40,7 @@ function StressHarness() {
           Open host popover
         </button>
       </div>
-    </>
+    </OverlayProvider>
   );
 }
 

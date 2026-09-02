@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
- * A mount point for whole-screen widget chrome (the listening rim) that has
- * to survive a host app we don't control and can't read the source of.
+ * The single mount point for every piece of widget chrome -- the listening
+ * rim and the floating panel -- that has to survive a host app we don't
+ * control and can't read the source of.
  *
  * A plain `position: fixed; z-index: 9999` div rendered inside the host's
  * own tree loses to three separate things, and a host app is free to do all
@@ -22,14 +23,15 @@ import { createPortal } from "react-dom";
  *   3. The cascade. Class names collide, and the host's `* {}` reset and its
  *      `!important` rules apply to our nodes exactly as readily as to its own.
  *
- * So this component doesn't try to out-number the host. It steps outside it:
+ * So this doesn't try to out-number the host. It steps outside it:
  *
  *   - mounted as a direct child of <body>, outside the host's React tree, so
  *     it has no ancestors to inherit a broken containing block from;
- *   - styling lives in a *closed* shadow root, which the host's stylesheets
- *     cannot select into and its scripts cannot reach (a happy side effect:
- *     our own dom_snapshot/dom_click fallback tools walk the light DOM, so
- *     the interpreter never sees its own chrome as part of the page);
+ *   - styling lives in a shadow root, which the host's stylesheets cannot
+ *     select into (a happy side effect: our own dom_snapshot/dom_click
+ *     fallback tools walk the light DOM with querySelectorAll, which does not
+ *     descend into a shadow root open or closed, so the interpreter never
+ *     sees its own chrome as part of the page);
  *   - the box is pinned with inline `!important` declarations, which outrank
  *     every author rule a host can write -- including its own `!important`;
  *   - and where the browser has it, the element promotes itself into the
@@ -38,7 +40,11 @@ import { createPortal } from "react-dom";
  *     construction -- immunity to 1 and 2 by rule rather than by out-bidding.
  *
  * `pointer-events: none` throughout: the host app underneath stays fully
- * clickable, which is the whole point of an ambient indicator.
+ * clickable, which is the whole point of an ambient indicator. The panel is
+ * the one part that wants clicks, so it opts back in for its own subtree.
+ *
+ * There is exactly ONE of these, mounted by <VoiceProvider>, with an ordered
+ * layer per piece of chrome. See LAYERS for why that is not a detail.
  */
 
 /**
@@ -108,23 +114,26 @@ function raise(host) {
 }
 
 /**
- * Stacking order among OUR OWN overlays, which the top layer cannot work out
- * for itself -- it is a plain stack, so the last one to call showPopover()
- * wins regardless of what it is. Higher sits above.
+ * The layers inside the overlay, in paint order: earlier sits below.
+ *
+ * There is ONE overlay host for the whole widget, and this is why. The top
+ * layer is a plain stack -- last to showPopover() paints last -- so two hosts
+ * of ours could not agree an order without each watching for the other and
+ * re-raising itself, which is a feedback loop: our raise fires a toggle, the
+ * other answers with a raise, which fires a toggle. Measured at ~1800 events
+ * a second, seen as the panel flickering above and below the rim.
+ *
+ * Sharing one host deletes the question instead of managing it. Both layers
+ * are ordinary siblings in one tree, so paint order is DOM order, decided
+ * here, once, and nothing has to fight for it at runtime.
  */
-export const OVERLAY_LAYER = {
-  /** Ambient chrome. Full-viewport, pointer-events: none, purely decorative. */
-  rim: 0,
-  /** Interactive surface, and the one the user is actually looking at. */
-  panel: 10,
-};
+const LAYERS = ["rim", "panel"];
 
-function mount(css, layer) {
+const OverlayContext = createContext(null);
+
+function mount() {
   const host = document.createElement("div");
-  // The value is load-bearing, not just a marker: it is how a *sibling*
-  // overlay decides whether the thing that just entered the top layer is
-  // meant to be above it or below it. See onToggle.
-  host.setAttribute("data-interpreter-overlay", String(layer));
+  host.setAttribute("data-interpreter-overlay", "");
   host.setAttribute("aria-hidden", "true");
   host.setAttribute("popover", "manual"); // "manual" => no light-dismiss, no
   // backdrop darkening, and it never closes anything else the host has open.
@@ -132,14 +141,38 @@ function mount(css, layer) {
     host.style.setProperty(prop, value, "important");
   }
 
-  const shadow = host.attachShadow({ mode: "closed" });
-  const style = document.createElement("style");
-  style.textContent = css;
-  shadow.append(style);
+  // OPEN, not closed. The difference is narrower than it looks and runs the
+  // wrong way. Closed buys exactly two things over open: `host.shadowRoot` is
+  // null, and composedPath() truncates at the boundary. Everything the
+  // isolation is actually FOR survives either way -- outside CSS still cannot
+  // select in, document.querySelectorAll still does not descend (so our own
+  // dom_snapshot fallback still never sees the widget's chrome as page
+  // content), and inherited properties still cross.
+  //
+  // What closed costs is larger. It forces the click-outside check onto a
+  // workaround, since neither contains() nor composedPath() can see in. It
+  // makes the configuration that actually ships unreachable by devtools,
+  // selectors and tests -- which is how a resize fix got verified only at
+  // mount="inline" and shipped broken. And it is not a security boundary
+  // regardless: a host that wants in patches Element.prototype.attachShadow
+  // before our script loads, which is six lines. Closed charged real
+  // debuggability for the appearance of a guarantee it could not make.
+  const shadow = host.attachShadow({ mode: "open" });
+
+  // One container per layer, created up front in order. `display: contents`
+  // so they generate no box at all and cannot affect layout; they exist
+  // purely to fix the order their contents paint in.
+  const layers = {};
+  for (const name of LAYERS) {
+    const el = document.createElement("div");
+    el.setAttribute("data-overlay-layer", name);
+    el.style.display = "contents";
+    shadow.append(el);
+    layers[name] = el;
+  }
 
   const parent = document.body || document.documentElement;
   parent.append(host);
-  raise(host);
 
   // A host that wipes or replaces <body> (`body.innerHTML = ""`, a hard
   // re-render, a router that owns the document) would take us with it.
@@ -156,6 +189,7 @@ function mount(css, layer) {
   return {
     host,
     shadow,
+    layers,
     dispose() {
       reattach.disconnect();
       try {
@@ -169,44 +203,38 @@ function mount(css, layer) {
 }
 
 /**
- * Portals `children` into a viewport-sized overlay that sits above an unknown
- * host app. `active` doesn't gate rendering -- the overlay stays mounted so
- * exit animations can finish -- it gates only whether we fight for the top of
- * the top-layer stack, so an idle indicator never displaces a host's modal.
+ * Mounts the single overlay every piece of widget chrome draws into: a
+ * viewport-sized box, in a shadow root, as a direct child of <body>, above an
+ * unknown host app. Rendered by <VoiceProvider>, so consumers never place it.
  *
- * `onHost(host, root)` hands back both the shadow host element and the shadow
- * root itself. The root is not decoration: code that injects a stylesheet at
- * runtime has to put it in the tree it is meant to style, and inside a shadow
- * root `document.head` is the wrong tree. Handing it to our own components
- * costs nothing -- the reference stays in this module and is never exposed to
- * the host page, so the root is still closed as far as anyone outside is
- * concerned.
+ * It stays mounted for the life of the app -- exit animations need somewhere
+ * to finish. What comes and goes is whether we fight for the top of the
+ * top-layer stack, which is driven by whether any layer currently claims to
+ * be active: an idle indicator should never displace a host's modal, and an
+ * open panel should sit above one.
  */
-export function ScreenOverlay({ children, css, active, onHost, layer = OVERLAY_LAYER.rim }) {
-  const [mounted, setMounted] = useState(null);
-  const onHostRef = useRef(onHost);
-  onHostRef.current = onHost;
+export function OverlayProvider({ children }) {
+  const [instance, setInstance] = useState(null);
+  const [claims, setClaims] = useState({});
 
   useEffect(() => {
-    const instance = mount(css, layer);
-    setMounted(instance);
-    // The host is the only handle on this subtree that EVENTS give a caller:
-    // the root is closed, so events from inside retarget to it and
-    // composedPath() stops at it. That makes "event.target === host" the one
-    // reliable "this came from inside the overlay" signal. The root is handed
-    // over separately because no amount of DOM traversal can recover it --
-    // `host.shadowRoot` is null for a closed root, by design.
-    onHostRef.current?.(instance.host, instance.shadow);
+    const created = mount();
+    setInstance(created);
     return () => {
-      setMounted(null);
-      onHostRef.current?.(null, null);
-      instance.dispose();
+      setInstance(null);
+      created.dispose();
     };
-  }, [css, layer]);
+  }, []);
+
+  const setClaim = useCallback((name, value) => {
+    setClaims((current) => (current[name] === value ? current : { ...current, [name]: value }));
+  }, []);
+
+  const active = Object.values(claims).some(Boolean);
 
   useEffect(() => {
-    if (!mounted || !active) return;
-    const { host } = mounted;
+    if (!instance || !active) return;
+    const { host } = instance;
 
     // Raising on activation covers anything the host already had open.
     raise(host);
@@ -223,24 +251,11 @@ export function ScreenOverlay({ children, css, active, onHost, layer = OVERLAY_L
     //     and a host on an older engine would otherwise silently cover us.
     //     Attribute-filtered observation is cheap -- it fires on `open`
     //     changing somewhere, not on the host app's ordinary re-renders.
+    //
+    // Skipping our own host is all the guard this needs now that there is
+    // only one of them. With two, this same listener was a mutual-raise loop.
     const onToggle = (event) => {
       if (event.target === host || event.newState !== "open") return;
-
-      // Another overlay of OURS, rather than something the host opened.
-      // Raising unconditionally here is a runaway: our raise fires a toggle,
-      // which the other overlay answers with a raise of its own, which fires
-      // a toggle... Measured at ~1800 events/second, with the two of them
-      // swapping places every iteration -- which is what a user sees as the
-      // panel flickering above and below the rim.
-      //
-      // So only fight a sibling that is supposed to be BELOW us. The one
-      // above ignores the one below, the exchange terminates after a single
-      // raise, and the order it terminates in is the one OVERLAY_LAYER
-      // declares rather than whichever happened to open last.
-      const siblingLayer =
-        event.target instanceof Element ? event.target.getAttribute("data-interpreter-overlay") : null;
-      if (siblingLayer !== null && Number(siblingLayer) >= layer) return;
-
       raise(host);
     };
     document.addEventListener("toggle", onToggle, true);
@@ -254,7 +269,56 @@ export function ScreenOverlay({ children, css, active, onHost, layer = OVERLAY_L
       document.removeEventListener("toggle", onToggle, true);
       dialogs.disconnect();
     };
-  }, [mounted, active, layer]);
+  }, [instance, active]);
 
-  return mounted ? createPortal(children, mounted.shadow) : null;
+  const value = useMemo(() => ({ instance, setClaim }), [instance, setClaim]);
+  return <OverlayContext.Provider value={value}>{children}</OverlayContext.Provider>;
+}
+
+/**
+ * Claims a layer of the shared overlay and returns where to render into it.
+ *
+ * `active` is this layer's vote on whether the overlay should hold the top of
+ * the top layer. `css` is the layer's own stylesheet, injected into the shared
+ * root -- each piece of chrome carries its own styles rather than the provider
+ * knowing about all of them.
+ *
+ * Returns `{ container, root }`. `container` is the portal target. `root` is
+ * the shadow root, which callers need because a shadow root is its own style
+ * scope: anything injecting a stylesheet at runtime must be told to put it
+ * here rather than in `document.head`, where it would silently not apply.
+ * framer-motion's AnimatePresence takes it as `root` for exactly that reason.
+ */
+export function useOverlayLayer(name, { active = false, css } = {}) {
+  const context = useContext(OverlayContext);
+  if (!context) {
+    throw new Error("Widget chrome must be rendered inside <VoiceProvider>, which mounts the overlay.");
+  }
+  const { instance, setClaim } = context;
+
+  useEffect(() => {
+    setClaim(name, active);
+    return () => setClaim(name, false);
+  }, [name, active, setClaim]);
+
+  useEffect(() => {
+    if (!instance || !css) return;
+    const style = document.createElement("style");
+    style.textContent = css;
+    // Ahead of the layer containers, so author order inside the root is
+    // stylesheets first and content after.
+    instance.shadow.prepend(style);
+    return () => style.remove();
+  }, [instance, css]);
+
+  return {
+    container: instance?.layers[name] ?? null,
+    root: instance?.shadow ?? null,
+  };
+}
+
+/** Renders `children` into one layer of the shared overlay. */
+export function OverlayLayer({ name, active, css, children }) {
+  const { container } = useOverlayLayer(name, { active, css });
+  return container ? createPortal(children, container) : null;
 }

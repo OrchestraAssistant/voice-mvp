@@ -8,8 +8,8 @@ costs, and what would justify revisiting.
 
 ## 1. Where the widget mounts: shadow root vs. the host's DOM tree
 
-**Chosen:** the widget renders through `ScreenOverlay` into a **closed shadow
-root** attached to `<body>`, outside the host app's React tree.
+**Chosen:** all widget chrome renders into a **single open shadow root**
+attached to `<body>`, outside the host app's React tree.
 
 **Alternative:** render in the host's tree (`mount="inline"`, still supported
 as a switch), and defend our styling with high-specificity selectors.
@@ -49,21 +49,45 @@ Inside a shadow root, outer selectors simply **don't match** our nodes, so
 neither mechanism applies. The problem stops existing instead of being
 rebalanced.
 
+### Open, not closed
+
+The root was closed at first. The difference is narrower than it looks, and it
+runs the wrong way.
+
+Closed buys exactly two things over open: `host.shadowRoot` returns `null`,
+and `composedPath()` truncates at the boundary — verified in jsdom:
+
+| mode | `composedPath()` length | reveals inner node |
+|---|---|---|
+| `open` | 8 | yes |
+| `closed` | 5 | no |
+
+Everything the isolation is actually *for* survives either way. Outside CSS
+still cannot select in. `document.querySelectorAll` does not descend into an
+open root either, so our own `dom_snapshot` / `dom_click` fallback still never
+sees the widget's chrome as page content. Inherited properties still cross.
+
+What closed cost was larger:
+
+- Click-outside could use neither `contains()` nor `composedPath()`, so it ran
+  off `event.target === overlayHost`. Reliable, but a third branch that cost
+  two broken iterations before it was understood. Open deletes it.
+- The configuration that ships became unreachable by devtools, selectors and
+  tests. That is not neutral: a resize fix was verified at `mount="inline"`,
+  looked complete, and was broken in every build that shipped. Nothing could
+  see it.
+- It was never a security boundary. A host that wants in patches
+  `Element.prototype.attachShadow` before our script loads. That is six lines,
+  and it is exactly what the harness had to do to become inspectable. If a
+  customer's security review ever demands real isolation, the honest answer is
+  an iframe, not a closed root.
+
 ### What it costs
 
-- **Event retargeting.** Events crossing the boundary have `event.target`
-  rewritten to the shadow host. A closed root *also* truncates
-  `composedPath()` at the boundary — verified in jsdom:
-
-  | mode | `composedPath()` length | reveals inner node |
-  |---|---|---|
-  | `open` | 8 | yes |
-  | `closed` | 5 | no |
-
-  So click-outside detection can't use `contains()` *or* `composedPath()`.
-  It works off `event.target === overlayHost`, which is reliable precisely
-  because everything inside retargets to it. (This cost us two broken
-  iterations before it was understood.)
+- **Event retargeting.** Events crossing the boundary still have
+  `event.target` rewritten to the shadow host, open or not. Anything reading
+  `target` from a document-level listener has to read `composedPath()`
+  instead.
 - **Runtime-injected stylesheets land in the wrong tree.** A library that
   injects a `<style>` into `document.head` at runtime has no effect on our
   nodes, and fails *silently* — no error, no warning, just a rule that never
@@ -80,19 +104,30 @@ rebalanced.
   **The general lesson is the one to keep:** a fix verified only at
   `mount="inline"` is not verified. Anything that injects styles, measures
   against `document`, or looks up an element by id needs checking in the
-  root, which is what `dev/bubble.html?mount=shadow&shadow=open` is for.
+  root, which is what `dev/bubble.html?mount=shadow` is for.
 - Focus, `aria-*` relationships, and form participation don't cross the
   boundary for free.
+- **One root, not one per component.** The rim and the panel used to mount
+  their own overlay each, which meant two elements competing for a top layer
+  that is a plain stack: last to `showPopover()` paints last. Neither could
+  concede without a rule, and each re-raising itself when the other appeared
+  was a feedback loop — our raise fires a `toggle`, the other answers with a
+  raise, measured at ~1800 events a second and seen as the panel flickering
+  above and below the rim. They now share one host with an ordered layer
+  each, so paint order is DOM order, decided once, and the question stops
+  existing rather than being arbitrated at runtime. The cost is that
+  `VoiceProvider` mounts the overlay, so chrome can no longer be used entirely
+  standalone; `OverlayProvider` is exported for harnesses that want the
+  overlay without a session.
 - Host tooling and any library that queries `document` can't see inside.
 - Inherited properties (`color`, `font`) *do* still cross, so isolation is of
   rules, not of everything.
 
 ### Revisit if
 
-- The retargeting workarounds spread beyond click-outside — if focus
-  management or a11y wiring starts needing per-case shims, `mode: "open"`
-  restores `composedPath()` and costs little real protection (a determined
-  host can defeat a closed root anyway).
+- A host is observed reaching into the root and interfering. Closing it again
+  would only make that slightly less convenient, so the answer at that point
+  is probably the iframe below rather than going back.
 - We adopt a component that assumes document-level DOM access.
 - We decide prefixed class names (`.iv-transcript`) plus explicit shielding
   is enough, accepting that a host's `button {}` still reaches us.

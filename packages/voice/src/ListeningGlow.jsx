@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { OVERLAY_LAYER, ScreenOverlay } from "./ScreenOverlay.jsx";
+import { OverlayLayer } from "./ScreenOverlay.jsx";
 
 /**
  * The animated rainbow rim around the screen edge, signaling real listening
@@ -19,10 +19,10 @@ import { OVERLAY_LAYER, ScreenOverlay } from "./ScreenOverlay.jsx";
  * over a real app, so that cover is reproduced as a mask instead. See
  * FALLOFF below for the arithmetic tying the two together.
  *
- * It renders through <ScreenOverlay>, not into the host app's tree, and
- * carries the CSS below with it instead of expecting a stylesheet to exist
- * -- so it draws over a host app whose markup and CSS we've never seen.
- * That file's header has the reasoning.
+ * It renders into the shared overlay's `rim` layer, not into the host app's
+ * tree, and carries the CSS below with it instead of expecting a stylesheet
+ * to exist -- so it draws over a host app whose markup and CSS we've never
+ * seen. ScreenOverlay.jsx's header has the reasoning.
  */
 
 /* The original's exact four stops, in order. No wrapping fifth stop: the
@@ -73,9 +73,9 @@ const FALLOFF = [
 /* The table above is written at its natural 80px scale; the band width is
    then a live multiplier on it, so every stop stays in proportion and the
    curve's shape is preserved at any width. Expressed against a CSS variable
-   rather than baked into the string, because ScreenOverlay keys its mount
-   effect on the stylesheet: a width that changed this text would tear down
-   and rebuild the whole overlay on every frame of a slider drag. */
+   rather than baked into the string, because the layer keys its style
+   injection on the stylesheet: a width that changed this text would tear the
+   <style> element down and rebuild it on every frame of a slider drag. */
 const REFERENCE_WIDTH = 80;
 const at = (px) => (px === 0 ? "0px" : `calc(var(--rim-width) * ${px / REFERENCE_WIDTH})`);
 
@@ -224,7 +224,7 @@ const GLOW_CSS = `
  */
 export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
   return (
-    <ScreenOverlay css={GLOW_CSS} active={active} layer={OVERLAY_LAYER.rim}>
+    <OverlayLayer name="rim" css={GLOW_CSS} active={active}>
       <AnimatePresence>
         {active && (
           <motion.div
@@ -252,7 +252,7 @@ export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
           </motion.div>
         )}
       </AnimatePresence>
-    </ScreenOverlay>
+    </OverlayLayer>
   );
 }
 

@@ -20,29 +20,18 @@ const params = new URLSearchParams(window.location.search);
 const MOUNT = params.get("mount") === "shadow" ? "shadow" : "inline";
 if (params.get("bg") === "dark") document.body.classList.add("dark");
 
-// ?shadow=open -- force every shadow root on the page open, so the real
-// overlay path can be inspected. The widget ships with a CLOSED root
-// (DESIGN-CHOICES §1), which is exactly what makes it unreachable: no
-// selector, no devtools query, and `host.shadowRoot` is null. That opacity
-// hid a real bug -- popLayout works at mount="inline" and silently does not
-// inside a shadow root -- so being able to look inside the thing that
-// actually ships is worth a harness-only override.
-//
-// It is a patch on the platform, not a prop, so nothing in the package knows
-// it happened. One behaviour genuinely differs under it: composedPath() stops
-// truncating, so the click-outside code takes its open-root branch rather than
-// the closed-root one. Trust this for layout questions, not for event ones.
-if (params.get("shadow") === "open") {
-  const attachShadow = Element.prototype.attachShadow;
-  Element.prototype.attachShadow = function (init) {
-    return attachShadow.call(this, { ...init, mode: "open" });
-  };
-}
-
 /**
  * Query inside the widget wherever it happens to be mounted -- the host tree
- * at mount="inline", or an overlay's shadow root. Only reaches into the root
- * when ?shadow=open has forced it open.
+ * at mount="inline", or the overlay's shadow root.
+ *
+ * The root being OPEN is what makes this possible at all. It was closed
+ * until recently, and reaching in then meant patching
+ * Element.prototype.attachShadow before React ran -- six lines, which is
+ * also the reason a closed root was never the security boundary it looked
+ * like. Note that a plain document.querySelector still does not descend into
+ * an open root either, so the widget stays invisible to the host page and to
+ * our own dom_snapshot tools; you have to ask for .shadowRoot deliberately,
+ * as here.
  */
 function inWidget(selector) {
   const roots = [document, ...[...document.querySelectorAll("[data-interpreter-overlay]")].map((h) => h.shadowRoot)];
@@ -64,12 +53,26 @@ function inWidget(selector) {
 document.addEventListener("keydown", (e) => {
   const label = { 1: "Talk", 2: "Settings" }[e.key];
   if (label) inWidget(`.interpreter-widget button[aria-label="${label}"]`)?.click();
+
+  // 3 -- a pointer press on a control INSIDE the panel, which must NOT close
+  // it. This is the other half of click-outside and the half that is easy to
+  // get wrong: the listener sits on document, where `event.target` has been
+  // retargeted to the shadow host, so the check has to read composedPath()
+  // instead. `composed: true` is what real UI events carry and what lets that
+  // path cross the boundary at all, so this is a faithful stand-in for a
+  // click a selector cannot reach.
+  if (e.key === "3") {
+    inWidget(".interpreter-widget form input")?.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, composed: true }),
+    );
+  }
 });
 
-// ?glow=1 mounts the listening rim alongside the panel. That is the only way
-// to reproduce anything about how our TWO overlays interact -- each is a
-// separate top-layer popover, and the interesting bugs are the ones that need
-// both of them raised at once.
+// ?glow=1 mounts the listening rim alongside the panel, so both layers of the
+// overlay are occupied at once. Neither piece of chrome can misbehave on its
+// own -- the flicker that led here needed both of them up -- and nothing else
+// in the repo puts them on the same page: stress.html has only the rim, and
+// the demo app cannot be driven from outside.
 createRoot(document.getElementById("widget-mount")).render(
   <StrictMode>
     <VoiceProvider>
@@ -79,30 +82,24 @@ createRoot(document.getElementById("widget-mount")).render(
   </StrictMode>,
 );
 
-// ?trace=1 -- resize recorder. Samples the animated container and the measured
-// wrapper every frame for a second after each click in the widget, and writes
-// the result into #trace where inspect_page can read it back.
+// ?trace=1 -- two recorders, both written into the page for inspect_page to
+// read back, because neither question a screenshot can answer.
 //
-// This exists because "the panel grows weird" is not a question a screenshot
-// can answer -- you cannot see a 350ms overshoot in a still, and the numbers
-// name the cause immediately. It found this one: opening the panel, the
-// measured wrapper reported 348px tall at a container width of 56px, then
-// unwrapped down to 188 as the width animated out, so the panel ballooned
-// before settling. `inner` holding steady while `outer` moves is what a
-// healthy transition looks like.
-// Top-layer churn counter. Two overlays that both re-raise themselves when
-// anything else enters the top layer will re-raise each other forever, and a
-// runaway shows up here as a number climbing by thousands rather than sitting
-// at a handful.
+//   #trace   the resize, frame by frame. You cannot see a 350ms overshoot in
+//            a still. `inner` holding steady while `outer` moves toward it is
+//            what a healthy transition looks like; `inner` moving too means
+//            the content is reflowing mid-transition, and `inner` reading as
+//            the sum of both panes means the outgoing one never left the flow.
+//   #toggles top-layer churn. A handful of toggle events is healthy. Thousands
+//            means something is re-raising itself in a loop -- which is what
+//            two separate overlay hosts used to do to each other.
 if (params.has("trace")) {
   let toggles = 0;
   document.addEventListener("toggle", () => toggles++, true);
   setInterval(() => {
     document.getElementById("toggles").textContent = `toggle events: ${toggles}`;
   }, 200);
-}
 
-if (params.has("trace")) {
   const out = document.getElementById("trace");
   const record = () => {
     const rows = [];

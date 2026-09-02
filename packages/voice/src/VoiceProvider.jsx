@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { connectRealtimeSession } from "./realtimeClient.js";
+import { OverlayProvider } from "./ScreenOverlay.jsx";
 import * as dom from "./domActions.js";
 
 const InterpreterContext = createContext(null);
@@ -329,7 +330,11 @@ export function VoiceProvider({
         holdEnd,
       }}
     >
-      {children}
+      {/* One overlay for all widget chrome, mounted here so consumers never
+          place it and so the rim and the panel end up in the same shadow
+          root. Two of them could not agree an order in the top layer without
+          fighting each other for it -- see LAYERS in ScreenOverlay.jsx. */}
+      <OverlayProvider>{children}</OverlayProvider>
     </InterpreterContext.Provider>
   );
 }
