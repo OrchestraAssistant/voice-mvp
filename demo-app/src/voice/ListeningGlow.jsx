@@ -97,6 +97,9 @@ const GLOW_CSS = `
     inset: 0;
     pointer-events: none;
     overflow: hidden;
+    /* Set inline per-render so toggling it doesn't change this stylesheet's
+       identity, which would tear down and rebuild the whole overlay. */
+    border-radius: var(--rim-corner-radius, 0px);
 
     -webkit-mask-image: ${edgeMask("right")}, ${edgeMask("bottom")};
     -webkit-mask-composite: source-over, source-over;
@@ -115,13 +118,29 @@ const GLOW_CSS = `
   }
 `;
 
-export function ListeningGlow({ active }) {
+/**
+ * `corners`:
+ *
+ *   "square"  (default) -- the original's shape. The mask reaches its full
+ *      0.53 at both edges of a corner, so source-over compositing lands the
+ *      corner itself at 1-(1-0.53)^2 = 0.78: the hottest point of the whole
+ *      rim, and fully visible.
+ *   "rounded" -- clips that outer corner to a 14px arc. Worth knowing what
+ *      this does and doesn't change: the mask is untouched, so every
+ *      iso-alpha contour, including the inner edge where the glow fades
+ *      into the page, is identical between the two. `border-radius` only
+ *      cuts the outermost arc away -- which happens to remove the 0.78 peak,
+ *      so rounded corners read slightly cooler even though nothing about
+ *      the falloff moved.
+ */
+export function ListeningGlow({ active, corners = "square" }) {
   return (
     <ScreenOverlay css={GLOW_CSS} active={active}>
       <AnimatePresence>
         {active && (
           <motion.div
             className="frame"
+            style={{ "--rim-corner-radius": corners === "rounded" ? "14px" : "0px" }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

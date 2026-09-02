@@ -9,9 +9,12 @@ import { useInterpreter } from "./voice/VoiceProvider.jsx";
 
 // `?glow=1` forces the listening rim on without a live mic session, so the
 // visual can be looked at (and screenshotted) on the real app's real
-// background without an OpenAI key. Read once at module load; it's a dev
-// affordance, not a feature.
-const FORCE_GLOW = new URLSearchParams(window.location.search).has("glow");
+// background without an OpenAI key. `?glow=rounded` does the same with the
+// rim's corners rounded instead of square, for comparing the two. Read once
+// at module load; a dev affordance, not a feature.
+const GLOW_PARAM = new URLSearchParams(window.location.search).get("glow");
+const FORCE_GLOW = GLOW_PARAM !== null;
+const GLOW_CORNERS = GLOW_PARAM === "rounded" ? "rounded" : "square";
 
 export default function App() {
   const { status, mode, holding } = useInterpreter();
@@ -19,7 +22,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <ListeningGlow active={listening} />
+      <ListeningGlow active={listening} corners={GLOW_CORNERS} />
       <nav className="sidebar">
         <h2>Tasker</h2>
         <Link to="/">Dashboard</Link>

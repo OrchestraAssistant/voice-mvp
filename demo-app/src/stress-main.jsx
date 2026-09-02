@@ -15,13 +15,21 @@ import { ListeningGlow } from "./voice/ListeningGlow.jsx";
  */
 function StressHarness() {
   const [active, setActive] = useState(true);
+  const [corners, setCorners] = useState("square");
 
   return (
     <>
-      <ListeningGlow active={active} />
+      <ListeningGlow active={active} corners={corners} />
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button id="toggle-glow" type="button" onClick={() => setActive((a) => !a)}>
           {active ? "Stop listening" : "Start listening"}
+        </button>
+        <button
+          id="toggle-corners"
+          type="button"
+          onClick={() => setCorners((c) => (c === "square" ? "rounded" : "square"))}
+        >
+          Corners: {corners}
         </button>
         <button id="open-dialog" type="button" onClick={() => document.getElementById("host-dialog").showModal()}>
           Open host modal
