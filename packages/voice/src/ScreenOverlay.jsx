@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -159,14 +159,22 @@ function mount(css) {
  * exit animations can finish -- it gates only whether we fight for the top of
  * the top-layer stack, so an idle indicator never displaces a host's modal.
  */
-export function ScreenOverlay({ children, css, active }) {
+export function ScreenOverlay({ children, css, active, onHost }) {
   const [mounted, setMounted] = useState(null);
+  const onHostRef = useRef(onHost);
+  onHostRef.current = onHost;
 
   useEffect(() => {
     const instance = mount(css);
     setMounted(instance);
+    // The host is the only handle a caller gets on this subtree: the root
+    // is closed, so events from inside retarget to it and composedPath()
+    // stops at it. That makes "event.target === host" the one reliable
+    // "this came from inside the overlay" signal.
+    onHostRef.current?.(instance.host);
     return () => {
       setMounted(null);
+      onHostRef.current?.(null);
       instance.dispose();
     };
   }, [css]);

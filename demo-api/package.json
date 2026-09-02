@@ -1,0 +1,15 @@
+{
+  "name": "demo-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demo app's own REST API. Stands in for a customer's backend; not part of the product.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}

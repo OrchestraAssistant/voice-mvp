@@ -1,0 +1,19 @@
+{
+  "name": "voice-mvp",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "demo-app",
+    "demo-api",
+    "relay"
+  ],
+  "scripts": {
+    "build:pkg": "npm run build -w @yourco/voice",
+    "generate": "npm run generate -w @yourco/voice-cli",
+    "dev:relay": "npm run dev -w relay",
+    "dev:api": "npm run dev -w demo-api",
+    "dev:demo": "npm run dev -w demo-app",
+    "dev:stress": "npm run stress -w @yourco/voice"
+  }
+}

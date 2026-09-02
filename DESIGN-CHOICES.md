@@ -1,0 +1,242 @@
+# Design choices
+
+Decisions that were genuine forks — where the alternative was reasonable and
+might become the better answer later. Each records what was chosen, what it
+costs, and what would justify revisiting.
+
+---
+
+## 1. Where the widget mounts: shadow root vs. the host's DOM tree
+
+**Chosen:** the widget renders through `ScreenOverlay` into a **closed shadow
+root** attached to `<body>`, outside the host app's React tree.
+
+**Alternative:** render in the host's tree (`mount="inline"`, still supported
+as a switch), and defend our styling with high-specificity selectors.
+
+### Why
+
+A host app's ordinary global CSS reaches an in-tree widget and wins. This
+isn't hypothetical — the demo app, which is a deliberately unremarkable host,
+took the widget apart on first contact:
+
+```css
+/* demo-app/src/index.css — an entirely normal thing for an app to have */
+form   { display: flex; flex-direction: column; }
+button { padding: 6px 14px; border: 1px solid var(--border); background: #fafafa; }
+```
+
+Result: the widget's command input and Send button stacked vertically, and the
+tab pills became bordered grey boxes.
+
+Two separate mechanisms make this unwinnable in-tree:
+
+1. **Specificity + source order.** Our base rules are `:where(...) button`,
+   which scores 0,0,1 — identical to a bare `button {}`. The host's stylesheet
+   loads after ours (verified in the demo's compiled CSS: widget styles at
+   char 7386, host styles at 13287), so on every tie the host wins.
+2. **Cascade layers outrank specificity.** Tailwind v4 emits utilities into
+   `@layer utilities`, and for normal declarations *unlayered* styles beat
+   *layered* ones regardless of score. So a host's unlayered `button {}`
+   (0,0,1) beats `.bg-foreground/4` (0,1,0) — the utility is more specific and
+   still loses.
+
+Raising our own specificity to answer this doesn't work either: it then stomps
+the Tailwind utilities the pasted skiper/shadcn components are built from.
+That's the trap — every specificity setting is wrong for one of the two.
+
+Inside a shadow root, outer selectors simply **don't match** our nodes, so
+neither mechanism applies. The problem stops existing instead of being
+rebalanced.
+
+### What it costs
+
+- **Event retargeting.** Events crossing the boundary have `event.target`
+  rewritten to the shadow host. A closed root *also* truncates
+  `composedPath()` at the boundary — verified in jsdom:
+
+  | mode | `composedPath()` length | reveals inner node |
+  |---|---|---|
+  | `open` | 8 | yes |
+  | `closed` | 5 | no |
+
+  So click-outside detection can't use `contains()` *or* `composedPath()`.
+  It works off `event.target === overlayHost`, which is reliable precisely
+  because everything inside retargets to it. (This cost us two broken
+  iterations before it was understood.)
+- Focus, `aria-*` relationships, and form participation don't cross the
+  boundary for free.
+- Host tooling and any library that queries `document` can't see inside.
+- Inherited properties (`color`, `font`) *do* still cross, so isolation is of
+  rules, not of everything.
+
+### Revisit if
+
+- The retargeting workarounds spread beyond click-outside — if focus
+  management or a11y wiring starts needing per-case shims, `mode: "open"`
+  restores `composedPath()` and costs little real protection (a determined
+  host can defeat a closed root anyway).
+- We adopt a component that assumes document-level DOM access.
+- We decide prefixed class names (`.iv-transcript`) plus explicit shielding
+  is enough, accepting that a host's `button {}` still reaches us.
+
+`mount="inline"` is kept deliberately so the difference stays observable:
+compare `/` against `/?mount=inline` in the demo app.
+
+### Considered and deferred: an iframe
+
+The strongest isolation available, and — as far as we understand it, from
+general knowledge rather than verified research — what the established
+widget vendors use. Chat messengers (Intercom, Zendesk, Drift) render their
+UI in one or more iframes with a small coordinating script in the page.
+Payment and captcha embeds (Stripe Elements, reCAPTCHA) do it for a stricter
+reason: the host page *must not* be able to read what the user types, so
+isolation is the product requirement rather than a styling convenience.
+
+An iframe is strictly stronger than a shadow root:
+
+- separate document *and* separate JS global scope;
+- **inherited properties don't cross either** — `color`, `font`,
+  `line-height` still leak into our shadow root, and wouldn't here;
+- immune to `!important`, ancestor stacking contexts and re-rooted
+  containing blocks by construction, not by workaround.
+
+Deferred because of three costs that land specifically hard on this product:
+
+1. **Content can't overflow the frame's box.** A panel that expands, or any
+   dropdown that spills past its edge, requires resizing the iframe itself
+   from inside over `postMessage`. Much of the complexity in those vendors'
+   SDKs is exactly this.
+2. **The listening rim is full-viewport.** A transparent full-viewport
+   iframe with `pointer-events: none` can host the rim, but then it can't
+   receive the panel's clicks either — so it becomes multiple iframes, or
+   one that resizes as the panel opens and closes.
+3. **Our agent must touch the host's DOM regardless.** `dom_snapshot` /
+   `dom_click` / `dom_type` are the whole Tier-1 fallback and can only run
+   in the page's context. So an iframe splits us into iframe-UI plus
+   page-script, coordinated over `postMessage` — where today the UI and the
+   session share React state directly.
+
+The asymmetry worth remembering: a chat widget's UI is self-contained and
+never reads the host page, which is what makes an iframe cheap for them.
+Ours is closer to a browser extension that happens to have a panel.
+
+**Revisit if** a customer's security review objects to our UI sharing a
+JS context with their page (an iframe answers that and a shadow root
+doesn't), or if host CSS inheritance — the one thing the shadow root
+doesn't stop — turns out to cause real visual bugs in the field.
+
+### Considered and rejected: ID-scoped selectors
+
+The obvious cheaper alternative: give the widget root an `id` and prefix every
+rule with it — `#interpreter-widget button { … }`, scoring **1,0,1**. That
+beats a host's `button {}` (0,0,1) outright, with no dependence on source
+order, and it also stops our styles leaking outward. Pre-shadow-DOM, this is
+how embeddable widgets did it, and if we weren't building on Tailwind it would
+be the right call: far simpler than a shadow root.
+
+It's specifically incompatible with *this* codebase:
+
+1. **It outranks our own utilities too.** The components are assembled from
+   Tailwind classes — `.bg-foreground/4` at 0,1,0. An ID rule beats those by a
+   wider margin than it beats the host, so `#interpreter-widget button
+   { background: transparent }` kills the selected-tab highlight exactly like
+   the `.interpreter-widget button.rounded-2xl` override originally did. The
+   bind is structural: **0,0,1 and 0,1,0 are adjacent**, so no specificity
+   sits above a host's `button {}` and below a utility class. Any shield
+   strong enough to stop the host stops us. Escaping it means marking the
+   utilities `!important` (Tailwind v4 supports this), which just relocates
+   the fight.
+2. **It only defends properties we explicitly declare.** A host's
+   `button { text-transform: uppercase }` still lands unless we've written
+   `text-transform` ourselves — so it implies hand-rolling a full reset per
+   element type (`all: revert` scoped to us). Doable, but open-ended.
+3. **`!important` ignores specificity entirely.** `body div { position: static
+   !important }` — a real legacy-CSS pattern, and one the stress harness
+   deliberately includes — beats any ID. Only inline `!important` (what
+   `ScreenOverlay` pins on its host element) or shadow isolation escapes it.
+4. **It addresses none of the non-cascade problems.** A transformed or
+   `contain: paint` ancestor re-roots `position: fixed` so `inset: 0` stops
+   meaning the viewport; an ancestor stacking context caps our z-index at any
+   value. Those are layout and paint concerns, not selector matching.
+
+Minor, but worth noting: an `id` must be unique per document, so a host
+mounting two widgets breaks it. `[data-x]` scores 0,1,0 (same as a class, so
+no help); the `[data-x][data-x]` doubling trick works but is the same
+specificity arms race by another name.
+
+**Revisit if** we ever drop Tailwind from the package. Then reason 1 — the
+decisive one — disappears, and ID-scoping plus a scoped reset becomes a
+genuinely simpler answer than maintaining shadow-boundary workarounds.
+
+---
+
+## 2. Tailwind is a build-time dependency, and preflight is excluded
+
+**Chosen:** author components with Tailwind; compile to plain CSS in
+`dist/voice.css`; ship no Tailwind to consumers. Import
+`tailwindcss/theme.css` + `utilities.css` only — **never** the full
+`@import "tailwindcss"`.
+
+**Why:** preflight is a *global* reset (`*,::before,::after{box-sizing:border-box;margin:0}`,
+unstyled headings). Fine for an app that owns the page; catastrophic for a
+widget dropped into someone else's, where it would silently restyle their
+entire document.
+
+**Cost:** pasted shadcn/skiper components assume preflight exists — buttons
+being transparent and borderless is what lets their utility classes compose.
+We supply a preflight-equivalent reset scoped to our own roots instead. When a
+pasted component looks subtly wrong, this is the first thing to suspect.
+
+**Revisit if:** we move fully into the shadow root, where preflight could be
+injected safely, since it could no longer reach the host document.
+
+---
+
+## 3. Theme tokens map through `@theme`, not `:root`
+
+**Chosen:** `@theme { --color-background: var(--iv-surface); ... }`, with the
+concrete values defined in a rule scoped to the widget's roots.
+
+**Why:** shadcn components are written against `bg-background`, `bg-muted`,
+`text-foreground`. Defining `--color-*` values directly on `:root` would
+overwrite the same variables in any host that also uses Tailwind v4.
+
+**Cost:** the utilities are inert outside our subtree — fine, and arguably
+correct, but surprising if someone expects them to work anywhere.
+
+---
+
+## 4. Dependencies are bundled, not peer
+
+**Chosen:** `framer-motion`, `lucide-react`, `react-use-measure`, `clsx`, and
+`tailwind-merge` are bundled into `dist/voice.js`. Only `react`/`react-dom`
+are external.
+
+**Why:** React must be external — two copies is the classic "invalid hook
+call". The rest are implementation details a customer shouldn't have to
+install.
+
+**Cost:** a host already using framer-motion ships it twice. The bundle is
+~262KB (~73KB gzipped), and `mode="popLayout"` pulls in framer-motion's
+layout-projection code specifically.
+
+**Revisit if:** bundle size becomes a selling point, or telemetry shows most
+hosts already have framer-motion.
+
+`usehooks-ts` was deliberately *not* added for a single `useOnClickOutside`;
+it's ten lines locally.
+
+---
+
+## 5. The demo app has no Tailwind, on purpose
+
+**Chosen:** `demo-app/` stays plain Vite with hand-written CSS and consumes
+`@yourco/voice` exactly as a customer would.
+
+**Why:** it's the only thing that proves the compiled package stands on its
+own in a host that doesn't share our build setup. Adding Tailwind there would
+destroy the signal — and it's precisely what caught the collision in §1.
+
+**Revisit if:** never, really. If we want a Tailwind host to test against,
+add a *second* demo rather than converting this one.

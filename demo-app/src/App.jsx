@@ -3,27 +3,30 @@ import Dashboard from "./pages/Dashboard.jsx";
 import NewTask from "./pages/NewTask.jsx";
 import TaskDetail from "./pages/TaskDetail.jsx";
 import Settings from "./pages/Settings.jsx";
-import { InterpreterBubble } from "./voice/InterpreterBubble.jsx";
-import { ListeningGlow, isListening } from "./voice/ListeningGlow.jsx";
-import { useInterpreter } from "./voice/VoiceProvider.jsx";
-import { useRimTuning } from "./voice/rimTuningDev.js"; // TEMPORARY
+import { InterpreterBubble, ListeningGlow, isListening, useInterpreter } from "@yourco/voice";
 
 // `?glow=1` forces the listening rim on without a live mic session, so the
 // visual can be looked at (and screenshotted) on the real app's real
 // background without an OpenAI key. Read once at module load; a dev
-// affordance, not a feature. Corner shape is no longer a URL parameter --
-// it's a live switch at the bottom of the interpreter panel, so comparing
-// the two shapes doesn't cost a reload.
-const FORCE_GLOW = new URLSearchParams(window.location.search).has("glow");
+// affordance, not a feature.
+const params = new URLSearchParams(window.location.search);
+const FORCE_GLOW = params.has("glow");
+
+// `?mount=inline` renders the widget into this app's own DOM instead of the
+// shadow overlay, so the effect of THIS app's stylesheet on it can be seen
+// directly. This app is an ordinary host: it styles `button {}` and
+// `form {}` globally, like most apps do, and index.css loads after the
+// widget's stylesheet -- which is exactly the collision the shadow root
+// exists to prevent. Compare / against /?mount=inline.
+const MOUNT = params.get("mount") === "inline" ? "inline" : "shadow";
 
 export default function App() {
   const { status, mode, holding } = useInterpreter();
   const listening = FORCE_GLOW || isListening({ status, mode, holding });
-  const rim = useRimTuning(); // TEMPORARY
 
   return (
     <div className="app">
-      <ListeningGlow active={listening} width={rim.width} cornerRadius={rim.corner} />
+      <ListeningGlow active={listening} />
       <nav className="sidebar">
         <h2>Tasker</h2>
         <Link to="/">Dashboard</Link>
@@ -37,7 +40,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
-      <InterpreterBubble />
+      <InterpreterBubble mount={MOUNT} />
     </div>
   );
 }

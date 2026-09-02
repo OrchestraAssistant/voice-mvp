@@ -1,0 +1,42 @@
+{
+  "name": "@yourco/voice",
+  "version": "0.1.0",
+  "description": "Voice control for React apps: realtime agent, manifest-driven actions, DOM fallback.",
+  "type": "module",
+  "main": "./dist/voice.js",
+  "module": "./dist/voice.js",
+  "exports": {
+    ".": {
+      "import": "./dist/voice.js"
+    },
+    "./styles.css": "./dist/voice.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "stress": "vite --config vite.dev.config.js"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "framer-motion": "^12.34.2",
+    "lucide-react": "^1.39.0",
+    "react-use-measure": "^2.1.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.2"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hosted voice relay: mints ephemeral Realtime tokens and owns the manifest-derived tool list + confirmation policy. Ships to nobody; devs point at it.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --env-file=.env index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "node-fetch": "^2.7.0"
+  }
+}

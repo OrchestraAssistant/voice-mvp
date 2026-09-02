@@ -96,8 +96,16 @@
         }
       ],
       "bodyFields": [
-        { "name": "done", "required": false, "type": "boolean" },
-        { "name": "title", "required": false, "type": "string" }
+        {
+          "name": "done",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        }
       ]
     },
     {
@@ -145,5 +153,6 @@
         }
       ]
     }
-  ]
+  ],
+  "handEdited": "See README: `generate` overwrites this file; these corrections must be reapplied."
 }

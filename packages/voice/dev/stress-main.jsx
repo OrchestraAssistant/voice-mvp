@@ -1,7 +1,7 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ListeningGlow } from "./voice/ListeningGlow.jsx";
-import { useRimTuning } from "./voice/rimTuningDev.js"; // TEMPORARY
+import { ListeningGlow } from "../src/ListeningGlow.jsx";
+import { useRimTuning } from "../src/rimTuningDev.js"; // TEMPORARY
 
 /**
  * Entry point for stress.html -- the "host app we don't know" harness.

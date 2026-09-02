@@ -8,9 +8,9 @@
 // for a response on release), or "ptnt" ("push to not talk" -- the mirror
 // image: mic starts live and VAD keeps driving turns, caller mutes only
 // while held, e.g. to say something off to the side without being heard).
-export async function connectRealtimeSession({ onToolCall, onStatus, onTranscript, initialMode = "continuous" }) {
+export async function connectRealtimeSession({ onToolCall, onStatus, onTranscript, initialMode = "continuous", relayUrl = "" }) {
   onStatus?.("requesting-session");
-  const sessionRes = await fetch("/voice/session", { method: "POST" });
+  const sessionRes = await fetch(`${relayUrl}/voice/session`, { method: "POST" });
   const sessionData = await sessionRes.json();
   if (!sessionRes.ok) {
     throw new Error(sessionData.error?.message || sessionData.error || "Failed to create realtime session");

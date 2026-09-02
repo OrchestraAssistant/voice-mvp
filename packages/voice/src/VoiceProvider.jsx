@@ -1,6 +1,4 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import { connectRealtimeSession } from "./realtimeClient.js";
 import * as dom from "./domActions.js";
 
@@ -43,8 +41,34 @@ async function apiFetch(method, url, body) {
  *     staged for confirmation, and again with null when it's resolved.
  *   onModeChange(mode)              -- fires on continuous/ptt/ptnt switch.
  *   onStatusChange(status)          -- fires on connection status change.
+ *
+ * Two host integration points, both optional, both injected rather than
+ * imported. The widget deliberately does not depend on react-router or
+ * react-query -- a host app may use neither, and a package that imports
+ * them would force both on everyone who installs it:
+ *
+ *   relayUrl           -- origin of the voice relay ("" = same origin, the
+ *     default, which suits a dev proxy; set it to your hosted relay in
+ *     production since the host app won't be on the same domain).
+ *   navigate(path)     -- how this app changes route. Defaults to a plain
+ *     history.pushState + popstate, which works anywhere but won't
+ *     re-render a router that isn't listening for it; pass your router's
+ *     navigate (e.g. react-router's useNavigate()) for a real SPA nav.
+ *   onAfterAction()    -- called after any write action succeeds, so the
+ *     host can refresh whatever cache it keeps (e.g. react-query's
+ *     queryClient.invalidateQueries).
  */
-export function VoiceProvider({ children, onToolCall, onTranscript, onPendingAction, onModeChange, onStatusChange }) {
+export function VoiceProvider({
+  children,
+  relayUrl = "",
+  navigate: navigateProp,
+  onAfterAction,
+  onToolCall,
+  onTranscript,
+  onPendingAction,
+  onModeChange,
+  onStatusChange,
+}) {
   const [manifest, setManifest] = useState(null);
   const [status, setStatus] = useState("idle"); // idle | connecting | connected | disconnected | error
   const [transcript, setTranscript] = useState([]);
@@ -55,13 +79,23 @@ export function VoiceProvider({ children, onToolCall, onTranscript, onPendingAct
 
   const sessionRef = useRef(null);
   const pendingRef = useRef(null); // mirrors pendingAction for use inside the tool-call closure
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
+
+  // Fallback nav for hosts that don't pass one: updates the URL and fires
+  // popstate, which routers that listen to history will pick up. Hosts
+  // with a real router should pass `navigate` so SPA nav works properly.
+  const navigate = useCallback(
+    (path) => {
+      if (navigateProp) return navigateProp(path);
+      window.history.pushState({}, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    },
+    [navigateProp],
+  );
 
   // Callback props are read through refs so their identity churning on
   // every parent render never forces us to re-create executeTool/effects.
   const callbacksRef = useRef({});
-  callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onStatusChange };
+  callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onStatusChange, onAfterAction };
 
   const setPendingAction = (value) => {
     pendingRef.current = value ? { action: value.action, args: value.args } : null;
@@ -71,11 +105,11 @@ export function VoiceProvider({ children, onToolCall, onTranscript, onPendingAct
   };
 
   useEffect(() => {
-    fetch("/voice/manifest")
+    fetch(`${relayUrl}/voice/manifest`)
       .then((r) => r.json())
       .then(setManifest)
       .catch((err) => setError(String(err)));
-  }, []);
+  }, [relayUrl]);
 
   const findQuery = (name) => manifest.queries.find((q) => q.name === name);
   const findAction = (name) => manifest.actions.find((a) => a.name === name);
@@ -92,7 +126,8 @@ export function VoiceProvider({ children, onToolCall, onTranscript, onPendingAct
     const bodyKeys = action.bodyFields.map((f) => f.name);
     const body = Object.fromEntries(bodyKeys.filter((k) => args[k] !== undefined).map((k) => [k, args[k]]));
     const result = await apiFetch(action.method, url, Object.keys(body).length ? body : undefined);
-    queryClient.invalidateQueries();
+    // Let the host refresh whatever cache it keeps; it knows, we don't.
+    callbacksRef.current.onAfterAction?.();
     return result;
   };
 
@@ -150,7 +185,7 @@ export function VoiceProvider({ children, onToolCall, onTranscript, onPendingAct
 
       return { error: `Unrecognized tool: ${name}` };
     },
-    [manifest, navigate, queryClient],
+    [manifest, navigate],
   );
 
   const start = async () => {
@@ -172,6 +207,7 @@ export function VoiceProvider({ children, onToolCall, onTranscript, onPendingAct
           callbacksRef.current.onTranscript?.(turn);
         },
         initialMode: mode,
+        relayUrl,
       });
       sessionRef.current = session;
     } catch (err) {

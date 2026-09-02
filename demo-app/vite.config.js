@@ -7,8 +7,9 @@ export default defineConfig({
   server: {
     host: true,
     proxy: {
+      // Demo's own backend and the voice relay are separate services now.
       '/api': 'http://localhost:3001',
-      '/voice': 'http://localhost:3001',
+      '/voice': 'http://localhost:3002',
     },
   },
 })

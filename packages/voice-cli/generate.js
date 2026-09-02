@@ -15,8 +15,8 @@ import traverse from "@babel/traverse";
 import fs from "node:fs";
 import path from "node:path";
 
-const SRC_DIR = process.argv[2] || path.resolve("../demo-app/src");
-const OUT_DIR = process.argv[3] || path.resolve("../.voice");
+const SRC_DIR = process.argv[2] || path.resolve(import.meta.dirname, "../../demo-app/src");
+const OUT_DIR = process.argv[3] || path.resolve(import.meta.dirname, "../../demo-app/.voice");
 
 function parseFile(filePath) {
   const code = fs.readFileSync(filePath, "utf-8");
