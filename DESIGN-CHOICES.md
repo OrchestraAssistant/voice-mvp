@@ -4,6 +4,11 @@ Decisions that were genuine forks — where the alternative was reasonable and
 might become the better answer later. Each records what was chosen, what it
 costs, and what would justify revisiting.
 
+Two parts. **Sections 1–5** are about rendering: where the widget draws, and
+how its CSS survives a host we don't control. **Sections 6–13** are about the
+shape of the realtime session — what goes in the JSON we send to OpenAI, and
+what each field costs.
+
 ---
 
 ## 1. Where the widget mounts: shadow root vs. the host's DOM tree
@@ -352,3 +357,247 @@ destroy the signal — and it's precisely what caught the collision in §1.
 
 **Revisit if:** never, really. If we want a Tailwind host to test against,
 add a *second* demo rather than converting this one.
+
+---
+
+# Part two: the shape of the realtime session
+
+Sections 1–5 are about rendering — where the widget draws and how its CSS
+survives a host we don't control. Everything below is about a single JSON
+object: the `session` the relay sends to `/v1/realtime/client_secrets`, plus
+the two fields the client changes once the data channel is open.
+
+Almost every field in it was a decision, and most of them were settled by
+measurement rather than argument. The numbers cited are from scripted runs
+against the demo app with a fake capture device, logged off the data channel;
+`packages/voice/dev/bubble.html` and the git history have the machinery. They
+are single runs of a nondeterministic model, so read the orderings as solid
+and the exact figures as approximate.
+
+As it stands:
+
+```jsonc
+{
+  "type": "realtime",
+  "model": "gpt-realtime",            // §6 — should be pinned, see below
+  "instructions": "...",              // §11 — terse by measurement
+  "tools": [ /* 13, manifest-derived */ ],
+  "tool_choice": "auto",
+  "audio": {
+    "output": { "voice": "marin" },
+    "input": {
+      "transcription": { "model": "gpt-live-transcribe" },  // §8
+      // language omitted unless the user picked one       — §7
+      // turn_detection omitted, so server_vad applies     — §10
+    }
+  }
+}
+```
+
+---
+
+## 6. Model: pin the version, and not the mini alias
+
+**Chosen:** `gpt-realtime` today, selectable by the user from a relay-supplied
+list, with `REALTIME_MODEL` as the deployment default.
+
+**What the runs showed.** On an easy six-command script the flagship and
+`gpt-realtime-mini` were indistinguishable: same six tool calls in the same
+order, mini 77% cheaper. On a script with an indirect reference, a two-step
+chain and a destructive action, they came apart:
+
+| | flagship | mini | 2.1-mini |
+|---|---|---|---|
+| destructive protocol | correct | **inverted** | correct |
+| task actually deleted | yes | **no** | yes |
+| language | **drifted to Vietnamese** | English | English |
+| cost | $0.0357 | $0.0089 | $0.0137 |
+
+`gpt-realtime-mini` called `confirm_pending_action` *before*
+`action_deleteTask`, so the confirmation hit an empty queue and the delete
+only ever got staged. That is the one rule guarding the only destructive
+operation in the manifest. `gpt-realtime-2.1-mini` got it right, stayed in
+English, and still cost 2.6x less than the flagship — but narrated six
+preambles aloud ("Okay, let me take care of that for you"), which is what
+§9 exists to stop.
+
+**Alias vs pinned is the part that matters operationally.** `gpt-realtime` is
+a moving pointer; OpenAI can repoint it and take behaviour and price with it.
+The Vietnamese drift is exactly the class of surprise that arrives that way.
+
+**Revisit if:** we re-run the hard script a few times per model and 2.1-mini
+holds up. On one run each it looks like the right default; one run is a signal,
+not a benchmark.
+
+---
+
+## 7. Language: pinned in two places, and absent means auto
+
+**Chosen:** a user setting. When set it goes to
+`audio.input.transcription.language` *and* adds a rule to the instructions
+fixing the reply language.
+
+**Why both.** The transcription hint tells the recogniser what to expect. It
+does nothing about what the model answers in — and the failure we actually saw
+was in the replies, with the flagship answering four of six English turns in
+Vietnamese. Verified after the change: a Spanish script came back entirely in
+Spanish, with correct tool calls and no English leakage.
+
+**Two API details that cost time.** `language` must be **absent** for
+auto-detect: sending `null` is a 400 listing every valid code, so the obvious
+spelling breaks the default path for everyone who never opens settings. And
+what you send comes back normalised as `languages: ["es"]`, plural, so
+inspecting the echoed `language` field tells you nothing about whether it took.
+
+**What it costs:** transcription quality drops noticeably on non-English audio.
+On the Spanish run "comprar leche" arrived as "Corbleche" and one turn came
+through in Devanagari, which the model then read as a delete request. The audio
+was synthetic and unaccented, so that is a reason to test with real speech
+rather than a verdict.
+
+---
+
+## 8. Input transcription is a UI feature, not a dependency
+
+**Chosen:** on, with `gpt-live-transcribe`.
+
+**Why it is optional.** `gpt-realtime` is natively speech-in; it needs no text
+transcript to pick a tool. The transcription exists solely to show the user
+their own words in the panel. Nothing functional reads it, and turning it off
+is one line.
+
+**What it costs:** $0.017/min of *transcribed speech*, which measured at 27% of
+a session — the second largest line. Billing is per committed turn, not
+wall-clock: the completed event carries its own
+`usage: { type: "duration", seconds: 3 }`, and ten minutes connected with a
+live microphone and no speech produced one event and no charge. That last fact
+was checked against the dashboard, not inferred.
+
+**Revisit if:** cost matters more than showing the user their own words. It is
+the cheapest 27% available and nothing breaks without it.
+
+---
+
+## 9. Replies are text by default, audio only when asked
+
+**Chosen:** every follow-up we request carries an explicit
+`output_modalities`, chosen per turn from the user's own words:
+text for commands, audio for questions.
+
+**Why the model cannot be asked to do this.** Told plainly to stay silent on
+successful commands, it spoke on 6 of 6 turns anyway, and the silence rule cost
+**30% more** than plain terse instructions — a rule about when speech is
+justified reads as an invitation to justify it. Modality is config, and config
+is obeyed:
+
+| | spoken | audio tokens | cost |
+|---|---|---|---|
+| audio follow-ups | 6 | 201 | $0.0437 |
+| text follow-ups | 1 | 41 | $0.0294 |
+
+The surviving spoken reply was the one turn that asked a question.
+
+**Why the follow-up exists at all.** After `function_call_output` items are
+added, nothing is generated until a response is requested. Drop that request
+and queries cannot be answered and query→action chains cannot continue. It is
+load-bearing; only its *medium* was ever a free choice, and we were making it
+implicitly in favour of the expensive one.
+
+**How the decision is made in time.** From the streaming transcription deltas,
+not the completed event — which arrives 300 ms *after* the model has started
+speaking. The deltas trail the speaker by about one word, so the classification
+is free.
+
+**Revisit if:** the question heuristic misses real phrasings. The better fallback
+is not a smarter classifier but an inversion: always request text, then decide
+whether to speak *the reply*, which is a far easier judgement and cannot be
+wrong about what the model chose to say.
+
+---
+
+## 10. Turn detection is theirs; the response should be ours
+
+**Chosen, for now:** no `turn_detection` in the mint, so `server_vad` with
+`create_response: true` applies. Push-to-talk sets `turn_detection: null` and
+uses the button as the boundary. There is no voice activity detection in the
+browser at all.
+
+**The cost of the default.** `create_response: true` generates a reply in the
+same instant it decides speech ended, so the modality of the *first* response
+of every turn is not ours:
+
+```
+speech_stopped + committed     T+0.00
+response.created (automatic)   T+0.00
+first output audio             T+0.30
+transcription.completed        T+0.60
+```
+
+That is why §9 only reaches the follow-up. On 2.1-mini all six spoken lines
+were narration preambles from that automatic response.
+
+**The lever, verified but not built.** `turn_detection: { type: "server_vad",
+create_response: false }` is accepted by the API. The detector still commits
+the turn; it simply stops generating, so every response becomes ours to shape.
+That would put the preambles in text too — the largest remaining line at 37%.
+
+**Watch out:** `session.update` must carry `session.type`, or the API answers
+with an async `error` on the data channel and silently ignores the patch.
+Push-to-talk shipped broken that way for a while, muting the microphone while
+server VAD kept deciding turns underneath.
+
+---
+
+## 11. Instructions are terse by measurement
+
+**Chosen:** an explicit "act, don't narrate" rule, concrete examples of the
+length wanted, and a hard ban on the trailing offer of help.
+
+**Why not adjectives.** The previous version already said "keep spoken
+responses short" and "briefly confirm in one short sentence", and was ignored:
+
+> before: "All set, we're now back on the dashboard. Anything else you'd like to do here?"
+> after: "Done."
+
+Audio output 816 → 318 tokens, session cost $0.0944 → $0.0448, and one extra
+tool call because it retried the search instead of describing the option to.
+
+**What it does not fix:** the agent still narrates *preambles* on some models,
+because those come from the automatic response (§10), not from anything the
+prompt controls.
+
+---
+
+## 12. Model and language are validated at the relay
+
+**Chosen:** `GET /voice/options` serves the allowed lists; `POST /voice/session`
+rejects anything else with a 400 rather than substituting a default.
+
+**Why:** `model` decides what a minute of conversation costs, and a browser is
+the wrong place to make that call — a tampered client should not be able to
+bill the account for the flagship. Silent fallback is worse than an error: it
+is how you end up running a model you did not choose.
+
+---
+
+## 13. Prompt caching is session-scoped, and cannot be widened
+
+Measured: two sessions four seconds apart with a byte-identical prompt both
+paid the full ~700-token prefix on their first response (`cached: 0`), then
+cached from the second response on (`cached: 704`). `prompt_cache_key`, which
+exists for exactly this, is rejected by the realtime endpoint:
+
+```
+400 "Unknown parameter: 'prompt_cache_key'."
+400 "Unknown parameter: 'session.prompt_cache_key'."
+```
+
+**What follows:** many short sessions cost more than one long one, so a session
+should be held across panel open and close rather than torn down per
+interaction. That is a cost argument for warming on top of the latency one.
+Keep `buildInstructions` and `buildTools` byte-stable within a session —
+reordering tools mid-session would invalidate the cached prefix and multiply
+the text cost tenfold.
+
+**Not worth chasing:** the prefix is only ~6% of a session. Audio is the
+expensive part, and §8, §9 and §10 are where the money is.
