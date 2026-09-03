@@ -72,6 +72,11 @@ export function VoiceProvider({
   onTransportChange,
 }) {
   const [manifest, setManifest] = useState(null);
+  // What the relay is willing to offer. Fetched rather than hard-coded so the
+  // list of models stays a server-side decision.
+  const [options, setOptions] = useState({ models: [], languages: [], defaults: {} });
+  const [model, setModelState] = useState(null); // null = the relay's default
+  const [language, setLanguageState] = useState("auto");
   // TRANSPORT only: is the realtime connection up. Deliberately says nothing
   // about whether a microphone is attached to it, because those come apart --
   // a session can be established and held with no mic on it at all. Conflating
@@ -120,6 +125,19 @@ export function VoiceProvider({
       .then((r) => r.json())
       .then(setManifest)
       .catch((err) => setError(String(err)));
+  }, [relayUrl]);
+
+  useEffect(() => {
+    fetch(`${relayUrl}/voice/options`)
+      .then((r) => r.json())
+      .then((o) => {
+        setOptions(o);
+        setModelState((current) => current ?? o.defaults?.model ?? null);
+      })
+      .catch(() => {
+        // Non-fatal: without options the settings UI simply offers nothing to
+        // change, and the relay's own defaults still apply.
+      });
   }, [relayUrl]);
 
   const findQuery = (name) => manifest.queries.find((q) => q.name === name);
@@ -199,7 +217,12 @@ export function VoiceProvider({
     [manifest, navigate],
   );
 
-  const start = async () => {
+  // `overrides` exists because a reconnect triggered by changing model or
+  // language has to use the NEW value, and the state update has not landed in
+  // this closure yet. Reading it from state here would reconnect with exactly
+  // the setting the user just changed away from -- silently, and only on the
+  // reconnect path, which is the kind of bug that survives a long time.
+  const start = async (overrides = {}) => {
     setError(null);
     setTransport("connecting");
     try {
@@ -221,6 +244,8 @@ export function VoiceProvider({
         },
         initialMode: mode,
         relayUrl,
+        model: overrides.model ?? model,
+        language: overrides.language ?? language,
       });
       sessionRef.current = session;
       // Today the mic is acquired as part of connecting, so this is true as soon
@@ -249,6 +274,24 @@ export function VoiceProvider({
 
   const confirmManually = () => executeTool("confirm_pending_action", {});
   const cancelManually = () => executeTool("cancel_pending_action", {});
+
+  /**
+   * Model and language, unlike mode, CANNOT be changed on a live session --
+   * both are fixed when the session is minted. So changing one while connected
+   * means tearing the session down and building a new one, which loses the
+   * conversation history. Doing it silently would be worse than the reconnect:
+   * the user would keep talking to a session configured the way it was before
+   * they changed it.
+   */
+  const reconfigure = (apply, overrides) => {
+    const wasLive = !!sessionRef.current;
+    if (wasLive) stop();
+    apply();
+    if (wasLive) start(overrides);
+  };
+
+  const setModel = (next) => reconfigure(() => setModelState(next), { model: next });
+  const setLanguage = (next) => reconfigure(() => setLanguageState(next), { language: next });
 
   // Switching modes never reconnects -- same session, same history, same
   // instructions. It just changes who decides when a turn ends (VAD vs. a
@@ -338,6 +381,11 @@ export function VoiceProvider({
         manifest,
         mode,
         holding,
+        options,
+        model,
+        language,
+        setModel,
+        setLanguage,
         start,
         stop,
         sendText,

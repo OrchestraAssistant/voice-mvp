@@ -73,9 +73,15 @@ document.addEventListener("keydown", (e) => {
 // own -- the flicker that led here needed both of them up -- and nothing else
 // in the repo puts them on the same page: stress.html has only the rim, and
 // the demo app cannot be driven from outside.
+// Same origin by default: vite.dev.config.js proxies /voice to the relay.
+// Pointing straight at http://localhost:3002 does NOT work here -- this page
+// is served over https through the tunnel, and mixed content is blocked, so
+// the fetches fail silently and the settings tab has nothing to offer.
+const RELAY = params.get("relay") ?? "";
+
 createRoot(document.getElementById("widget-mount")).render(
   <StrictMode>
-    <VoiceProvider>
+    <VoiceProvider relayUrl={RELAY}>
       {params.has("glow") && <ListeningGlow active />}
       <InterpreterBubble mount={MOUNT} />
     </VoiceProvider>

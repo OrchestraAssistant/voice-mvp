@@ -4,8 +4,10 @@ import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import {
   AudioLines,
   Check,
+  Cpu,
   CornerDownLeft,
   Hand,
+  Languages,
   MessageSquare,
   Mic,
   MicOff,
@@ -87,6 +89,15 @@ const variants = {
   active: { x: "0%", opacity: 1 },
   exit: (direction) => ({ x: `${-110 * direction}%`, opacity: 0 }),
 };
+
+/**
+ * The skiper original uses shadcn's ScrollArea here, which is Radix. This is
+ * the same thing in one line and no dependency -- the panel needs a scroll
+ * container, not a custom scrollbar.
+ */
+function ScrollArea({ className, children }) {
+  return <div className={className}>{children}</div>;
+}
 
 // The one row shape everything in the panel is built from: full width, icon
 // and label on the left, a quiet detail on the right.
@@ -313,28 +324,80 @@ const MODES = [
   { id: "ptnt", label: "Push to not talk", icon: MicOff },
 ];
 
-/** Settings tab: mic mode today, more later. */
+/** One selectable row. `note` is the quiet detail on the right when unselected. */
+function ChoiceRow({ icon: Icon, label, note, selected, onSelect }) {
+  return (
+    <button type="button" onClick={onSelect} className={cn(ROW, selected && "bg-foreground/4")}>
+      <span className="flex min-w-0 items-center gap-2">
+        {Icon && <Icon className="size-4 shrink-0" />}
+        <span className="truncate">{label}</span>
+      </span>
+      {selected ? (
+        <Check className="size-4 shrink-0" />
+      ) : (
+        note && <span className="text-muted-foreground shrink-0 text-xs">{note}</span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * Settings: microphone mode, model, language.
+ *
+ * Mode is free to change on a live session. Model and language are not -- both
+ * are fixed when the session is minted -- so choosing one reconnects, and the
+ * conversation so far is lost. The note under those sections says so, because
+ * a control that silently drops your history is worse than one that warns you.
+ */
 function SettingsTabContent() {
-  const { mode, setMode } = useInterpreter();
+  const { mode, setMode, options, model, language, setModel, setLanguage } = useInterpreter();
 
   return (
-    <div className="mb-2 flex flex-col gap-0.5">
-      <span className="text-muted-foreground px-2 py-1 text-xs">Microphone</span>
-      {MODES.map((m) => (
-        <button
-          key={m.id}
-          type="button"
-          onClick={() => setMode(m.id)}
-          className={cn(ROW, mode === m.id && "bg-foreground/4")}
-        >
-          <span className="flex items-center gap-2">
-            <m.icon className="size-4" />
-            {m.label}
-          </span>
-          {mode === m.id && <Check className="size-4 shrink-0" />}
-        </button>
-      ))}
-    </div>
+    <ScrollArea className="mb-2 max-h-72 space-y-2 overflow-y-auto">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-muted-foreground px-2 py-1 text-xs">Microphone</span>
+        {MODES.map((m) => (
+          <ChoiceRow
+            key={m.id}
+            icon={m.icon}
+            label={m.label}
+            selected={mode === m.id}
+            onSelect={() => setMode(m.id)}
+          />
+        ))}
+      </div>
+
+      {options.languages?.length > 0 && (
+        <div className="flex flex-col gap-0.5 pt-2">
+          <span className="text-muted-foreground px-2 py-1 text-xs">Language</span>
+          {options.languages.map((l) => (
+            <ChoiceRow
+              key={l.code}
+              icon={Languages}
+              label={l.label}
+              selected={language === l.code}
+              onSelect={() => setLanguage(l.code)}
+            />
+          ))}
+        </div>
+      )}
+
+      {options.models?.length > 0 && (
+        <div className="flex flex-col gap-0.5 pt-2">
+          <span className="text-muted-foreground px-2 py-1 text-xs">Model</span>
+          {options.models.map((m) => (
+            <ChoiceRow
+              key={m.id}
+              icon={Cpu}
+              label={m.label}
+              note={m.note}
+              selected={model === m.id}
+              onSelect={() => setModel(m.id)}
+            />
+          ))}
+        </div>
+      )}
+    </ScrollArea>
   );
 }
 

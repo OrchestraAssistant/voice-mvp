@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
-import { buildTools, buildInstructions } from "./tools.js";
+import { buildTools, buildInstructions, resolveModel, resolveLanguage, MODELS, LANGUAGES } from "./tools.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,6 +19,13 @@ const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// What the widget is allowed to offer in its settings. Served rather than
+// hard-coded in the client so the list is the relay's to control: a browser
+// should not be choosing which model the account pays for.
+app.get("/voice/options", (req, res) => {
+  res.json({ models: MODELS, languages: LANGUAGES, defaults: { model: REALTIME_MODEL, language: "auto" } });
+});
 
 app.get("/voice/manifest", (req, res) => {
   if (!fs.existsSync(MANIFEST_PATH)) {
@@ -41,6 +48,14 @@ app.post("/voice/session", async (req, res) => {
 
   const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
 
+  // Both are session-creation parameters -- neither can be changed on a live
+  // session -- so they arrive here, are validated here, and a rejected value
+  // is an error rather than a quiet substitution.
+  const wantedModel = resolveModel(req.body?.model, REALTIME_MODEL);
+  if (wantedModel.error) return res.status(400).json({ error: wantedModel.error });
+  const wantedLanguage = resolveLanguage(req.body?.language);
+  if (wantedLanguage.error) return res.status(400).json({ error: wantedLanguage.error });
+
   try {
     const upstream = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
@@ -51,13 +66,24 @@ app.post("/voice/session", async (req, res) => {
       body: JSON.stringify({
         session: {
           type: "realtime",
-          model: REALTIME_MODEL,
-          instructions: buildInstructions(manifest),
+          model: wantedModel.model,
+          instructions: buildInstructions(manifest, wantedLanguage.language),
           tools: buildTools(manifest),
           tool_choice: "auto",
           audio: {
             output: { voice: "marin" },
-            input: { transcription: { model: "gpt-live-transcribe" } },
+            input: {
+              // The `language` key has to be ABSENT for auto-detect, not null:
+              // sending null is a 400 ("expected one of 'af', 'ar', ..."), so
+              // the obvious spelling breaks the default path for every user who
+              // never opens settings. The API also normalises what you send
+              // into `languages: ["es"]` on the way back, so do not look for
+              // `language` in the echoed session to check it took.
+              transcription: {
+                model: "gpt-live-transcribe",
+                ...(wantedLanguage.language ? { language: wantedLanguage.language.code } : {}),
+              },
+            },
           },
         },
       }),

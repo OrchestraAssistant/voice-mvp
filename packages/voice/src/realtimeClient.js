@@ -53,12 +53,22 @@ export async function connectRealtimeSession({
   initialMode = "continuous",
   relayUrl = "",
   replyModality = defaultReplyModality,
+  model,
+  language,
 }) {
   // Transport states only. Whether the user is actually being listened to is
   // a separate question -- see isListening() -- because a connection can be
   // up with no microphone attached to it.
   onStatus?.("connecting");
-  const sessionRes = await fetch(`${relayUrl}/voice/session`, { method: "POST" });
+  // Model and language are session-creation parameters: neither can be changed
+  // on a live session, which is why they travel with the mint request rather
+  // than a later session.update. The relay validates them -- a browser should
+  // not be picking which model the account pays for.
+  const sessionRes = await fetch(`${relayUrl}/voice/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, language }),
+  });
   const sessionData = await sessionRes.json();
   if (!sessionRes.ok) {
     throw new Error(sessionData.error?.message || sessionData.error || "Failed to create realtime session");

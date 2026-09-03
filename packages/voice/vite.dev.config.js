@@ -19,5 +19,14 @@ export default defineConfig({
       "@": resolve(__dirname, "src"),
     },
   },
-  server: { host: true, port: 5174 },
+  // Proxy /voice to the relay, exactly as the demo app's dev server does.
+  // Without it the harness cannot reach the relay at all: this page is served
+  // over https through the tunnel, and an https page fetching http://localhost
+  // is blocked as mixed content, so pointing the widget straight at :3002 fails
+  // silently and the settings tab just has nothing to offer.
+  server: {
+    host: true,
+    port: 5174,
+    proxy: { "/voice": "http://localhost:3002" },
+  },
 });
