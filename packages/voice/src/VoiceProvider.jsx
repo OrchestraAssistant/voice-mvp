@@ -276,9 +276,16 @@ export function VoiceProvider({
           setPendingAction({ action, batch });
           return {
             status: "needs_confirmation",
+            staged: batch.length,
+            // Deliberately does NOT echo the batch back: the model just sent
+            // it, and repeating eleven objects costs tokens to tell it what it
+            // already knows. It also phrases the question better than we can,
+            // because it has the titles and we only have ids -- so this says
+            // when to ask, not what to say.
             message:
-              `Ask the user to confirm: ${action.description} for ${batch.length} item(s): ` +
-              `${JSON.stringify(batch)}. Ask ONCE, for the whole set. Call confirm_pending_action when they agree.`,
+              `Staged, NOT executed. Ask the user once to confirm ` +
+              `${batch.length === 1 ? "this" : `all ${batch.length}`}, naming what will change. ` +
+              `Then call confirm_pending_action (no arguments). Do not call ${name} again.`,
           };
         }
         return await runBatch(action, batch);

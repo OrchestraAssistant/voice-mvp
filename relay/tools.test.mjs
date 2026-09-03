@@ -114,3 +114,14 @@ describe("batching", () => {
     assert.match(rules, /Never stop part-way/i);
   });
 });
+
+describe("destructive ordering", () => {
+  test("the rule states the order, and names the failure", () => {
+    // Observed live: the model asked "would you like to confirm?", the user
+    // said yes, THEN it staged -- which asks again. The user confirmed twice.
+    const rules = buildInstructions(manifest);
+    assert.match(rules, /CALL THE TOOL FIRST/);
+    assert.match(rules, /Do not ask before calling it/);
+    assert.match(rules, /say yes twice/);
+  });
+});

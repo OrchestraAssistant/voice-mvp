@@ -147,7 +147,7 @@ describe("batch execution", () => {
   test("a destructive batch stages the whole set and is confirmed once", () => {
     assert.match(source, /setPendingAction\(\{ action, batch \}\)/);
     assert.match(source, /runBatch\(pending\.action, pending\.batch\)/);
-    assert.match(source, /Ask ONCE, for the whole set/);
+    assert.match(source, /Ask the user once to confirm/);
   });
 
   test("a single-item batch is indistinguishable from before", () => {
@@ -176,5 +176,19 @@ describe("batched queries", () => {
 
   test("one failing lookup does not sink the batch", () => {
     assert.match(source, /runQuery\(query, one\)\.catch/);
+  });
+});
+
+describe("staging a destructive batch", () => {
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
+
+  test("says it is staged rather than executed", () => {
+    assert.match(source, /Staged, NOT executed/);
+  });
+
+  test("does not echo the batch back to the model", () => {
+    // It just sent it. Repeating eleven objects costs tokens to say nothing.
+    assert.doesNotMatch(source, /needs_confirmation[\s\S]{0,400}JSON\.stringify\(batch\)/);
   });
 });
