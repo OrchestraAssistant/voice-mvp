@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
@@ -16,6 +17,22 @@ const MANIFEST_PATH =
 const PORT = process.env.PORT || 3002;
 const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 
+/**
+ * Session logging, OFF unless VOICE_LOG=1.
+ *
+ * The relay is not in the data path -- it mints a token and steps out, and the
+ * conversation goes browser to OpenAI directly over WebRTC. So it cannot
+ * observe a session on its own; the widget has to post what happened. That is
+ * the widget's job rather than the host app's: both ends of this are ours, and
+ * a customer should not have to wire up callbacks to get their own logs.
+ *
+ * Two switches, both off by default, because this is a recording of what
+ * people said out loud. The relay needs VOICE_LOG=1 and the widget needs
+ * logToRelay. Neither alone does anything.
+ */
+const LOGGING = process.env.VOICE_LOG === "1";
+const LOG_DIR = process.env.VOICE_LOG_DIR || path.resolve(__dirname, "logs");
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -23,6 +40,28 @@ app.use(express.json());
 // What the widget is allowed to offer in its settings. Served rather than
 // hard-coded in the client so the list is the relay's to control: a browser
 // should not be choosing which model the account pays for.
+/**
+ * Append one JSON line. Files are per session, named by the handle handed out
+ * at mint, so a run is one greppable file.
+ */
+function appendLog(logId, event) {
+  if (!/^[\w.-]+$/.test(logId)) return; // it lands in a path; keep it boring
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+  fs.appendFileSync(
+    path.join(LOG_DIR, `${logId}.jsonl`),
+    JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n",
+  );
+}
+
+// The widget posts here. Batched, so a busy turn is one request.
+app.post("/voice/log", (req, res) => {
+  if (!LOGGING) return res.status(404).json({ error: "Logging is off. Start the relay with VOICE_LOG=1." });
+  const { logId, events } = req.body ?? {};
+  if (!logId || !Array.isArray(events)) return res.status(400).json({ error: "Expected { logId, events[] }" });
+  for (const e of events) appendLog(logId, e);
+  res.json({ written: events.length });
+});
+
 app.get("/voice/options", (req, res) => {
   res.json({ models: MODELS, languages: LANGUAGES, defaults: { model: REALTIME_MODEL, language: "auto" } });
 });
@@ -73,6 +112,19 @@ app.post("/voice/session", async (req, res) => {
           audio: {
             output: { voice: "marin" },
             input: {
+              // The detector stays theirs -- it still hears where speech starts
+              // and stops, still commits the buffer, and interrupt_response is
+              // untouched so barge-in still cancels an in-flight reply. Only
+              // the GENERATING moves to us. Left at its default,
+              // create_response makes the server reply in the same instant it
+              // decides the turn ended, which means the modality of the first
+              // response of every turn is not ours to pick, and the completed
+              // transcript lands 300ms after the model is already talking.
+              //
+              // The obligation this takes on: nothing is produced until the
+              // client asks. A turn we fail to answer is silence, with no
+              // error and no timeout. See requestResponse() in realtimeClient.
+              turn_detection: { type: "server_vad", create_response: false },
               // The `language` key has to be ABSENT for auto-detect, not null:
               // sending null is a 400 ("expected one of 'af', 'ar', ..."), so
               // the obvious spelling breaks the default path for every user who
@@ -94,7 +146,18 @@ app.post("/voice/session", async (req, res) => {
       console.error("OpenAI client_secrets error:", data);
       return res.status(upstream.status).json(data);
     }
-    res.json(data);
+    // A handle the client can attach its log to, so a transcript can be tied
+    // back to the session config that produced it -- which model answered,
+    // which language was pinned.
+    const logId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+    if (LOGGING) {
+      appendLog(logId, {
+        type: "session",
+        model: wantedModel.model,
+        language: wantedLanguage.language?.code ?? null,
+      });
+    }
+    res.json({ ...data, logId, logging: LOGGING });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: String(err) });

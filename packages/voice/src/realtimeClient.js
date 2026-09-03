@@ -42,6 +42,27 @@ export function defaultReplyModality(transcript = "") {
   return WANTS_A_SPOKEN_ANSWER.test(transcript) ? "audio" : "text";
 }
 
+/**
+ * Two deciders, each used where it is strongest, and the union of them.
+ *
+ * `aloudRequested` is the model's own answer_aloud call, and it is the better
+ * signal by some distance: the model knows what it is ABOUT to say, while the
+ * transcript only hints at what was asked. "And the other one?" is hopeless
+ * from phrasing and obvious once you hold the answer. But it only exists
+ * AFTER the first response, since that is where the tool call arrives, and it
+ * depends on the model remembering to make it.
+ *
+ * The transcript heuristic covers what the flag cannot: the first response of
+ * a turn, and any turn the model answers directly without touching a tool.
+ *
+ * Union rather than either alone, because the failure modes are asymmetric. A
+ * missed spoken answer leaves someone waiting to be told something; a
+ * spurious one costs about 1.5 cents and mild irritation.
+ */
+export function decideModality({ transcript, aloudRequested, replyModality = defaultReplyModality }) {
+  return aloudRequested ? "audio" : replyModality(transcript);
+}
+
 export function sessionUpdate(input) {
   return JSON.stringify({ type: "session.update", session: { type: "realtime", audio: { input } } });
 }
@@ -55,7 +76,12 @@ export async function connectRealtimeSession({
   replyModality = defaultReplyModality,
   model,
   language,
+  onEvent,
 }) {
+  // Structured record of what actually happened, for whoever wants it. Emitted
+  // here rather than reconstructed by a caller, because most of it -- which
+  // decider chose the modality, what a response cost -- exists nowhere else.
+  const record = (event) => onEvent?.(event);
   // Transport states only. Whether the user is actually being listened to is
   // a separate question -- see isListening() -- because a connection can be
   // up with no microphone attached to it.
@@ -74,6 +100,7 @@ export async function connectRealtimeSession({
     throw new Error(sessionData.error?.message || sessionData.error || "Failed to create realtime session");
   }
   const ephemeralKey = sessionData.value;
+  record({ type: "connected", logId: sessionData.logId, logging: sessionData.logging, model, language });
 
   const pc = new RTCPeerConnection();
 
@@ -95,7 +122,61 @@ export async function connectRealtimeSession({
   let lastUserTurn = "";
   const partialTurns = new Map();
 
+  // Set by the model's answer_aloud call, cleared at the start of every turn.
+  let aloudRequested = false;
+
+  // Only one response can be in flight per conversation. Asking for a second
+  // is `conversation_already_has_active_response`, which arrives as an async
+  // error and drops the request -- so the turn that prompted it gets no answer
+  // at all, in any medium. That is not hypothetical: it is what happened when
+  // a user kept talking while the model was still working through a long
+  // sequence, and it reads as the widget ignoring them.
+  //
+  // With create_response: true the server never collided with itself. Owning
+  // response creation means owning this too, so requests are serialised
+  // instead of fired blindly.
+  let responseActive = false;
+  let responseQueued = false;
+
+  // Is the SERVER deciding turn boundaries? In push-to-talk we send
+  // turn_detection: null and the button decides, so the commit is ours and we
+  // must not answer it here as well -- that would be two responses per turn.
+  let serverTurns = initialMode !== "ptt";
+
   const dc = pc.createDataChannel("oai-events");
+
+  /**
+   * Ask for a response. This is the whole of what `create_response: false`
+   * buys: the server still hears where the turn ended and still commits it,
+   * but nothing is generated until this runs, so every response in the
+   * session is one we picked the medium for.
+   *
+   * The obligation that comes with it: a turn this fails to answer is
+   * silence. No error, no timeout, no retry from the server. Every path that
+   * commits audio has to reach here.
+   */
+  function requestResponse() {
+    if (responseActive) {
+      // Coalesced deliberately: what matters is that a response happens after
+      // the current one, and it will read the freshest transcript when it does.
+      responseQueued = true;
+      record({ type: "response_deferred", transcript: lastUserTurn });
+      return;
+    }
+    const modality = decideModality({ transcript: lastUserTurn, aloudRequested, replyModality });
+    // Optimistic: two requests can leave before the first `response.created`
+    // comes back, and the second is the one that gets rejected.
+    responseActive = true;
+    // Which decider won is the thing you tune on later, so it is recorded
+    // alongside the outcome rather than inferred from it.
+    record({
+      type: "response_requested",
+      modality,
+      decidedBy: aloudRequested ? "answer_aloud" : "transcript",
+      transcript: lastUserTurn,
+    });
+    dc.send(JSON.stringify({ type: "response.create", response: { output_modalities: [modality] } }));
+  }
 
   // The connect promise resolves when the channel is OPEN, not when the SDP
   // exchange finishes. Those are milliseconds apart under load and much
@@ -115,6 +196,7 @@ export async function connectRealtimeSession({
     if (initialMode === "ptt") {
       // Session is minted with server_vad by default; ptt needs manual
       // turn detection so button-release (not silence) decides the turn.
+      serverTurns = false;
       dc.send(sessionUpdate({ turn_detection: null }));
     }
   });
@@ -128,10 +210,26 @@ export async function connectRealtimeSession({
       return;
     }
 
+    if (msg.type === "response.created") responseActive = true;
+    // Cleared here, but NOT drained here: the tool-call path below also ends
+    // in a request, and draining at the top would let both fire for the same
+    // completed response -- which is the collision this exists to prevent.
+    if (msg.type === "response.done") responseActive = false;
+
     // The API reports malformed events this way rather than by failing the
     // send, so without this a rejected session.update is invisible.
     if (msg.type === "error") {
       console.error("Realtime API rejected an event:", msg.error);
+      record({ type: "api_error", error: msg.error });
+    }
+
+    // The server has decided the user stopped and banked the audio. With
+    // create_response: false that is ALL it does, so the first response of the
+    // turn is ours to ask for, and its medium comes from the partial
+    // transcript the deltas have already delivered.
+    if (msg.type === "input_audio_buffer.committed" && serverTurns) {
+      aloudRequested = false; // a new turn starts here
+      requestResponse();
     }
 
     if (msg.type === "conversation.item.input_audio_transcription.delta") {
@@ -143,6 +241,7 @@ export async function connectRealtimeSession({
     if (msg.type === "conversation.item.input_audio_transcription.completed") {
       partialTurns.delete(msg.item_id);
       lastUserTurn = msg.transcript ?? lastUserTurn;
+      record({ type: "user_turn", text: msg.transcript, seconds: msg.usage?.seconds });
       onTranscript?.({ role: "user", text: msg.transcript });
     }
 
@@ -155,12 +254,25 @@ export async function connectRealtimeSession({
             .map((c) => c.transcript || c.text)
             .filter(Boolean)
             .join(" ");
-          if (text) onTranscript?.({ role: "assistant", text });
+          if (text) {
+            record({ type: "assistant_reply", text, modalities: msg.response?.output_modalities });
+            onTranscript?.({ role: "assistant", text });
+          }
         }
       }
 
+      record({ type: "usage", usage: msg.response?.usage, modalities: msg.response?.output_modalities });
+
       const calls = output.filter((o) => o.type === "function_call");
-      if (calls.length === 0) return;
+      if (calls.length === 0) {
+        // Nothing to run, so this response ends its turn. If a turn arrived
+        // while it was streaming, answer that one now.
+        if (responseQueued) {
+          responseQueued = false;
+          requestResponse();
+        }
+        return;
+      }
 
       for (const call of calls) {
         let args = {};
@@ -169,12 +281,19 @@ export async function connectRealtimeSession({
         } catch {
           // leave args empty if the model sent malformed JSON
         }
+        // answer_aloud is a signal to us rather than work for the host app,
+        // but it still goes through onToolCall so a host can log what the
+        // model decided and the reason it gave.
+        if (call.name === "answer_aloud") aloudRequested = true;
+
         let result;
         try {
           result = await onToolCall(call.name, args);
         } catch (err) {
           result = { error: String(err.message || err) };
         }
+        record({ type: "tool_call", name: call.name, args, result });
+
         dc.send(
           JSON.stringify({
             type: "conversation.item.create",
@@ -186,15 +305,11 @@ export async function connectRealtimeSession({
           }),
         );
       }
-      // Asking for this response is what makes the model produce one at all,
-      // so the medium is a decision we are already making -- just implicitly,
-      // and always in favour of speech. Now it is explicit.
-      dc.send(
-        JSON.stringify({
-          type: "response.create",
-          response: { output_modalities: [replyModality(lastUserTurn)] },
-        }),
-      );
+      // The follow-up, where answer_aloud decides the medium. Any turn that
+      // arrived mid-flight is folded into this one request rather than queued
+      // behind it.
+      responseQueued = false;
+      requestResponse();
     }
   });
 
@@ -231,15 +346,7 @@ export async function connectRealtimeSession({
           item: { type: "message", role: "user", content: [{ type: "input_text", text }] },
         }),
       );
-      // Asking for this response is what makes the model produce one at all,
-      // so the medium is a decision we are already making -- just implicitly,
-      // and always in favour of speech. Now it is explicit.
-      dc.send(
-        JSON.stringify({
-          type: "response.create",
-          response: { output_modalities: [replyModality(lastUserTurn)] },
-        }),
-      );
+      requestResponse();
     },
 
     // --- PTT / PTNT primitives, all on this same connection + history ---
@@ -250,26 +357,26 @@ export async function connectRealtimeSession({
     // auto=true restores server VAD (continuous); auto=false switches to
     // manual turn detection (push-to-talk decides turn end itself).
     setTurnDetection(auto) {
-      dc.send(sessionUpdate({ turn_detection: auto ? { type: "server_vad" } : null }));
+      serverTurns = auto;
+      // create_response has to be repeated here. A bare { type: "server_vad" }
+      // resets it to its default of true, so switching out of push-to-talk
+      // would hand response creation quietly back to the server and undo the
+      // whole arrangement, on a path nobody exercises.
+      dc.send(
+        sessionUpdate({ turn_detection: auto ? { type: "server_vad", create_response: false } : null }),
+      );
     },
     // Reset any buffered input audio -- call on PTT press so a stale/empty
     // buffer from before the button was held doesn't bleed into the turn.
     clearInputBuffer() {
+      aloudRequested = false; // a push-to-talk turn starts here
       dc.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
     },
     // Call on PTT release: finalizes the held-down turn and asks the model
     // to respond now, without waiting on VAD (which is disabled anyway).
     commitAndRespond() {
       dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-      // Asking for this response is what makes the model produce one at all,
-      // so the medium is a decision we are already making -- just implicitly,
-      // and always in favour of speech. Now it is explicit.
-      dc.send(
-        JSON.stringify({
-          type: "response.create",
-          response: { output_modalities: [replyModality(lastUserTurn)] },
-        }),
-      );
+      requestResponse();
     },
     // Barge-in: stop whatever the model is currently saying/generating.
     cancelResponse() {

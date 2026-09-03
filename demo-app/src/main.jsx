@@ -19,7 +19,10 @@ function VoiceIntegration({ children }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   return (
-    <VoiceProvider navigate={navigate} onAfterAction={() => qc.invalidateQueries()}>
+    // The host opts IN; it does not implement anything. The widget posts its
+    // own events to the relay, and the relay ignores them unless VOICE_LOG=1.
+    // Both switches are deliberate because this records what people say.
+    <VoiceProvider navigate={navigate} onAfterAction={() => qc.invalidateQueries()} logToRelay>
       {children}
     </VoiceProvider>
   );

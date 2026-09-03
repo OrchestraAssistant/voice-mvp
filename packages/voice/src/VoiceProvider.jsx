@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { connectRealtimeSession } from "./realtimeClient.js";
 import { OverlayProvider } from "./ScreenOverlay.jsx";
+import { createRelayLogger } from "./relayLog.js";
 import * as dom from "./domActions.js";
 
 const InterpreterContext = createContext(null);
@@ -70,6 +71,7 @@ export function VoiceProvider({
   onPendingAction,
   onModeChange,
   onTransportChange,
+  logToRelay = false,
 }) {
   const [manifest, setManifest] = useState(null);
   // What the relay is willing to offer. Fetched rather than hard-coded so the
@@ -94,6 +96,10 @@ export function VoiceProvider({
   const [holding, setHolding] = useState(false);
 
   const sessionRef = useRef(null);
+  // Created once. Does nothing unless BOTH this flag and the relay's VOICE_LOG
+  // are on -- the relay says so in its mint response and the logger obeys.
+  const loggerRef = useRef(null);
+  if (logToRelay && !loggerRef.current) loggerRef.current = createRelayLogger({ relayUrl });
   const pendingRef = useRef(null); // mirrors pendingAction for use inside the tool-call closure
 
   // Fallback nav for hosts that don't pass one: updates the URL and fires
@@ -114,8 +120,18 @@ export function VoiceProvider({
   callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onTransportChange, onAfterAction };
 
   const setPendingAction = (value) => {
-    pendingRef.current = value ? { action: value.action, args: value.args } : null;
-    const publicValue = value ? { name: value.action.name, description: value.action.description, args: value.args } : null;
+    pendingRef.current = value ? { action: value.action, batch: value.batch } : null;
+    const publicValue = value
+      ? {
+          name: value.action.name,
+          description: value.action.description,
+          args: value.batch[0],
+          // How many things this one confirmation covers. A destructive batch
+          // is approved once for the whole set -- seven separate "are you
+          // sure?" rounds is what this exists to stop.
+          count: value.batch.length,
+        }
+      : null;
     setPendingActionState(publicValue);
     callbacksRef.current.onPendingAction?.(publicValue);
   };
@@ -160,6 +176,26 @@ export function VoiceProvider({
     return result;
   };
 
+  /**
+   * Runs an action once per entry. Sequential rather than parallel: these are
+   * writes against the host's API, and a batch of creates that races itself
+   * can land in an order the user did not ask for.
+   *
+   * A single-item batch returns the bare result, so the model sees exactly
+   * what it saw before batching existed.
+   */
+  const runBatch = async (action, batch) => {
+    const results = [];
+    for (const one of batch) {
+      try {
+        results.push(await runAction(action, one));
+      } catch (err) {
+        results.push({ error: String(err.message || err) });
+      }
+    }
+    return batch.length === 1 ? results[0] : { count: results.length, results };
+  };
+
   const executeTool = useCallback(
     async (name, args) => {
       if (!manifest) return { error: "Manifest not loaded yet" };
@@ -167,6 +203,12 @@ export function VoiceProvider({
       if (name === "navigate") {
         navigate(args.path);
         return { status: "navigated", path: args.path };
+      }
+
+      // A signal to the transport layer, already acted on before it got here;
+      // surfaced so onToolCall can log what the model decided and why.
+      if (name === "answer_aloud") {
+        return { acknowledged: true, because: args.because };
       }
 
       if (name === "dom_snapshot") {
@@ -185,7 +227,7 @@ export function VoiceProvider({
         const pending = pendingRef.current;
         if (!pending) return { error: "Nothing is pending confirmation" };
         setPendingAction(null);
-        return await runAction(pending.action, pending.args);
+        return await runBatch(pending.action, pending.batch);
       }
       if (name === "cancel_pending_action") {
         setPendingAction(null);
@@ -195,21 +237,38 @@ export function VoiceProvider({
       if (name.startsWith("query_")) {
         const query = findQuery(name.slice("query_".length));
         if (!query) return { error: `Unknown query: ${name}` };
-        return await runQuery(query, args);
+
+        // Reads, so unlike a batch of writes these can run together -- there is
+        // no order to get wrong and the latency is the point.
+        const { items, ...single } = args;
+        const batch = Array.isArray(items) && items.length > 0 ? items : [single];
+        if (batch.length === 1) return await runQuery(query, batch[0]);
+        const results = await Promise.all(
+          batch.map((one) => runQuery(query, one).catch((err) => ({ error: String(err.message || err) }))),
+        );
+        return { count: results.length, results };
       }
 
       if (name.startsWith("action_")) {
         const action = findAction(name.slice("action_".length));
         if (!action) return { error: `Unknown action: ${name}` };
 
+        // One call, one or many things. `items` is the batch form; the
+        // top-level fields are the single form. Both end up as a list here so
+        // nothing downstream has to care which the model used.
+        const { items, ...single } = args;
+        const batch = Array.isArray(items) && items.length > 0 ? items : [single];
+
         if (action.requiresConfirmation) {
-          setPendingAction({ action, args });
+          setPendingAction({ action, batch });
           return {
             status: "needs_confirmation",
-            message: `Ask the user to confirm: ${action.description} with ${JSON.stringify(args)}. Call confirm_pending_action once they agree.`,
+            message:
+              `Ask the user to confirm: ${action.description} for ${batch.length} item(s): ` +
+              `${JSON.stringify(batch)}. Ask ONCE, for the whole set. Call confirm_pending_action when they agree.`,
           };
         }
-        return await runAction(action, args);
+        return await runBatch(action, batch);
       }
 
       return { error: `Unrecognized tool: ${name}` };
@@ -246,6 +305,7 @@ export function VoiceProvider({
         relayUrl,
         model: overrides.model ?? model,
         language: overrides.language ?? language,
+        onEvent: (event) => loggerRef.current?.record(event),
       });
       sessionRef.current = session;
       // Today the mic is acquired as part of connecting, so this is true as soon
@@ -259,6 +319,7 @@ export function VoiceProvider({
   };
 
   const stop = () => {
+    loggerRef.current?.stop();
     sessionRef.current?.stop();
     sessionRef.current = null;
     setTransport("idle");

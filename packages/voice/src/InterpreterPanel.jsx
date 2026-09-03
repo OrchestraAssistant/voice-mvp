@@ -90,7 +90,8 @@ export function InterpreterPanel() {
       {pendingAction && (
         <div className="confirm-banner">
           <p>
-            Confirm: <strong>{pendingAction.description}</strong> {JSON.stringify(pendingAction.args)}
+            Confirm: <strong>{pendingAction.description}</strong>{" "}
+            {pendingAction.count > 1 ? `× ${pendingAction.count}` : JSON.stringify(pendingAction.args)}
           </p>
           <button onClick={confirmManually}>Confirm</button>
           <button onClick={cancelManually}>Cancel</button>
