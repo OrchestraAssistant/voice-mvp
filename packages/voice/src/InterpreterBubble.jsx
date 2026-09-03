@@ -324,12 +324,22 @@ const MODES = [
   { id: "ptnt", label: "Push to not talk", icon: MicOff },
 ];
 
-/** One selectable row. `note` is the quiet detail on the right when unselected. */
-function ChoiceRow({ icon: Icon, label, note, selected, onSelect }) {
+/**
+ * One selectable row. `note` is the quiet detail on the right when unselected.
+ * `flag` takes the icon's place when a row has one -- sized and boxed to the
+ * same 16px square so a mixed list of flags and icons still lines up.
+ */
+function ChoiceRow({ icon: Icon, flag, label, note, selected, onSelect }) {
   return (
     <button type="button" onClick={onSelect} className={cn(ROW, selected && "bg-foreground/4")}>
       <span className="flex min-w-0 items-center gap-2">
-        {Icon && <Icon className="size-4 shrink-0" />}
+        {flag ? (
+          <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center text-[13px] leading-none">
+            {flag}
+          </span>
+        ) : (
+          Icon && <Icon className="size-4 shrink-0" />
+        )}
         <span className="truncate">{label}</span>
       </span>
       {selected ? (
@@ -374,6 +384,7 @@ function SettingsTabContent() {
             <ChoiceRow
               key={l.code}
               icon={Languages}
+              flag={l.flag}
               label={l.label}
               selected={language === l.code}
               onSelect={() => setLanguage(l.code)}

@@ -117,13 +117,18 @@ export const MODELS = [
  * six turns in Vietnamese, having been spoken to in English throughout.
  */
 export const LANGUAGES = [
-  { code: "auto", label: "Auto-detect", name: null },
-  { code: "en", label: "English", name: "English" },
-  { code: "es", label: "Espanol", name: "Spanish" },
-  { code: "fr", label: "Francais", name: "French" },
-  { code: "de", label: "Deutsch", name: "German" },
-  { code: "pt", label: "Portugues", name: "Portuguese" },
-  { code: "it", label: "Italiano", name: "Italian" },
+  // `flag` is a display detail the widget shows instead of an icon. Auto-detect
+  // has none on purpose: it is not a place, and any flag would be a lie about
+  // which one. The rest are a convenient shorthand rather than a claim -- a
+  // language is not a country, and es/pt in particular are spoken by far more
+  // people outside the flag than inside it.
+  { code: "auto", label: "Auto-detect", name: null, flag: null },
+  { code: "en", label: "English", name: "English", flag: "\u{1F1EC}\u{1F1E7}" },
+  { code: "es", label: "Espanol", name: "Spanish", flag: "\u{1F1EA}\u{1F1F8}" },
+  { code: "fr", label: "Francais", name: "French", flag: "\u{1F1EB}\u{1F1F7}" },
+  { code: "de", label: "Deutsch", name: "German", flag: "\u{1F1E9}\u{1F1EA}" },
+  { code: "pt", label: "Portugues", name: "Portuguese", flag: "\u{1F1F5}\u{1F1F9}" },
+  { code: "it", label: "Italiano", name: "Italian", flag: "\u{1F1EE}\u{1F1F9}" },
 ];
 
 /** Returns { model } or { error }. */
