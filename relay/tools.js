@@ -25,30 +25,20 @@ function paramsToJsonSchema(params = [], bodyFields = []) {
 export function buildTools(manifest) {
   const tools = [];
 
-  // Same batch form as actions, for the same reason. Measured: asked to delete
-  // seven weekday tasks, the model made seven separate
-  // query_tasks({search:"Monday"}) calls to find them -- one round trip each,
-  // when one unfiltered call returns the lot.
+  // Queries stay a plain schema, deliberately unlike actions below. Wrapping
+  // them would make the commonest call -- "list everything" -- into
+  // {"items":[{}]}, an array holding one empty object, which reads like a bug.
+  // The model ignored the batch form for queries anyway; what it needs here is
+  // not a batch but the advice to stop filtering one thing at a time.
   for (const q of manifest.queries) {
-    const single = paramsToJsonSchema(q.params);
     tools.push({
       type: "function",
       name: `query_${q.name}`,
       description:
         q.description.replace(/\s*$/, "").replace(/\.?$/, ".") +
-        " To look up SEVERAL at once, pass `items` with one entry per lookup." +
-        " Better still, when you need most of a list, call this ONCE with no filter and pick from the result.",
-      parameters: {
-        type: "object",
-        properties: {
-          ...single.properties,
-          items: {
-            type: "array",
-            description: "Several lookups at once. Each entry takes the same fields as a single call.",
-            items: { type: "object", properties: single.properties, required: single.required ?? [] },
-          },
-        },
-      },
+        " When you need several things, call this ONCE with no filter and pick from the result" +
+        " -- never one query per thing.",
+      parameters: paramsToJsonSchema(q.params),
     });
   }
 
@@ -60,34 +50,41 @@ export function buildTools(manifest) {
     // seconds of the user saying "yep". One call with a list is fewer
     // round trips, fewer tokens, and -- for destructive actions -- one
     // question instead of seven.
-    const single = paramsToJsonSchema(a.params, a.bodyFields);
+    // ONE shape, always a list -- a single change is a list of one.
+    //
+    // The first attempt offered `items` ALONGSIDE the plain fields, which
+    // meant the schema had to say "either these or that", and that is exactly
+    // what it cannot say: anyOf/oneOf/allOf/not are rejected at the root of a
+    // tool's parameters (they are fine anywhere nested). So the root `required`
+    // had to be dropped and `action_createTask({})` became schema-valid
+    // nonsense.
+    //
+    // Making the list the only form removes the either/or, and with it the
+    // need to compose anything. `required: ["items"]` comes back at the root,
+    // `required` still applies inside each entry, and minItems stops an empty
+    // batch -- stricter than before batching existed, and a third smaller than
+    // carrying both forms.
     tools.push({
       type: "function",
       name: `action_${a.name}`,
       description:
         a.description.replace(/\s*$/, "").replace(/\.?$/, ".") +
-        " For SEVERAL at once, pass `items` with one entry per thing instead of the top-level fields;" +
-        " always prefer a single call with `items` over repeating this tool." +
-        // The schema cannot express "either the top-level fields or items":
-        // the API rejects anyOf/oneOf outright ("schema must have type 'object'
-        // and not have 'oneOf'/'anyOf'/'allOf'"). So the top-level `required`
-        // has to go, and the requirement is stated in words instead. The
-        // per-entry `required` inside `items` still applies.
-        ` Required for a single call: ${(a.params.filter((x) => x.required).map((x) => x.name) || []).concat(a.bodyFields?.filter((f) => f.required).map((f) => f.name) ?? []).join(", ") || "none"}.` +
+        " Takes a LIST: one entry per thing to change, and a single change is a list of one." +
+        " Never call this repeatedly for a set -- put them all in one call." +
         (a.requiresConfirmation
-          ? " (destructive: requires user confirmation before executing. A batch is confirmed once, for the whole set.)"
+          ? " (destructive: requires user confirmation before executing. A list is confirmed once, for the whole set.)"
           : ""),
       parameters: {
         type: "object",
         properties: {
-          ...single.properties,
           items: {
             type: "array",
-            description: "Several at once. Each entry takes the same fields as a single call.",
-            items: { type: "object", properties: single.properties, required: single.required ?? [] },
+            minItems: 1,
+            description: "One entry per thing to change. For a single change, pass a list of one.",
+            items: paramsToJsonSchema(a.params, a.bodyFields),
           },
         },
-        // Neither form is required at this level: it is one or the other.
+        required: ["items"],
       },
     });
   }
@@ -234,7 +231,7 @@ Rules:
 4. Answer in ONE short sentence. Two or three words is usually right: "Done." / "Opened settings." / "Three tasks match." The user is looking at the screen and can see what changed, so do not describe the result in detail.
 5. Never end with an offer of further help. No "anything else?", no "let me know if...", no restating the request back to the user. Say what happened and stop.
 6. If something fails or no tool fits, say so in one sentence and stop. Do not propose alternatives unless asked.
-7. When a request covers several things -- "create one per month", "delete all the weekdays" -- do it in ONE call using \`items\`, not one call per thing. Never stop part-way through a list; if the user asked for twelve, make all twelve in a single call. The same goes for looking things up: to find several, call the query ONCE with no filter and pick from the result, or pass \`items\` -- never one query per thing.
+7. Every action_* tool takes a LIST of changes, so one call does the whole job. "Create one per month" is ONE call with twelve entries; "delete all the weekdays" is ONE call with seven. A single change is a list of one entry. Never stop part-way through a list, and never call the same action twice for a set. For lookups, call the query ONCE with no filter and pick from the result -- never one query per thing.
 8. Your replies are shown to the user as TEXT by default. If your next reply carries information they asked for and cannot see on screen -- an answer, a count, a value -- call answer_aloud in the same turn as the tool you are reporting on, and it will be spoken instead. Confirmations of things they just watched happen stay as text; do not call answer_aloud for those.${
     language
       ? `\n7. Speak and write in ${language.name}, always. Do not switch languages part-way through, and do not follow the language of the audio if it seems to differ -- the user has chosen ${language.name}.`

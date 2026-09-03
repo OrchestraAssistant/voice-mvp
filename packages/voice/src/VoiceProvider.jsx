@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
-import { connectRealtimeSession } from "./realtimeClient.js";
+import { connectRealtimeSession, isUsable, mintSession } from "./realtimeClient.js";
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
 import { resolveRoutePath } from "./routes.js";
@@ -73,6 +73,24 @@ export function VoiceProvider({
   onModeChange,
   onTransportChange,
   logToRelay = false,
+  /**
+   * How much of the connect to do before the user asks to talk.
+   *
+   *   "off"    nothing until the Talk button. ~1.6s of dead air on the click.
+   *   "open"   mint AND connect when the panel opens; only the microphone is
+   *            left for the click.
+   *   "eager"  mint on mount and keep a fresh key; connect when the panel
+   *            opens. Same click as "open", but the panel-open connect is
+   *            shorter by the whole mint.
+   *   "hover"  mint on mount; connect when the pointer reaches the pill, which
+   *            is earlier than the click that opens it. Costs a connect for
+   *            anyone whose cursor merely crosses that corner of the screen.
+   *
+   * The microphone is never taken early in any of them. You could, silently,
+   * for users who have already granted permission -- and it lights the OS
+   * recording indicator, which is how a widget gets distrusted.
+   */
+  warmup = "hover",
 }) {
   const [manifest, setManifest] = useState(null);
   // What the relay is willing to offer. Fetched rather than hard-coded so the
@@ -97,6 +115,10 @@ export function VoiceProvider({
   const [holding, setHolding] = useState(false);
 
   const sessionRef = useRef(null);
+  // A minted key waiting to be redeemed. Not a session and not a connection:
+  // no audio, no cost, nothing open. Just a credential with ~10 minutes on it.
+  const mintedRef = useRef(null);
+  const warmingRef = useRef(null);
   // Created once. Does nothing unless BOTH this flag and the relay's VOICE_LOG
   // are on -- the relay says so in its mint response and the logger obeys.
   const loggerRef = useRef(null);
@@ -251,26 +273,18 @@ export function VoiceProvider({
         const query = findQuery(name.slice("query_".length));
         if (!query) return { error: `Unknown query: ${name}` };
 
-        // Reads, so unlike a batch of writes these can run together -- there is
-        // no order to get wrong and the latency is the point.
-        const { items, ...single } = args;
-        const batch = Array.isArray(items) && items.length > 0 ? items : [single];
-        if (batch.length === 1) return await runQuery(query, batch[0]);
-        const results = await Promise.all(
-          batch.map((one) => runQuery(query, one).catch((err) => ({ error: String(err.message || err) }))),
-        );
-        return { count: results.length, results };
+        return await runQuery(query, args);
       }
 
       if (name.startsWith("action_")) {
         const action = findAction(name.slice("action_".length));
         if (!action) return { error: `Unknown action: ${name}` };
 
-        // One call, one or many things. `items` is the batch form; the
-        // top-level fields are the single form. Both end up as a list here so
-        // nothing downstream has to care which the model used.
-        const { items, ...single } = args;
-        const batch = Array.isArray(items) && items.length > 0 ? items : [single];
+        // Always a list -- that is the only shape the schema allows, so there
+        // is nothing to normalise. The fallback is for a model that ignores
+        // the schema, which is not hypothetical: one sent {"/":"dashboard"} to
+        // navigate against a perfectly good `path` declaration.
+        const batch = Array.isArray(args.items) && args.items.length > 0 ? args.items : [args];
 
         if (action.requiresConfirmation) {
           setPendingAction({ action, batch });
@@ -301,8 +315,97 @@ export function VoiceProvider({
   // this closure yet. Reading it from state here would reconnect with exactly
   // the setting the user just changed away from -- silently, and only on the
   // reconnect path, which is the kind of bug that survives a long time.
+  /**
+   * Keep a usable key in hand. Called on a timer AND before every use, because
+   * the timer cannot be trusted: a backgrounded tab has its intervals throttled
+   * to roughly one a minute, so a 9-minute refresh may simply not fire. The
+   * check at the point of use is the guarantee; the timer is an optimisation.
+   */
+  const ensureMinted = useCallback(async (overrides = {}) => {
+    if (isUsable(mintedRef.current)) return mintedRef.current;
+    try {
+      mintedRef.current = await mintSession({
+        relayUrl,
+        model: overrides.model ?? model,
+        language: overrides.language ?? language,
+      });
+      return mintedRef.current;
+    } catch {
+      // Warming must never surface an error: nobody asked for this yet, and
+      // the Talk button will mint again and report properly if it still fails.
+      mintedRef.current = null;
+      return null;
+    }
+  }, [relayUrl, model, language]);
+
+  /**
+   * Connect with no microphone attached. Safe to call more than once and safe
+   * to call when nobody has asked to talk: `micAttached` stays false, so
+   * isListening() stays false, so the rim stays dark. That separation is the
+   * whole reason the transport/listening split exists.
+   */
+  const warm = useCallback(async () => {
+    if (warmup === "off" || sessionRef.current || warmingRef.current) return;
+    warmingRef.current = (async () => {
+      setTransport("connecting");
+      try {
+        const session = await connectRealtimeSession({
+          onToolCall: async (name, args) => {
+            const result = await executeTool(name, args);
+            callbacksRef.current.onToolCall?.(name, args, result);
+            return result;
+          },
+          onStatus: (st) => {
+            const next = st === "closed" ? "idle" : st;
+            setTransport(next);
+            if (next === "idle") setMicAttached(false);
+            callbacksRef.current.onTransportChange?.(next);
+          },
+          onTranscript: (turn) => {
+            setTranscript((t) => [...t, turn]);
+            callbacksRef.current.onTranscript?.(turn);
+          },
+          onEvent: (event) => loggerRef.current?.record(event),
+          initialMode: mode,
+          relayUrl,
+          model,
+          language,
+          minted: await ensureMinted(),
+          withMic: false,
+        });
+        sessionRef.current = session;
+      } catch {
+        setTransport("idle"); // silent: nobody asked for this
+      } finally {
+        warmingRef.current = null;
+      }
+    })();
+    return warmingRef.current;
+  }, [warmup, mode, relayUrl, model, language, ensureMinted, executeTool]);
+
+  // "eager" mints on mount and keeps it fresh. A key is not a session: nothing
+  // is open, nothing is billed, and if it expires unused it costs nothing.
+  useEffect(() => {
+    if (warmup !== "eager" && warmup !== "hover") return;
+    ensureMinted();
+    const id = setInterval(ensureMinted, 4 * 60_000);
+    return () => clearInterval(id);
+  }, [warmup, ensureMinted]);
+
   const start = async (overrides = {}) => {
     setError(null);
+    // Already warm: the only thing left is the microphone.
+    await warmingRef.current;
+    if (sessionRef.current) {
+      try {
+        await sessionRef.current.attachMic();
+        setMicAttached(true);
+      } catch (err) {
+        setError(String(err.message || err));
+        setTransport("error");
+      }
+      return;
+    }
     setTransport("connecting");
     try {
       const session = await connectRealtimeSession({
@@ -326,6 +429,7 @@ export function VoiceProvider({
         model: overrides.model ?? model,
         language: overrides.language ?? language,
         onEvent: (event) => loggerRef.current?.record(event),
+        minted: await ensureMinted(overrides),
       });
       sessionRef.current = session;
       // Today the mic is acquired as part of connecting, so this is true as soon
@@ -473,6 +577,8 @@ export function VoiceProvider({
         confirmManually,
         cancelManually,
         setMode,
+        warm,
+        warmup,
         holdStart,
         holdEnd,
       }}

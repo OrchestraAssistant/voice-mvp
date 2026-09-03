@@ -601,3 +601,114 @@ the text cost tenfold.
 
 **Not worth chasing:** the prefix is only ~6% of a session. Audio is the
 expensive part, and §8, §9 and §10 are where the money is.
+
+
+---
+
+## 14. Warming: connect on hover, take the microphone on the click
+
+**Chosen:** `warmup="hover"`. An ephemeral key is minted when the widget
+mounts and kept fresh; the WebRTC connection is established when the pointer
+reaches the pill; the microphone is acquired only when the user presses Talk.
+
+**Why there is anything to warm.** Six things happen between the click and the
+first word, and only one of them needs the user. Measured medians:
+
+| step | |
+|---|---|
+| mint, via the relay | ~430 ms |
+| SDP exchange, ICE, DTLS, data channel open | ~1,280 ms |
+| `getUserMedia` | the only part that needs the user |
+| **click to ready** | **1,640 ms** (3,382 on the first connect of a page) |
+
+**What each trigger costs, measured on the same build:**
+
+| trigger | felt at the Talk click | connects for |
+|---|---|---|
+| `off` — everything on the click | 1,640 ms | users who talk |
+| `open` — mint + connect on panel open | 3 ms | users who open the panel |
+| `eager` — mint on mount, connect on panel open | 5 ms | users who open the panel |
+| `hover` — mint on mount, connect on pointer arrival | 3 ms | anyone whose cursor crosses the corner |
+
+`open` and `eager` are indistinguishable at the click, because both have
+finished by then. They differ only at panel-open: 1,713 ms against 1,283 ms,
+so pre-minting is worth **430 ms** and only to someone who opens the panel and
+clicks Talk inside 1.3 seconds. Hover moves the *expensive* part earlier
+instead — the connect starts on pointer travel, which precedes the click that
+opens the panel — so the panel is more likely to be ready the moment it opens.
+
+**The 3 ms is a fake device.** On real hardware with permission already
+granted, expect low hundreds; a first-time permission prompt is human time and
+no strategy touches that.
+
+**Why the microphone is never taken early.** For a user who has already granted
+permission you could acquire it silently at hover. It lights the OS recording
+indicator, and a widget that turns on someone's microphone because their cursor
+passed nearby is how a product gets distrusted.
+
+### What warming actually costs
+
+Nothing in tokens, measured rather than assumed. A warm connection held 45
+seconds with no microphone attached received exactly one event:
+
+```json
+{ "session.created": 1 }
+```
+
+The audio transceiver is negotiated `sendrecv` with **no track in it**, so
+there is no media source to encode -- not silence, nothing. With
+`create_response: false` (§10) the server generates nothing unless asked. And
+an idle session bills zero: ten minutes connected with a *live* microphone and
+pure silence moved the dashboard by $0.00, confirmed against the account 33
+minutes later. A warm connection is strictly less than that.
+
+Five connect-and-close cycles back to back all succeeded (1904, 1585, 1565,
+1571, 1565 ms), with no throttling and no degradation. The `client_secrets`
+endpoint returns no rate-limit headers at all, so account limits presumably
+apply but are not advertised.
+
+**What it does cost:** a request to your relay per page view for the mint,
+another per hover for the connect, and an idle WebRTC connection doing
+keepalives. That is infrastructure, not OpenAI's bill.
+
+### Two facts that shaped this
+
+**The ephemeral key lives ten minutes, not one.** Measured: `expires_at` came
+back 601 seconds out. The one-minute figure in circulation is wrong, and it is
+what makes pre-minting viable at all -- otherwise a key would have to be
+redeemed almost immediately and "warm" could only mean "already connected".
+
+**A refresh timer cannot be trusted.** A backgrounded tab has `setInterval`
+throttled to roughly once a minute and may be suspended outright, so a key can
+go stale while the timer sleeps. `ensureMinted` therefore checks freshness at
+the point of use with a 60-second margin; the timer is an optimisation, not the
+guarantee. Without that check, warming would make the click *slower* than not
+warming: dead key, error, re-mint, connect.
+
+### What made it safe
+
+The transport/listening split (§ the `transport` / `micAttached` separation).
+A warm session has `micAttached: false`, so `isListening()` is false and the
+rim stays dark on a session the user never started. That was the prerequisite,
+and it is asserted directly: `warm()` never calls `attachMic`.
+
+`replaceTrack` rather than `addTrack` is the other half. The transceiver is
+negotiated at connect time with no track, so attaching a microphone later needs
+no renegotiation -- `addTrack` after the fact would require a second
+offer/answer, which it is not clear this endpoint accepts.
+
+### Revisit if
+
+- **Page-view minting shows up as load.** `hover` mints on mount, so every page
+  view costs a relay round trip whether or not anyone approaches the widget.
+  Minting on hover instead, alongside the connect, removes that entirely and
+  costs about 430 ms of the hover window -- still very likely finished before
+  the click. One line, and the better default if the widget ships somewhere
+  busy.
+- **Touch matters more than desktop.** There is no `pointerenter` on a
+  touchscreen, so hover degrades to the panel-open trigger there. If most usage
+  is touch, `eager` is the honest choice, since it is what touch gets anyway.
+- **Sessions are held rather than churned.** Prompt caching is session-scoped
+  (§13), so warm-use-close-warm pays the ~1,500-token prefix every time. One
+  session held for the visit is cheaper than several short ones, which argues
+  for an idle teardown measured in minutes rather than per interaction.

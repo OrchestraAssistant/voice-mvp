@@ -67,6 +67,37 @@ export function sessionUpdate(input) {
   return JSON.stringify({ type: "session.update", session: { type: "realtime", audio: { input } } });
 }
 
+/**
+ * Mint an ephemeral key, without connecting anything.
+ *
+ * Worth having on its own because the key is good for TEN minutes, not the one
+ * minute the docs' summaries suggest -- measured: expires_at came back 601
+ * seconds out. That is long enough to pay the mint (738ms median, and the
+ * slowest of the two round trips) well before anyone intends to speak, and
+ * still redeem it later.
+ */
+export async function mintSession({ relayUrl = "", model, language } = {}) {
+  const res = await fetch(`${relayUrl}/voice/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, language }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || data.error || "Failed to create realtime session");
+  return {
+    key: data.value,
+    // Seconds from the API; milliseconds everywhere in here.
+    expiresAt: data.expires_at ? data.expires_at * 1000 : Date.now() + 9 * 60_000,
+    logId: data.logId,
+    logging: data.logging,
+  };
+}
+
+/** Is this key still worth trying? The margin covers a slow connect. */
+export function isUsable(minted, marginMs = 60_000) {
+  return !!minted?.key && minted.expiresAt - Date.now() > marginMs;
+}
+
 export async function connectRealtimeSession({
   onToolCall,
   onStatus,
@@ -77,6 +108,12 @@ export async function connectRealtimeSession({
   model,
   language,
   onEvent,
+  // A key minted earlier. Skipping the mint is most of the latency saving.
+  minted,
+  // Connect with no microphone. The transceiver is negotiated either way, so
+  // one can be attached later without renegotiating -- which matters because
+  // it is not clear the endpoint would accept a second offer/answer.
+  withMic = true,
 }) {
   // Structured record of what actually happened, for whoever wants it. Emitted
   // here rather than reconstructed by a caller, because most of it -- which
@@ -90,17 +127,13 @@ export async function connectRealtimeSession({
   // on a live session, which is why they travel with the mint request rather
   // than a later session.update. The relay validates them -- a browser should
   // not be picking which model the account pays for.
-  const sessionRes = await fetch(`${relayUrl}/voice/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, language }),
+  const session = isUsable(minted) ? minted : await mintSession({ relayUrl, model, language });
+  const ephemeralKey = session.key;
+  record({
+    type: "connected",
+    logId: session.logId, logging: session.logging, model, language,
+    premintedBy: isUsable(minted) ? Math.round((Date.now() - (minted.expiresAt - 600_000)) / 1000) : null,
   });
-  const sessionData = await sessionRes.json();
-  if (!sessionRes.ok) {
-    throw new Error(sessionData.error?.message || sessionData.error || "Failed to create realtime session");
-  }
-  const ephemeralKey = sessionData.value;
-  record({ type: "connected", logId: sessionData.logId, logging: sessionData.logging, model, language });
 
   const pc = new RTCPeerConnection();
 
@@ -110,10 +143,24 @@ export async function connectRealtimeSession({
     audioEl.srcObject = event.streams[0];
   };
 
-  const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const micTrack = micStream.getAudioTracks()[0];
-  micTrack.enabled = initialMode !== "ptt"; // ptt starts muted (hold to talk); others start live
-  micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
+  // The audio sender is negotiated NOW, with or without a track in it, so a
+  // microphone attached later needs only replaceTrack() -- which does not
+  // renegotiate. addTrack() after the fact would need a second offer/answer,
+  // and it is not clear this endpoint accepts one.
+  const sender = pc.addTransceiver("audio", { direction: "sendrecv" }).sender;
+  let micTrack = null;
+
+  async function attachMic() {
+    if (micTrack) return micTrack;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micTrack = stream.getAudioTracks()[0];
+    micTrack.enabled = initialMode !== "ptt"; // ptt rests muted; the others rest live
+    await sender.replaceTrack(micTrack);
+    record({ type: "mic_attached" });
+    return micTrack;
+  }
+
+  if (withMic) await attachMic();
 
   // The user's current turn, assembled from the streaming transcription deltas
   // rather than waiting for the completed event -- which arrives AFTER the
@@ -334,6 +381,7 @@ export async function connectRealtimeSession({
   return {
     stop() {
       dc.close();
+      micTrack = null;
       pc.getSenders().forEach((s) => s.track?.stop());
       pc.close();
       onStatus?.("closed");
@@ -351,8 +399,10 @@ export async function connectRealtimeSession({
 
     // --- PTT / PTNT primitives, all on this same connection + history ---
 
+    attachMic,
+    hasMic: () => !!micTrack,
     setMicEnabled(enabled) {
-      micTrack.enabled = enabled;
+      if (micTrack) micTrack.enabled = enabled;
     },
     // auto=true restores server VAD (continuous); auto=false switches to
     // manual turn detection (push-to-talk decides turn end itself).

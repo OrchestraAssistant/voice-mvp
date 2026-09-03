@@ -139,9 +139,11 @@ describe("batch execution", () => {
   const source = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
 
-  test("both call shapes collapse to a list before anything runs", () => {
-    assert.match(source, /const \{ items, \.\.\.single \} = args;/);
-    assert.match(source, /Array\.isArray\(items\) && items\.length > 0 \? items : \[single\]/);
+  test("a list is the only shape, with a fallback for a model that ignores it", () => {
+    // The schema now says required: ["items"], so there is nothing to
+    // normalise -- but a model that sent {"/":"dashboard"} against a valid
+    // `path` declaration is not one to trust with a schema.
+    assert.match(source, /Array\.isArray\(args\.items\) && args\.items\.length > 0 \? args\.items : \[args\]/);
   });
 
   test("a destructive batch stages the whole set and is confirmed once", () => {
@@ -161,23 +163,6 @@ describe("batch execution", () => {
   });
 });
 
-describe("batched queries", () => {
-  const source = readFileSync(
-    resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
-
-  test("reads run together, unlike writes", () => {
-    // There is no order to get wrong on a read, and the latency is the point.
-    assert.match(source, /Promise\.all\([\s\S]{0,160}runQuery/);
-  });
-
-  test("a single lookup is untouched by the batch path", () => {
-    assert.match(source, /if \(batch\.length === 1\) return await runQuery\(query, batch\[0\]\)/);
-  });
-
-  test("one failing lookup does not sink the batch", () => {
-    assert.match(source, /runQuery\(query, one\)\.catch/);
-  });
-});
 
 describe("staging a destructive batch", () => {
   const source = readFileSync(

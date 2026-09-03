@@ -73,44 +73,38 @@ describe("batching", () => {
   const create = tools.find((t) => t.name === "action_createTask");
   const del = tools.find((t) => t.name === "action_deleteTask");
 
-  test("queries batch too, and are nudged toward one unfiltered call", () => {
-    // Asked to delete seven weekdays, the model made seven separate
-    // query_tasks({search:"Monday"}) calls to find them.
+  test("queries stay a plain schema, and are told to fetch once", () => {
+    // Wrapping them would make "list everything" into {"items":[{}]}, an array
+    // holding one empty object. The model ignored the query batch form anyway.
     for (const t of tools.filter((x) => x.name.startsWith("query_"))) {
-      assert.ok(t.parameters.properties.items, `${t.name} has no batch form`);
+      assert.equal(t.parameters.properties.items, undefined, `${t.name} should not take a list`);
       assert.match(t.description, /call this ONCE with no filter/i);
     }
   });
 
-  test("every action takes a list as well as a single item", () => {
-    // "Create one task per month" produced four calls and then stopped, and
-    // took eight more prompts to finish. One call with a list is fewer round
-    // trips, fewer tokens, and no chance of stopping half way.
+  test("actions take a list, and the schema can say so strictly again", () => {
+    // Offering items ALONGSIDE the plain fields meant the schema had to say
+    // "either these or that", which is the one thing it cannot say: anyOf and
+    // friends are rejected at the ROOT of a tool's parameters. One shape
+    // removes the either/or, and required comes back at both levels.
     for (const t of tools.filter((x) => x.name.startsWith("action_"))) {
-      assert.ok(t.parameters.properties.items, `${t.name} has no batch form`);
-      assert.equal(t.parameters.properties.items.type, "array");
+      assert.deepEqual(t.parameters.required, ["items"], `${t.name} root required`);
+      assert.equal(t.parameters.properties.items.minItems, 1, `${t.name} allows an empty batch`);
+      assert.ok(t.parameters.properties.items.items.properties, `${t.name} entries are unconstrained`);
     }
-  });
-
-  test("a batch entry takes the same fields as a single call", () => {
-    const single = Object.keys(create.parameters.properties).filter((k) => k !== "items");
-    assert.deepEqual(Object.keys(create.parameters.properties.items.items.properties).sort(), single.sort());
-  });
-
-  test("neither form is required, since it is one or the other", () => {
-    assert.equal(create.parameters.required, undefined);
+    assert.deepEqual(create.parameters.properties.items.items.required, ["title"]);
   });
 
   test("a destructive batch says it is confirmed once", () => {
     // Seven weekdays became seven separate stage-and-confirm rounds and forty
     // seconds of the user saying "yep".
     assert.match(del.description, /confirmed once, for the whole set/i);
-    assert.match(create.description, /prefer a single call with `items`/i);
+    assert.match(create.description, /Never call this repeatedly for a set/i);
   });
 
   test("the instructions forbid stopping part-way through a list", () => {
     const rules = buildInstructions(manifest);
-    assert.match(rules, /ONE call using `items`/);
+    assert.match(rules, /takes a LIST of changes/);
     assert.match(rules, /Never stop part-way/i);
   });
 });

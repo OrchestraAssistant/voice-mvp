@@ -436,6 +436,22 @@ export function InterpreterBubble({ mount = "shadow" }) {
   const [direction, setDirection] = useState(1);
   const [ref, bounds] = useMeasure();
   const [selected, setSelected] = useState(null);
+  const { warm, warmup } = useInterpreter();
+
+  // Opening the panel is the intent signal: deliberate, far rarer than a page
+  // view, and separated from the Talk click by however long it takes to read
+  // the panel. Does nothing unless <VoiceProvider warmup> says so, and never
+  // touches the microphone.
+  useEffect(() => {
+    if (selected !== null) warm?.();
+  }, [selected, warm]);
+
+  // Under "hover" the pointer reaching the pill is the signal instead, which
+  // is earlier than the click that opens the panel, so the connect has longer
+  // to finish. It also fires for anyone whose cursor merely crosses that
+  // corner of the screen, which is the trade. Touch has no hover, so the
+  // panel-open trigger above is what covers it there.
+  const onPointerEnter = warmup === "hover" ? () => warm?.() : undefined;
 
   const containerRef = useRef(null);
   useOnClickOutside(containerRef, () => setSelected(null));
@@ -476,7 +492,7 @@ export function InterpreterBubble({ mount = "shadow" }) {
   }, [selected]);
 
   const widget = (
-    <div ref={containerRef} className="interpreter-widget">
+    <div ref={containerRef} className="interpreter-widget" onPointerEnter={onPointerEnter}>
       <MotionConfig transition={{ duration: 0.5, type: "spring", bounce: 0 }}>
         <motion.div
           initial={false}
