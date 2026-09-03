@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sessionUpdate } from "../src/realtimeClient.js";
+import { defaultReplyModality, sessionUpdate } from "../src/realtimeClient.js";
 
 const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/realtimeClient.js"), "utf8");
 
@@ -41,5 +41,39 @@ describe("realtime client", () => {
     // Resolving after setRemoteDescription hands back a session whose every
     // method throws InvalidStateError until the channel opens.
     assert.match(source, /await opened;/);
+  });
+});
+
+describe("reply modality", () => {
+  test("commands get a written reply", () => {
+    for (const turn of [
+      "Go back to the dashboard.",
+      "Create a task called buy milk.",
+      "Mark buy milk as done.",
+      "Open the new task page.",
+      "Delete the second task",
+    ]) {
+      assert.equal(defaultReplyModality(turn), "text", `"${turn}" should not be answered aloud`);
+    }
+  });
+
+  test("questions get a spoken reply", () => {
+    for (const turn of [
+      "How many tasks do I have?",
+      "What is on my list",
+      "Which task is overdue",
+      "Tell me how many users there are",
+      "Read me the first task",
+      "Is the report done?",
+    ]) {
+      assert.equal(defaultReplyModality(turn), "audio", `"${turn}" asked for an answer`);
+    }
+  });
+
+  test("an unknown turn is written, not spoken", () => {
+    // Speech is the expensive default, so silence about the user's intent
+    // should fall to the cheap side rather than the loud one.
+    assert.equal(defaultReplyModality(""), "text");
+    assert.equal(defaultReplyModality(undefined), "text");
   });
 });

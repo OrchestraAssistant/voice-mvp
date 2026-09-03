@@ -18,11 +18,42 @@
  *
  * One builder, so there is a single place for the field to be missing from.
  */
+/**
+ * Does the user's turn want an answer they can HEAR, or one they can read?
+ *
+ * The follow-up after a tool call is a response we ask for -- the model never
+ * volunteers it -- so its medium is ours to choose, and choosing is worth
+ * doing. Measured over six successful commands, those follow-ups were 56% of
+ * the session cost and every one of them was spoken aloud to say things like
+ * "Back to the dashboard", which the user could already see had happened.
+ *
+ * Text by default, audio when the user actually asked something. Prompting
+ * cannot do this job: told plainly to stay silent on successful commands, the
+ * model spoke on 6 of 6 anyway. Modality is config, and config is obeyed.
+ *
+ * The transcriber punctuates, so a spoken question usually arrives with a "?"
+ * already attached; the rest is for the cases where it doesn't. Override with
+ * the `replyModality` option if your app's phrasing differs.
+ */
+const WANTS_A_SPOKEN_ANSWER =
+  /\?|^\s*(what|who|whose|when|where|why|how|which|list|read)\b|\b(tell|say|read|explain|describe)\s+(me|us|it|them|that)\b/i;
+
+export function defaultReplyModality(transcript = "") {
+  return WANTS_A_SPOKEN_ANSWER.test(transcript) ? "audio" : "text";
+}
+
 export function sessionUpdate(input) {
   return JSON.stringify({ type: "session.update", session: { type: "realtime", audio: { input } } });
 }
 
-export async function connectRealtimeSession({ onToolCall, onStatus, onTranscript, initialMode = "continuous", relayUrl = "" }) {
+export async function connectRealtimeSession({
+  onToolCall,
+  onStatus,
+  onTranscript,
+  initialMode = "continuous",
+  relayUrl = "",
+  replyModality = defaultReplyModality,
+}) {
   // Transport states only. Whether the user is actually being listened to is
   // a separate question -- see isListening() -- because a connection can be
   // up with no microphone attached to it.
@@ -46,6 +77,13 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
   const micTrack = micStream.getAudioTracks()[0];
   micTrack.enabled = initialMode !== "ptt"; // ptt starts muted (hold to talk); others start live
   micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
+
+  // The user's current turn, assembled from the streaming transcription deltas
+  // rather than waiting for the completed event -- which arrives AFTER the
+  // model's first response, too late to decide anything about it. The deltas
+  // are all in before then.
+  let lastUserTurn = "";
+  const partialTurns = new Map();
 
   const dc = pc.createDataChannel("oai-events");
 
@@ -86,7 +124,15 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
       console.error("Realtime API rejected an event:", msg.error);
     }
 
+    if (msg.type === "conversation.item.input_audio_transcription.delta") {
+      const soFar = (partialTurns.get(msg.item_id) ?? "") + (msg.delta ?? "");
+      partialTurns.set(msg.item_id, soFar);
+      lastUserTurn = soFar;
+    }
+
     if (msg.type === "conversation.item.input_audio_transcription.completed") {
+      partialTurns.delete(msg.item_id);
+      lastUserTurn = msg.transcript ?? lastUserTurn;
       onTranscript?.({ role: "user", text: msg.transcript });
     }
 
@@ -130,7 +176,15 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
           }),
         );
       }
-      dc.send(JSON.stringify({ type: "response.create" }));
+      // Asking for this response is what makes the model produce one at all,
+      // so the medium is a decision we are already making -- just implicitly,
+      // and always in favour of speech. Now it is explicit.
+      dc.send(
+        JSON.stringify({
+          type: "response.create",
+          response: { output_modalities: [replyModality(lastUserTurn)] },
+        }),
+      );
     }
   });
 
@@ -160,13 +214,22 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
       onStatus?.("closed");
     },
     sendTextTurn(text) {
+      lastUserTurn = text;
       dc.send(
         JSON.stringify({
           type: "conversation.item.create",
           item: { type: "message", role: "user", content: [{ type: "input_text", text }] },
         }),
       );
-      dc.send(JSON.stringify({ type: "response.create" }));
+      // Asking for this response is what makes the model produce one at all,
+      // so the medium is a decision we are already making -- just implicitly,
+      // and always in favour of speech. Now it is explicit.
+      dc.send(
+        JSON.stringify({
+          type: "response.create",
+          response: { output_modalities: [replyModality(lastUserTurn)] },
+        }),
+      );
     },
 
     // --- PTT / PTNT primitives, all on this same connection + history ---
@@ -188,7 +251,15 @@ export async function connectRealtimeSession({ onToolCall, onStatus, onTranscrip
     // to respond now, without waiting on VAD (which is disabled anyway).
     commitAndRespond() {
       dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-      dc.send(JSON.stringify({ type: "response.create" }));
+      // Asking for this response is what makes the model produce one at all,
+      // so the medium is a decision we are already making -- just implicitly,
+      // and always in favour of speech. Now it is explicit.
+      dc.send(
+        JSON.stringify({
+          type: "response.create",
+          response: { output_modalities: [replyModality(lastUserTurn)] },
+        }),
+      );
     },
     // Barge-in: stop whatever the model is currently saying/generating.
     cancelResponse() {
