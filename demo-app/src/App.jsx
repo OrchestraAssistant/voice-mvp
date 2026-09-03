@@ -24,7 +24,7 @@ const FORCED_STATE = ["ready", "listening", "working"].includes(params.get("glow
 const MOUNT = params.get("mount") === "inline" ? "inline" : "shadow";
 
 export default function App() {
-  const { transport, micAttached, mode, holding, userSpeaking, agentBusy } = useInterpreter();
+  const { transport, micAttached, mode, holding, userSpeaking, agentBusy, rimPalettes } = useInterpreter();
   // Three states rather than a boolean: ready (connected, nothing arriving),
   // listening (audio actually being forwarded), working (the agent has the
   // floor). null means no session worth showing -- a warm connection with no
@@ -33,7 +33,11 @@ export default function App() {
 
   return (
     <div className="app">
-      <ListeningGlow active={FORCE_GLOW || state !== null} state={FORCED_STATE ?? state ?? "ready"} />
+      <ListeningGlow
+        active={FORCE_GLOW || state !== null}
+        state={FORCED_STATE ?? state ?? "ready"}
+        palettes={rimPalettes}
+      />
       <nav className="sidebar">
         <h2>Tasker</h2>
         <Link to="/">Dashboard</Link>

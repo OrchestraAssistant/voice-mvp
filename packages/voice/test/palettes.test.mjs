@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { PALETTES, STATES, SWATCHES, hueGap, hueSat, meanSat, mixColor, mixPalettes, rimGradient } from "../src/palettes.js";
+import { PALETTES, RIM_MODES, STATES, SWATCHES, fixedPalettes, hueGap, hueSat, meanSat, mixColor, mixPalettes, rimGradient } from "../src/palettes.js";
 import { rimState } from "../src/listening.js";
 
 describe("rim palettes", () => {
@@ -126,5 +126,31 @@ describe("rimState", () => {
 
   test("push-to-not-talk is ready while muted", () => {
     assert.equal(rimState({ ...live, mode: "ptnt", holding: true }), "ready");
+  });
+});
+
+describe("rim mode", () => {
+  test("single collapses every state onto one swatch", () => {
+    // A rim that changes colour is informative or distracting depending
+    // entirely on who is looking at it, and it sits in their peripheral vision
+    // the whole time they work -- so it is a preference, not a decision.
+    const one = fixedPalettes();
+    assert.deepEqual(Object.keys(one), STATES);
+    for (const s of STATES) assert.equal(one[s], SWATCHES.prism);
+  });
+
+  test("single can wear any swatch, not just prism", () => {
+    const lagoonThroughout = fixedPalettes(SWATCHES.lagoon);
+    for (const s of STATES) assert.equal(lagoonThroughout[s], SWATCHES.lagoon);
+  });
+
+  test("the modes are offered by id, and default first", () => {
+    assert.deepEqual(RIM_MODES.map((m) => m.id), ["state", "single"]);
+  });
+
+  test("collapsing does not change how many stops the rim gets", () => {
+    // The crossfade machinery mixes stop by stop and would break on a
+    // different length.
+    for (const p of Object.values(fixedPalettes())) assert.equal(p.length, 4);
   });
 });

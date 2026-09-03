@@ -67,6 +67,25 @@ export const PALETTES = {
 
 export const STATES = Object.keys(PALETTES);
 
+/**
+ * What the rim is allowed to say. A user setting, because a rim that changes
+ * colour is either informative or distracting depending entirely on who is
+ * looking at it -- and it sits in their peripheral vision the whole time they
+ * are working, which is not a place to impose an opinion.
+ *
+ *   "state"  a palette per state: prism, orchid, lagoon.
+ *   "single" prism throughout, and the rim only says whether it is on.
+ */
+export const RIM_MODES = [
+  { id: "state", label: "Colour by state", note: "3 palettes" },
+  { id: "single", label: "Always prism", note: "1 palette" },
+];
+
+/** Collapses every state onto one swatch, for `rimMode: "single"`. */
+export function fixedPalettes(swatch = SWATCHES.prism) {
+  return Object.fromEntries(STATES.map((s) => [s, swatch]));
+}
+
 /** Hue in degrees and saturation 0..1, for judging how far apart two palettes
  *  actually are. Exported because "distinct" should be measurable rather than
  *  asserted by eye -- the tuner shows it and a test enforces it. */

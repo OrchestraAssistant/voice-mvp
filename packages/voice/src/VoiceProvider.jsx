@@ -3,6 +3,7 @@ import { connectRealtimeSession, isUsable, mintSession } from "./realtimeClient.
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
 import { resolveRoutePath } from "./routes.js";
+import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
 
 const InterpreterContext = createContext(null);
@@ -98,6 +99,9 @@ export function VoiceProvider({
   const [options, setOptions] = useState({ models: [], languages: [], defaults: {} });
   const [model, setModelState] = useState(null); // null = the relay's default
   const [language, setLanguageState] = useState("auto");
+  // Purely a display preference, so unlike model and language it changes
+  // instantly and never touches the session.
+  const [rimMode, setRimMode] = useState("state");
   // TRANSPORT only: is the realtime connection up. Deliberately says nothing
   // about whether a microphone is attached to it, because those come apart --
   // a session can be established and held with no mic on it at all. Conflating
@@ -578,6 +582,10 @@ export function VoiceProvider({
         language,
         setModel,
         setLanguage,
+        rimMode,
+        setRimMode,
+        rimModes: RIM_MODES,
+        rimPalettes: rimMode === "single" ? fixedPalettes() : PALETTES,
         start,
         stop,
         sendText,

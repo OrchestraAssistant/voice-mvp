@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Mic,
   MicOff,
+  Palette,
   Settings2,
 } from "lucide-react";
 import useMeasure from "react-use-measure";
@@ -360,7 +361,8 @@ function ChoiceRow({ icon: Icon, flag, label, note, selected, onSelect }) {
  * a control that silently drops your history is worse than one that warns you.
  */
 function SettingsTabContent() {
-  const { mode, setMode, options, model, language, setModel, setLanguage } = useInterpreter();
+  const { mode, setMode, options, model, language, setModel, setLanguage, rimMode, setRimMode, rimModes } =
+    useInterpreter();
 
   return (
     <ScrollArea className="mb-2 max-h-72 space-y-2 overflow-y-auto">
@@ -373,6 +375,20 @@ function SettingsTabContent() {
             label={m.label}
             selected={mode === m.id}
             onSelect={() => setMode(m.id)}
+          />
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-0.5 pt-2">
+        <span className="text-muted-foreground px-2 py-1 text-xs">Edge glow</span>
+        {rimModes.map((m) => (
+          <ChoiceRow
+            key={m.id}
+            icon={Palette}
+            label={m.label}
+            note={m.note}
+            selected={rimMode === m.id}
+            onSelect={() => setRimMode(m.id)}
           />
         ))}
       </div>

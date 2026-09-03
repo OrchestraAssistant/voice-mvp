@@ -432,6 +432,13 @@ export async function connectRealtimeSession({
       onStatus?.("closed");
     },
     sendTextTurn(text) {
+      // A typed turn is a NEW turn, and it reaches none of the places a spoken
+      // one does: no input_audio_buffer.committed, no clearInputBuffer. Without
+      // this reset, an answer_aloud from an earlier spoken question stayed set
+      // and every typed turn afterwards inherited "speak this" -- observed
+      // live, with "Opened settings." and "Name changed to Steve Branson."
+      // coming back as audio on turns the model never flagged.
+      aloudRequested = false;
       lastUserTurn = text;
       dc.send(
         JSON.stringify({

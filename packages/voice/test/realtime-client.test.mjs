@@ -177,3 +177,22 @@ describe("staging a destructive batch", () => {
     assert.doesNotMatch(source, /needs_confirmation[\s\S]{0,400}JSON\.stringify\(batch\)/);
   });
 });
+
+describe("a typed turn is a new turn", () => {
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/realtimeClient.js"), "utf8");
+
+  test("sendTextTurn clears the spoken-reply flag", () => {
+    // It reaches neither of the places that reset it for a spoken turn --
+    // input_audio_buffer.committed or clearInputBuffer -- so an answer_aloud
+    // from an earlier question would otherwise stick to every typed turn after.
+    assert.match(source, /sendTextTurn\(text\) \{[\s\S]{0,600}aloudRequested = false;/);
+  });
+
+  test("every path that begins a turn resets it", () => {
+    // Three turn starts -- input_audio_buffer.committed, clearInputBuffer for
+    // push-to-talk, and sendTextTurn -- plus the declaration itself.
+    const resets = source.match(/aloudRequested = false/g) ?? [];
+    assert.equal(resets.length, 4, "a turn start is missing its reset");
+  });
+});
