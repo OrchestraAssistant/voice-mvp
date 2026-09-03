@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { connectRealtimeSession } from "./realtimeClient.js";
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
+import { resolveRoutePath } from "./routes.js";
 import * as dom from "./domActions.js";
 
 const InterpreterContext = createContext(null);
@@ -201,8 +202,20 @@ export function VoiceProvider({
       if (!manifest) return { error: "Manifest not loaded yet" };
 
       if (name === "navigate") {
-        navigate(args.path);
-        return { status: "navigated", path: args.path };
+        const path = resolveRoutePath(args, manifest.routes);
+        if (!path) {
+          // A real message rather than a React Router stack trace. The model
+          // retried an identical malformed call three times against the old
+          // error, which told it nothing about what was wrong.
+          return {
+            error: `Could not find a route in ${JSON.stringify(args)}. Pass { "path": "/settings" }.`,
+            knownRoutes: manifest.routes.map((r) => r.path),
+          };
+        }
+        navigate(path);
+        // Reporting what we did, not what was asked for, so a salvaged call is
+        // visible in the log rather than looking like it worked first time.
+        return { status: "navigated", path, ...(path === args.path ? {} : { interpretedFrom: args }) };
       }
 
       // A signal to the transport layer, already acted on before it got here;
