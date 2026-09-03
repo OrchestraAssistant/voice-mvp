@@ -108,6 +108,9 @@ export function VoiceProvider({
   // holding by isListening(), which is what should drive any "we can hear you"
   // affordance.
   const [micAttached, setMicAttached] = useState(false);
+  // Observed, not inferred: both halves come from event pairs the server
+  // sends. Fed to rimState() to pick which palette the rim wears.
+  const [activity, setActivity] = useState({ userSpeaking: false, agentBusy: false });
   const [transcript, setTranscript] = useState([]);
   const [pendingAction, setPendingActionState] = useState(null); // { name, description, args }
   const [error, setError] = useState(null);
@@ -366,6 +369,7 @@ export function VoiceProvider({
             callbacksRef.current.onTranscript?.(turn);
           },
           onEvent: (event) => loggerRef.current?.record(event),
+          onActivity: setActivity,
           initialMode: mode,
           relayUrl,
           model,
@@ -429,6 +433,7 @@ export function VoiceProvider({
         model: overrides.model ?? model,
         language: overrides.language ?? language,
         onEvent: (event) => loggerRef.current?.record(event),
+        onActivity: setActivity,
         minted: await ensureMinted(overrides),
       });
       sessionRef.current = session;
@@ -448,6 +453,7 @@ export function VoiceProvider({
     sessionRef.current = null;
     setTransport("idle");
     setMicAttached(false);
+    setActivity({ userSpeaking: false, agentBusy: false });
     setHolding(false);
   };
 
@@ -560,6 +566,7 @@ export function VoiceProvider({
       value={{
         transport,
         micAttached,
+        ...activity,
         transcript,
         pendingAction,
         error,

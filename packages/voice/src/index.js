@@ -30,4 +30,5 @@ export { VoiceProvider, useInterpreter } from "./VoiceProvider.jsx";
 export { InterpreterBubble } from "./InterpreterBubble.jsx";
 export { InterpreterPanel } from "./InterpreterPanel.jsx";
 export { ListeningGlow } from "./ListeningGlow.jsx";
-export { isListening } from "./listening.js";
+export { isListening, rimState } from "./listening.js";
+export { PALETTES, SWATCHES } from "./palettes.js";

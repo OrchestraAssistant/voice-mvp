@@ -108,6 +108,9 @@ export async function connectRealtimeSession({
   model,
   language,
   onEvent,
+  // Fires whenever the rim's state could have changed. Derived here because
+  // this is the only place that sees the events it is derived from.
+  onActivity,
   // A key minted earlier. Skipping the mint is most of the latency saving.
   minted,
   // Connect with no microphone. The transceiver is negotiated either way, so
@@ -185,6 +188,15 @@ export async function connectRealtimeSession({
   let responseActive = false;
   let responseQueued = false;
 
+  // What the rim reports. `userSpeaking` is the server's own voice detector
+  // saying audio is arriving; `audioPlaying` is the model's reply coming back.
+  // Both are bracketed by event pairs, so this is observation rather than
+  // inference -- no timers, no guessing when something finished.
+  let userSpeaking = false;
+  let audioPlaying = false;
+  const reportActivity = () =>
+    onActivity?.({ userSpeaking, agentBusy: responseActive || audioPlaying });
+
   // Is the SERVER deciding turn boundaries? In push-to-talk we send
   // turn_detection: null and the button decides, so the commit is ours and we
   // must not answer it here as well -- that would be two responses per turn.
@@ -257,11 +269,40 @@ export async function connectRealtimeSession({
       return;
     }
 
-    if (msg.type === "response.created") responseActive = true;
+    if (msg.type === "response.created") {
+      responseActive = true;
+      reportActivity();
+    }
+
+    // The user's turn, as the server hears it.
+    if (msg.type === "input_audio_buffer.speech_started") {
+      userSpeaking = true;
+      reportActivity();
+    }
+    if (msg.type === "input_audio_buffer.speech_stopped") {
+      userSpeaking = false;
+      reportActivity();
+    }
+
+    // The reply actually coming out of the speaker, which outlasts the
+    // response that produced it -- `response.done` fires while the audio is
+    // still playing, so the two have to be tracked separately or the rim
+    // drops back to ready mid-sentence.
+    if (msg.type === "output_audio_buffer.started") {
+      audioPlaying = true;
+      reportActivity();
+    }
+    if (msg.type === "output_audio_buffer.stopped" || msg.type === "output_audio_buffer.cleared") {
+      audioPlaying = false;
+      reportActivity();
+    }
     // Cleared here, but NOT drained here: the tool-call path below also ends
     // in a request, and draining at the top would let both fire for the same
     // completed response -- which is the collision this exists to prevent.
-    if (msg.type === "response.done") responseActive = false;
+    if (msg.type === "response.done") {
+      responseActive = false;
+      reportActivity();
+    }
 
     // The API reports malformed events this way rather than by failing the
     // send, so without this a rejected session.update is invisible.
@@ -380,6 +421,10 @@ export async function connectRealtimeSession({
 
   return {
     stop() {
+      userSpeaking = false;
+      audioPlaying = false;
+      responseActive = false;
+      reportActivity();
       dc.close();
       micTrack = null;
       pc.getSenders().forEach((s) => s.track?.stop());

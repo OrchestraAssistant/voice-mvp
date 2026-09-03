@@ -1,4 +1,6 @@
-import { motion, AnimatePresence } from "framer-motion";
+import { animate, motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
+import { useEffect, useRef } from "react";
+import { PALETTES, mixPalettes, rimGradient } from "./palettes.js";
 import { OverlayLayer } from "./ScreenOverlay.jsx";
 
 /**
@@ -24,11 +26,6 @@ import { OverlayLayer } from "./ScreenOverlay.jsx";
  * to exist -- so it draws over a host app whose markup and CSS we've never
  * seen. ScreenOverlay.jsx's header has the reasoning.
  */
-
-/* The original's exact four stops, in order. No wrapping fifth stop: the
-   animation rotates the gradient's *angle* across a viewport-sized box, so
-   the two ends sit on opposite screen edges and never meet at a seam. */
-const COLORS = "rgb(59, 130, 246), rgb(168, 85, 247), rgb(239, 68, 68), rgb(249, 115, 22)";
 
 /**
  * How the rim fades inward, as [distance from the screen edge, alpha].
@@ -222,7 +219,79 @@ const GLOW_CSS = `
  * has no notion of a negative radius: each side has its own family of
  * layers, and the inactive one sits at 0, where it's a no-op.
  */
-export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
+/**
+ * `state` picks the palette: ready, listening, working, speaking.
+ *
+ * Two motion values rather than a keyframe array on `background`. The angle
+ * has to keep turning at a constant rate while the colour crosses, and
+ * animating one `background` property for both would restart the rotation
+ * every time the state changed.
+ *
+ *   angle  0 to 360, linear, forever -- the sweep
+ *   mix    0 to 1 -- how far from the previous palette to the current one
+ *
+ * The crossfade is interrupt-safe, which matters because these states change
+ * faster than the fade: listening to working to speaking can all land inside a
+ * second. Rather than always mixing between two fixed palettes, it snapshots
+ * whatever is ON SCREEN when a change arrives and treats that as the new
+ * origin. Interrupting a half-finished fade therefore continues from the
+ * colour actually showing, instead of snapping back to a palette the user
+ * never fully saw.
+ */
+export function ListeningGlow({
+  active,
+  state = "listening",
+  width = 80,
+  cornerRadius = 0,
+  palettes = PALETTES,
+  rotationMs = 5000,
+  crossfadeMs = 700,
+  space = "linear",
+}) {
+  const angle = useMotionValue(0);
+  // How far along the current crossfade we are: 0 at the moment the state
+  // changed, 1 once it has settled.
+  const mix = useMotionValue(1);
+
+  // Read inside the per-frame transform, so a palette edited in the tuner or a
+  // colour space toggled shows up immediately without restarting the fade.
+  const live = useRef({ palettes, space, state });
+  live.current = { palettes, space, state };
+
+  // Where the crossfade started FROM: the actual colours on screen when the
+  // state last changed, not a palette. Interrupting a half-finished fade then
+  // continues from what the user can see rather than snapping back to a
+  // palette they never fully saw -- and these states change faster than the
+  // fade, since listening, working and speaking can all land inside a second.
+  const fromRef = useRef(palettes[state] ?? PALETTES.listening);
+  const previousState = useRef(state);
+
+  useEffect(() => {
+    if (!active) return;
+    const controls = animate(angle, 360, {
+      duration: rotationMs / 1000,
+      ease: "linear",
+      repeat: Infinity,
+      repeatType: "loop",
+    });
+    return () => controls.stop();
+  }, [active, angle, rotationMs]);
+
+  useEffect(() => {
+    const { palettes: p, space: sp } = live.current;
+    const leaving = p[previousState.current] ?? PALETTES.listening;
+    fromRef.current = mixPalettes(fromRef.current, leaving, mix.get(), sp);
+    previousState.current = state;
+    mix.set(0);
+    const controls = animate(mix, 1, { duration: crossfadeMs / 1000, ease: "easeInOut" });
+    return () => controls.stop();
+  }, [state, crossfadeMs, mix]);
+
+  const background = useTransform([angle, mix], ([a, m]) => {
+    const { palettes: p, space: sp, state: st } = live.current;
+    return rimGradient(a, mixPalettes(fromRef.current, p[st] ?? PALETTES.listening, m, sp));
+  });
+
   return (
     <OverlayLayer name="rim" css={GLOW_CSS} active={active}>
       <AnimatePresence>
@@ -239,16 +308,7 @@ export function ListeningGlow({ active, width = 80, cornerRadius = 0 }) {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.5, ease: "easeInOut" }}
           >
-            <motion.div
-              className="sweep"
-              animate={{
-                background: [
-                  `linear-gradient(0deg, ${COLORS})`,
-                  `linear-gradient(360deg, ${COLORS})`,
-                ],
-              }}
-              transition={{ duration: 5, repeat: Infinity, ease: "linear" }}
-            />
+            <motion.div className="sweep" style={{ background }} />
           </motion.div>
         )}
       </AnimatePresence>

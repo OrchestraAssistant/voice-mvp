@@ -20,3 +20,30 @@ export function isListening({ transport, micAttached, mode, holding }) {
   if (mode === "ptnt") return !holding;
   return true; // continuous
 }
+
+/**
+ * Which of the rim's three states to show, or null for "do not show it".
+ *
+ * Three, not four: thinking and speaking back are both the agent holding the
+ * floor, and neither is a moment when anything the user does changes what
+ * happens next. What the rim has to carry is whose turn it is.
+ *
+ *   null        no session, or a session with no microphone on it. A warm
+ *               connection must not light the rim -- see the transport /
+ *               micAttached split, which exists for exactly this.
+ *   "working"   the agent has the floor. Checked FIRST: if it is talking and
+ *               the user talks over it, the interruption belongs to the next
+ *               turn, and flickering between the two would say nothing.
+ *   "listening" audio is actually arriving and being forwarded.
+ *   "ready"     connected and able to hear, but nothing is being sent.
+ */
+export function rimState({ transport, micAttached, mode, holding, userSpeaking, agentBusy }) {
+  if (transport !== "ready" || !micAttached) return null;
+  if (agentBusy) return "working";
+  // Server VAD reports speech directly. Push-to-talk switches that detector
+  // off, so there the button IS the signal -- without this, "listening" would
+  // never appear in the one mode where the user is most certain they are
+  // being heard.
+  if (mode === "ptt" ? holding : userSpeaking) return "listening";
+  return "ready";
+}

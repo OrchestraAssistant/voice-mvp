@@ -130,7 +130,7 @@ describe("one response at a time", () => {
   test("the queue is drained once, after tool calls have run", () => {
     // Draining at the top of response.done would race the tool-call path,
     // which ends in a request of its own -- two requests, same collision.
-    assert.match(source, /if \(msg\.type === "response\.done"\) responseActive = false;/);
+    assert.match(source, /if \(msg\.type === "response\.done"\) \{\s*\n\s*responseActive = false;/);
     assert.doesNotMatch(source, /responseActive = false;\s*\n\s*if \(responseQueued\)/);
   });
 });
