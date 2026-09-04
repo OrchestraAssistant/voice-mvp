@@ -105,7 +105,7 @@ app.get("/voice/options", (req, res) => {
 
 app.get("/voice/manifest", (req, res) => {
   if (!fs.existsSync(MANIFEST_PATH)) {
-    return res.status(404).json({ error: "No manifest found. Run `npm run generate -w @yourco/voice-cli` first." });
+    return res.status(404).json({ error: "No manifest found. Run `npx @yourco/voice-cli <srcDir> <outDir>` in your app, and point VOICE_MANIFEST at the result." });
   }
   res.json(JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8")));
 });

@@ -15,8 +15,26 @@ import traverse from "@babel/traverse";
 import fs from "node:fs";
 import path from "node:path";
 
-const SRC_DIR = process.argv[2] || path.resolve(import.meta.dirname, "../../demo-app/src");
-const OUT_DIR = process.argv[3] || path.resolve(import.meta.dirname, "../../demo-app/.voice");
+const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
+
+  npx @yourco/voice-cli [srcDir] [outDir]
+
+  srcDir   where the app's source lives   (default: ./src)
+  outDir   where the manifest is written  (default: ./.voice)
+
+Run it from your app's root. What it looks for is listed in the output.`;
+
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(USAGE);
+  process.exit(0);
+}
+
+// Relative to the CALLER, not to this file. The defaults used to resolve from
+// import.meta.dirname to a sibling demo-app, which exists in this repo and
+// nowhere else -- so `npx @yourco/voice-cli` worked for us and for no one who
+// actually installed it.
+const SRC_DIR = path.resolve(process.argv[2] || "src");
+const OUT_DIR = path.resolve(process.argv[3] || ".voice");
 
 function parseFile(filePath) {
   const code = fs.readFileSync(filePath, "utf-8");
@@ -266,13 +284,29 @@ function enrichFromZodSchemas(actions, pagesDir) {
 
 // --- Run ---
 function main() {
-  const appFile = path.join(SRC_DIR, "App.jsx");
-  const apiFile = path.join(SRC_DIR, "api.js");
-  const pagesDir = path.join(SRC_DIR, "pages");
+  if (!fs.existsSync(SRC_DIR)) {
+    console.error(`No source directory at ${SRC_DIR}\n\n${USAGE}`);
+    process.exit(1);
+  }
 
-  const routes = extractRoutes(appFile);
-  const { queries, actions } = extractQueriesAndActions(apiFile);
-  enrichFromZodSchemas(actions, pagesDir);
+  // The three places this knows how to read. Named here rather than inline so
+  // a run that finds nothing can say WHAT it looked for -- the alternative is
+  // an ENOENT stack trace, which tells the user their app is broken rather
+  // than that this tool only recognises one layout.
+  const looksAt = [
+    ["routes", path.join(SRC_DIR, "App.jsx"), "<Route path=... /> elements"],
+    ["queries and actions", path.join(SRC_DIR, "api.js"), "useQuery/useMutation calling a request() helper"],
+    ["field types", path.join(SRC_DIR, "pages"), "Zod schemas beside the form that submits them"],
+  ];
+  const missing = looksAt.filter(([, where]) => !fs.existsSync(where));
+
+  const [appFile, apiFile, pagesDir] = looksAt.map(([, where]) => where);
+
+  const routes = fs.existsSync(appFile) ? extractRoutes(appFile) : [];
+  const { queries, actions } = fs.existsSync(apiFile)
+    ? extractQueriesAndActions(apiFile)
+    : { queries: [], actions: [] };
+  if (fs.existsSync(pagesDir)) enrichFromZodSchemas(actions, pagesDir);
 
   const manifest = {
     generatedAt: "static-analysis",
@@ -289,6 +323,19 @@ function main() {
   console.log(`  routes:  ${routes.length}`);
   console.log(`  queries: ${queries.length}`);
   console.log(`  actions: ${actions.length} (${actions.filter((a) => a.requiresConfirmation).length} require confirmation)`);
+
+  // An empty manifest is not an error -- the widget still has its DOM
+  // fallback -- but it is never what someone wanted, and silence about why is
+  // how they conclude the product does not work.
+  for (const [what, where, pattern] of looksAt) {
+    if (!fs.existsSync(where)) console.warn(`  no ${what}: nothing at ${path.relative(process.cwd(), where)}, which is where it reads ${pattern}`);
+  }
+  if (routes.length + queries.length + actions.length === 0) {
+    console.warn(
+      `\nNothing was extracted. This reads one specific layout (see above);` +
+        ` an app organised differently needs those paths passed explicitly, or the DOM fallback alone.`,
+    );
+  }
 }
 
 main();

@@ -10,11 +10,11 @@
   ],
   "scripts": {
     "build:pkg": "npm run build -w @yourco/voice",
-    "generate": "npm run generate -w @yourco/voice-cli",
+    "generate": "node packages/voice-cli/generate.js demo-app/src demo-app/.voice",
     "dev:relay": "npm run dev -w relay",
     "dev:api": "npm run dev -w demo-api",
     "dev:demo": "npm run dev -w demo-app",
     "dev:stress": "npm run stress -w @yourco/voice",
-    "test": "npm run build:pkg && node --test relay/*.test.mjs && npm test -w @yourco/voice"
+    "test": "npm run build:pkg && node --test relay/*.test.mjs packages/voice-cli/*.test.mjs && npm test -w @yourco/voice"
   }
 }
