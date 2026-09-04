@@ -1,6 +1,10 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { PRICES, priceSession, summaryEvent, tallySession } from "./usage.js";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CHECKED, loadPrices, prices, priceSession, summaryEvent, tallySession } from "./usage.js";
+import { MODELS } from "./tools.js";
 
 /** One response's usage, in the shape the API actually sends it. */
 const usage = ({ input = 0, output = 0, text = 0, audio = 0, cachedText = 0, cachedAudio = 0, outText = 0, outAudio = 0 }) => ({
@@ -146,7 +150,7 @@ describe("pricing", () => {
 
   test("every shipped entry prices every line it claims to", () => {
     const t = tally([usage({ input: 100, text: 50, audio: 50, cachedText: 10, output: 40, outText: 20, outAudio: 20 })]);
-    for (const model of Object.keys(PRICES)) {
+    for (const model of Object.keys(prices())) {
       const p = priceSession({ ...t, model });
       assert.equal(p.priced, true, `${model} is in the table but did not price`);
       assert.ok(p.total > 0, `${model} priced a real session at zero`);
@@ -170,5 +174,81 @@ describe("the summary line", () => {
     const s = summaryEvent(tallySession([{ type: "session", model: "brand-new" }, usage({ input: 1000 })]));
     assert.equal(s.cost, null);
     assert.equal(s.input.total, 1000);
+  });
+});
+
+describe("the price file", () => {
+  const write = (body, ext = "yaml") => {
+    const f = join(tmpdir(), `prices-${Math.random().toString(36).slice(2)}.${ext}`);
+    writeFileSync(f, body);
+    return f;
+  };
+
+  test("the shipped file loads and covers every model the relay offers", () => {
+    // A model in the picker with no entry in the table silently reports
+    // unpriced for every session anyone runs on it.
+    const table = prices();
+    for (const { id } of MODELS) assert.ok(table[id], `${id} is offered but has no price entry`);
+  });
+
+  test("it says when it was last checked", () => {
+    // The one fact that decides whether to trust the number.
+    assert.match(String(prices()[CHECKED]), /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("a misspelled rate is refused, not ignored", () => {
+    // This is the silent-zero failure arriving through the config file:
+    // "inputAudo" would price all audio at nothing and look like a bargain.
+    const f = write("models:\n  m:\n    perMillion:\n      inputAudo: 32\n");
+    assert.throws(() => loadPrices(f), /unknown rate "inputAudo"/);
+  });
+
+  test("a misspelled field is refused too", () => {
+    const f = write("models:\n  m:\n    transcriptionPerMin: 0.006\n");
+    assert.throws(() => loadPrices(f), /unknown field "transcriptionPerMin"/);
+  });
+
+  test("a rate that is not a number is refused", () => {
+    // YAML turns an unquoted $0.006 into a string, and a string reaching the
+    // arithmetic produces NaN, which formats as "$NaN" three screens later.
+    const f = write("models:\n  m:\n    perMillion:\n      inputText: '4'\n");
+    assert.throws(() => loadPrices(f), /is not a rate/);
+    assert.throws(() => loadPrices(write("models:\n  m:\n    audioPerMinute: -1\n")), /is not a rate/);
+  });
+
+  test("a bare map of models loads, without the annotated wrapper", () => {
+    // What a hand-written override or a generated table looks like.
+    const f = write('{"m":{"provider":"x","perMillion":{"inputText":1000}}}', "json");
+    const table = loadPrices(f);
+    assert.equal(table.m.provider, "x");
+  });
+
+  test("editing the file changes the price, with no code change", () => {
+    // The whole point of moving this out of source.
+    const tally = tallySession([{ type: "session", model: "m" }, {
+      type: "usage",
+      usage: { input_tokens: 1e6, output_tokens: 0, input_token_details: { text_tokens: 1e6 } },
+    }]);
+    assert.equal(priceSession(tally, loadPrices(write("models:\n  m:\n    perMillion:\n      inputText: 4\n"))).total, 4);
+    assert.equal(priceSession(tally, loadPrices(write("models:\n  m:\n    perMillion:\n      inputText: 9\n"))).total, 9);
+  });
+});
+
+describe("when the price file is broken", () => {
+  test("loadPrices throws, so --prices fails loudly", () => {
+    assert.throws(() => loadPrices(join(tmpdir(), "definitely-not-here.yaml")));
+  });
+
+  test("but a session is still measured", () => {
+    // Token counts come from the API and are the durable half of this. Losing
+    // a session's measurement because a rate file has a typo in it would be
+    // the tool failing at its one job.
+    const s = summaryEvent(tallySession([{ type: "session", model: "gpt-realtime" }, {
+      type: "usage",
+      usage: { input_tokens: 1234, output_tokens: 56, input_token_details: { text_tokens: 1234 } },
+    }]), {});
+    assert.equal(s.cost, null);
+    assert.equal(s.input.total, 1234);
+    assert.equal(s.output.total, 56);
   });
 });

@@ -1,0 +1,82 @@
+# What each provider charges.
+#
+# EDIT THIS FILE, not usage.js. It is read at runtime, so the relay picks up a
+# change on its next session summary; the report tool re-reads it every run.
+#
+# Rates below are LIST PRICES someone wrote down on a date and they go stale.
+# Check them against the provider's own page before trusting a comparison, and
+# put the date and the URL in the entry when you do.
+#
+# Units, per entry. Use whichever ones the provider actually bills in -- an
+# entry may mix them, and anything you leave out is simply not charged:
+#
+#   perMillion:              dollars per 1,000,000 tokens
+#     inputText              fresh text sent up
+#     inputAudio             fresh audio sent up
+#     cachedText             text served from the prompt cache
+#     cachedAudio            audio served from the prompt cache
+#     outputText             text generated
+#     outputAudio            audio generated
+#   transcriptionPerMinute:  dollars per minute of speech transcribed
+#   audioPerMinute:          dollars per minute of connected session, for a
+#                            provider that bills by the clock rather than by
+#                            the token
+#
+# A model that is not in here is reported as "unpriced" rather than as zero, so
+# adding a provider means adding an entry, not remembering to.
+
+checked: 2026-09-04
+source: https://openai.com/api/pricing/
+
+models:
+  gpt-realtime:
+    provider: openai
+    perMillion:
+      inputText: 4
+      inputAudio: 32
+      cachedText: 0.4
+      cachedAudio: 0.4
+      outputText: 16
+      outputAudio: 64
+    transcriptionPerMinute: 0.006
+
+  gpt-realtime-2.1:
+    provider: openai
+    perMillion:
+      inputText: 4
+      inputAudio: 32
+      cachedText: 0.4
+      cachedAudio: 0.4
+      outputText: 16
+      outputAudio: 64
+    transcriptionPerMinute: 0.006
+
+  gpt-realtime-mini:
+    provider: openai
+    perMillion:
+      inputText: 0.6
+      inputAudio: 10
+      cachedText: 0.06
+      cachedAudio: 0.3
+      outputText: 2.4
+      outputAudio: 20
+    transcriptionPerMinute: 0.003
+
+  gpt-realtime-2.1-mini:
+    provider: openai
+    perMillion:
+      inputText: 0.6
+      inputAudio: 10
+      cachedText: 0.06
+      cachedAudio: 0.3
+      outputText: 2.4
+      outputAudio: 20
+    transcriptionPerMinute: 0.003
+
+  # A worked example of the other billing shape, for when you add a provider
+  # that charges for the call rather than for the tokens in it. Delete it or
+  # replace it with a real one.
+  #
+  # example-by-the-minute:
+  #   provider: someone-else
+  #   audioPerMinute: 0.08

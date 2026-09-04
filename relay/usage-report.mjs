@@ -4,7 +4,7 @@
  *
  *   node relay/usage-report.mjs                     every session in relay/logs
  *   node relay/usage-report.mjs --by-model          one row per model
- *   node relay/usage-report.mjs --prices mine.json  a different price table
+ *   node relay/usage-report.mjs --prices mine.yaml  a different price table
  *   node relay/usage-report.mjs --dir other/logs    a different log directory
  *   node relay/usage-report.mjs --json              machine-readable
  *
@@ -15,7 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PRICES, priceSession, tallySession } from "./usage.js";
+import { CHECKED, loadPrices, prices, priceSession, tallySession } from "./usage.js";
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => {
@@ -25,7 +25,7 @@ const flag = (name, fallback = null) => {
 const has = (name) => argv.includes(name);
 
 const dir = path.resolve(flag("--dir", path.join(path.dirname(fileURLToPath(import.meta.url)), "logs")));
-const prices = flag("--prices") ? JSON.parse(fs.readFileSync(flag("--prices"), "utf8")) : PRICES;
+const table = flag("--prices") ? loadPrices(path.resolve(flag("--prices"))) : prices();
 
 const sessions = [];
 for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort()) {
@@ -41,7 +41,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort(
   }
   const tally = tallySession(events);
   if (tally.responses === 0) continue; // warm connections nobody spoke to
-  sessions.push({ file, tally, cost: priceSession(tally, prices) });
+  sessions.push({ file, tally, cost: priceSession(tally, table) });
 }
 
 if (has("--json")) {
@@ -101,4 +101,8 @@ for (const { file, tally, cost } of sessions) {
 }
 console.log(`\n${sessions.length} sessions, ${usd(total)} total`);
 if (anyUnpriced) console.log("Some sessions have no price entry for their model, and count as $0 in that total.");
-console.log("Rates are list prices and go stale -- check them before believing a comparison.");
+console.log(
+  table[CHECKED]
+    ? `Rates last checked ${table[CHECKED]}. They go stale; edit relay/prices.yaml.`
+    : "This price table carries no checked date. Rates go stale.",
+);
