@@ -119,3 +119,45 @@ describe("destructive ordering", () => {
     assert.match(rules, /say yes twice/);
   });
 });
+
+describe("staleness", () => {
+  const rules = buildInstructions(manifest);
+
+  test("a query result expires at the end of its turn", () => {
+    // Observed live: it read settings once, then answered questions 130 and
+    // 160 seconds later from that snapshot. Both answers were wrong -- the
+    // name had changed to "Steve Branson Jr" in between.
+    assert.match(rules, /only true for the turn it arrived in/i);
+    assert.match(rules, /Never answer from what a query told you earlier/i);
+  });
+
+  test("being challenged means re-checking, not repeating", () => {
+    // The worst moment in that session: asked "You sure?", it re-asserted the
+    // wrong name with an added "Yes" and no tool call. A wrong answer that
+    // survives being questioned teaches the user not to question.
+    assert.match(rules, /are you sure\?", "double check"/i);
+    assert.match(rules, /re-run the query/i);
+  });
+
+  test("the batching rule cannot be read as licence to reuse an old result", () => {
+    // Rule 8 says call a query ONCE rather than once per item. Read across
+    // turns instead of within one, that argues for exactly the wrong thing,
+    // so the staleness rule comes first.
+    const staleness = rules.indexOf("only true for the turn it arrived in");
+    const batching = rules.indexOf("call the query ONCE with no filter");
+    assert.ok(staleness > 0 && batching > 0);
+    assert.ok(staleness < batching, "the staleness rule must come before the batching one");
+  });
+});
+
+describe("the rule list", () => {
+  test("numbers run 1..n once each, in every language", () => {
+    // The language rule carries its own hardcoded number, so it silently
+    // collided with a rule in the main list the moment one was inserted --
+    // it shipped as a second "7" for as long as there were six rules.
+    for (const language of [undefined, { code: "es", name: "Spanish" }]) {
+      const numbers = [...buildInstructions(manifest, language).matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+      assert.deepEqual(numbers, numbers.map((_, i) => i + 1), `numbering broke for ${language?.name ?? "auto"}`);
+    }
+  });
+});

@@ -712,3 +712,54 @@ offer/answer, which it is not clear this endpoint accepts.
   (§13), so warm-use-close-warm pays the ~1,500-token prefix every time. One
   session held for the visit is cheaper than several short ones, which argues
   for an idle teardown measured in minutes rather than per interaction.
+
+---
+
+## 15. A query result expires at the end of its turn
+
+**Chosen:** a prompt rule saying so outright, placed *above* the batching rule
+and naming the challenge phrasings ("are you sure?", "double check") as
+triggers to re-query rather than to reassure.
+
+**The failure.** From a real session, timings from the log:
+
+```
+ 44.3s  query_settings          -> { name: "Steve Branson",     email: "stevebranson@example.com" }
+172.7s  "what is my email?"     -> answered from the 44s snapshot, already wrong
+202.7s  "and the name?"         -> "Your currently set name is Steve Branson."      no query
+208.4s  "You sure?"             -> "Yes, the name in your settings is Steve Branson." no query
+213.4s  "Double check"          -> query_settings -> { name: "Steve Branson Jr" }
+```
+
+The name had been edited in the app in between. It answered three times from a
+170-second-old read, and only looked when told to in so many words.
+
+**Why the prompt was at fault, not just the model.** Nothing in the
+instructions said state could change between turns, and the batching rule --
+*"call the query ONCE with no filter and pick from the result, never one query
+per thing"* -- argues for exactly the wrong behaviour when read across turns
+instead of within one. It exists to stop eleven lookups for twelve months; it
+was never meant to license reusing a two-minute-old answer. The staleness rule
+now precedes it, and a test asserts that ordering.
+
+**The part that matters most** is the challenge case. Re-asserting a wrong
+value when questioned is worse than the original error: it spends the user's
+trust to defend it, and teaches them that asking again tells them nothing.
+
+**Verified by replay.** The same five turns, with the settings edited
+underneath the session between turn one and turn two:
+
+```
+ 6.3s  "what is my currently set email?"  query_settings -> "...stevebransonjr@example.com."
+11.3s  "and the name?"                    query_settings -> "Your currently set name is Steve Branson Jr."
+16.3s  "You sure?"                        query_settings -> "Yes, the name is Steve Branson Jr."
+21.1s  "Double check"                     query_settings -> "It's still Steve Branson Jr."
+```
+
+Four questions, four queries, four correct answers. The cost of the fix is one
+extra query per value stated, which is a tool call against the host app's own
+code -- no tokens beyond the result, and no round trip to OpenAI.
+
+**Also found here:** the language rule carried a hardcoded number and had been
+shipping as a second "7" since the sixth rule was added. Rule numbering is now
+asserted to run 1..n once each, with and without a language pinned.
