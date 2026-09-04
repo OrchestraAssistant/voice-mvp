@@ -3,6 +3,7 @@ import cors from "cors";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { summaryEvent, tallySession } from "./usage.js";
 import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
 import { buildTools, buildInstructions, resolveModel, resolveLanguage, MODELS, LANGUAGES } from "./tools.js";
@@ -54,11 +55,47 @@ function appendLog(logId, event) {
 }
 
 // The widget posts here. Batched, so a busy turn is one request.
+/**
+ * Running totals per session, so a finished session ends with its own cost.
+ *
+ * Kept here rather than in the widget on purpose: this is instrumentation for
+ * comparing providers, and none of it should reach the package's public API.
+ * The relay already sees every event, so it is the one place that can total a
+ * session without the client knowing it is being measured.
+ *
+ * "Finished" has to be inferred. A browser tab can be closed, killed or put to
+ * sleep, and only the polite case sends a final beacon -- so a session is done
+ * when nothing has arrived from it for a while, which covers all of them.
+ */
+const SUMMARY_AFTER_MS = Number(process.env.VOICE_LOG_SUMMARY_MS || 120_000);
+const openSessions = new Map(); // logId -> { events, lastSeen }
+
+function sweepSessions(now = Date.now()) {
+  for (const [logId, live] of openSessions) {
+    if (now - live.lastSeen < SUMMARY_AFTER_MS) continue;
+    openSessions.delete(logId);
+    const tally = tallySession(live.events);
+    // A session that never produced a response is a warm connection nobody
+    // used. It costs nothing and a summary line saying so is just noise.
+    if (tally.responses === 0) continue;
+    appendLog(logId, summaryEvent(tally));
+  }
+}
+
+if (LOGGING) setInterval(sweepSessions, 30_000).unref();
+
 app.post("/voice/log", (req, res) => {
   if (!LOGGING) return res.status(404).json({ error: "Logging is off. Start the relay with VOICE_LOG=1." });
   const { logId, events } = req.body ?? {};
   if (!logId || !Array.isArray(events)) return res.status(400).json({ error: "Expected { logId, events[] }" });
   for (const e of events) appendLog(logId, e);
+
+  if (LOGGING) {
+    const live = openSessions.get(logId) ?? { events: [], lastSeen: 0 };
+    live.events.push(...events);
+    live.lastSeen = Date.now();
+    openSessions.set(logId, live);
+  }
   res.json({ written: events.length });
 });
 
@@ -151,11 +188,16 @@ app.post("/voice/session", async (req, res) => {
     // which language was pinned.
     const logId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
     if (LOGGING) {
-      appendLog(logId, {
+      const header = {
         type: "session",
         model: wantedModel.model,
         language: wantedLanguage.language?.code ?? null,
-      });
+      };
+      appendLog(logId, header);
+      // Seeds the tally with the model, which is known here and nowhere else:
+      // the client asked for a name or for nothing, and this is what it
+      // resolved to.
+      openSessions.set(logId, { events: [header], lastSeen: Date.now() });
     }
     res.json({ ...data, logId, logging: LOGGING });
   } catch (err) {
