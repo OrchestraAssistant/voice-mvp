@@ -63,6 +63,20 @@ export function decideModality({ transcript, aloudRequested, replyModality = def
   return aloudRequested ? "audio" : replyModality(transcript);
 }
 
+/**
+ * Is it safe to hang up yet?
+ *
+ * Pulled out of the connection so the one rule that matters here can be
+ * checked without a browser: a hang-up waits for the conversation to actually
+ * go quiet. `force` is the timeout path, which overrides the wait rather than
+ * cancelling it -- a goodbye that never finishes must still release the
+ * microphone, because the user already said they were done.
+ */
+export function readyToHangUp({ because, responseActive, audioPlaying, force = false }) {
+  if (because == null) return false;
+  return force || (!responseActive && !audioPlaying);
+}
+
 export function sessionUpdate(input) {
   return JSON.stringify({ type: "session.update", session: { type: "realtime", audio: { input } } });
 }
@@ -111,6 +125,9 @@ export async function connectRealtimeSession({
   // Fires whenever the rim's state could have changed. Derived here because
   // this is the only place that sees the events it is derived from.
   onActivity,
+  // The model hung up. Fires only once the goodbye has finished coming out of
+  // the speaker -- see maybeHangUp() for why that matters.
+  onHangUp,
   // A key minted earlier. Skipping the mint is most of the latency saving.
   minted,
   // Connect with no microphone. The transceiver is negotiated either way, so
@@ -175,6 +192,19 @@ export async function connectRealtimeSession({
   // Set by the model's answer_aloud call, cleared at the start of every turn.
   let aloudRequested = false;
 
+  // Did the current turn arrive as speech or as typing? The goodbye mirrors
+  // it: someone who said "thanks, that's all" out loud is probably already
+  // looking away, and a farewell they never hear is not a farewell. Someone
+  // who typed it is looking at the panel, where text is enough.
+  let lastTurnWasSpoken = false;
+
+  // The model's end_session call, held until it is safe to act on. It arrives
+  // DURING a turn that has not finished happening: the farewell is generated
+  // after the tool result goes back, so hanging up where the call lands cuts
+  // off the goodbye the same rule asked for.
+  let hangUpBecause = null;
+  let hangUpTimer = null;
+
   // Only one response can be in flight per conversation. Asking for a second
   // is `conversation_already_has_active_response`, which arrives as an async
   // error and drops the request -- so the turn that prompted it gets no answer
@@ -237,6 +267,27 @@ export async function connectRealtimeSession({
     dc.send(JSON.stringify({ type: "response.create", response: { output_modalities: [modality] } }));
   }
 
+  /**
+   * Hang up, once nothing is still coming out of the speaker.
+   *
+   * Three things have to have finished: the response carrying the end_session
+   * call, the follow-up response carrying the goodbye, and the audio of that
+   * goodbye -- which outlives `response.done` by whole seconds. Tearing down
+   * on the tool call itself cut the farewell off mid-word every time.
+   *
+   * Called from both places a turn can go quiet, because neither one alone
+   * covers both media: a spoken goodbye ends at output_audio_buffer.stopped,
+   * a written one at response.done with no audio ever starting.
+   */
+  function maybeHangUp({ force = false } = {}) {
+    if (!readyToHangUp({ because: hangUpBecause, responseActive, audioPlaying, force })) return;
+    const because = hangUpBecause;
+    hangUpBecause = null;
+    clearTimeout(hangUpTimer);
+    record({ type: "hang_up", because, forced: force });
+    onHangUp?.({ because });
+  }
+
   // The connect promise resolves when the channel is OPEN, not when the SDP
   // exchange finishes. Those are milliseconds apart under load and much
   // further apart on a slow network, and in between every method on the
@@ -295,6 +346,7 @@ export async function connectRealtimeSession({
     if (msg.type === "output_audio_buffer.stopped" || msg.type === "output_audio_buffer.cleared") {
       audioPlaying = false;
       reportActivity();
+      maybeHangUp();
     }
     // Cleared here, but NOT drained here: the tool-call path below also ends
     // in a request, and draining at the top would let both fire for the same
@@ -317,6 +369,7 @@ export async function connectRealtimeSession({
     // transcript the deltas have already delivered.
     if (msg.type === "input_audio_buffer.committed" && serverTurns) {
       aloudRequested = false; // a new turn starts here
+      lastTurnWasSpoken = true;
       requestResponse();
     }
 
@@ -358,7 +411,11 @@ export async function connectRealtimeSession({
         if (responseQueued) {
           responseQueued = false;
           requestResponse();
+          return;
         }
+        // Nothing further is coming. If the goodbye was text there is no audio
+        // to wait for, so this is where a written hang-up completes.
+        maybeHangUp();
         return;
       }
 
@@ -373,6 +430,18 @@ export async function connectRealtimeSession({
         // but it still goes through onToolCall so a host can log what the
         // model decided and the reason it gave.
         if (call.name === "answer_aloud") aloudRequested = true;
+        if (call.name === "end_session") {
+          hangUpBecause = args.because ?? "";
+          // A spoken dismissal earns a spoken goodbye without the model having
+          // to also remember answer_aloud for it.
+          if (lastTurnWasSpoken) aloudRequested = true;
+          // If the goodbye never arrives -- a dropped response, an audio
+          // buffer event that never fires -- the microphone would stay live
+          // after the user said they were done, which is the one outcome this
+          // feature must not produce. Hang up anyway.
+          clearTimeout(hangUpTimer);
+          hangUpTimer = setTimeout(() => maybeHangUp({ force: true }), 15_000);
+        }
 
         let result;
         try {
@@ -421,6 +490,8 @@ export async function connectRealtimeSession({
 
   return {
     stop() {
+      clearTimeout(hangUpTimer);
+      hangUpBecause = null;
       userSpeaking = false;
       audioPlaying = false;
       responseActive = false;
@@ -439,6 +510,7 @@ export async function connectRealtimeSession({
       // live, with "Opened settings." and "Name changed to Steve Branson."
       // coming back as audio on turns the model never flagged.
       aloudRequested = false;
+      lastTurnWasSpoken = false;
       lastUserTurn = text;
       dc.send(
         JSON.stringify({
@@ -447,6 +519,28 @@ export async function connectRealtimeSession({
         }),
       );
       requestResponse();
+    },
+
+    /**
+     * Stop listening, keep the session.
+     *
+     * The softer half of stop(): the microphone is genuinely released, so the
+     * OS recording indicator goes out and the user can see they were heard --
+     * but the connection, its history and its cached prompt prefix survive, so
+     * coming back is an attachMic() rather than a fresh connect. Prompt
+     * caching is session-scoped, which makes closing and reopening the
+     * expensive way to pause.
+     */
+    async releaseMic() {
+      if (!micTrack) return;
+      micTrack.stop();
+      micTrack = null;
+      // Order matters: null the field first, so an attachMic() racing this
+      // does not hand back a track that is already stopped.
+      await sender.replaceTrack(null);
+      userSpeaking = false;
+      reportActivity();
+      record({ type: "mic_released" });
     },
 
     // --- PTT / PTNT primitives, all on this same connection + history ---

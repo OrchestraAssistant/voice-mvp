@@ -161,3 +161,28 @@ describe("the rule list", () => {
     }
   });
 });
+
+describe("hanging up", () => {
+  const rules = buildInstructions(manifest);
+  const endSession = buildTools(manifest).find((t) => t.name === "end_session");
+
+  test("the tool exists and asks why", () => {
+    // `because` carries the user's own words. Without it a hang-up in the log
+    // is indistinguishable from a dropped connection.
+    assert.ok(endSession);
+    assert.deepEqual(endSession.parameters.required, ["because"]);
+  });
+
+  test("only the user ends the conversation", () => {
+    // The terseness rules already push it toward wrapping up. Left vaguer than
+    // this, "act, don't narrate" plus "never offer further help" reads a lot
+    // like permission to hang up the moment a task succeeds.
+    assert.match(endSession.description, /ONLY when the user/);
+    assert.match(endSession.description, /Do NOT call it because you think the task is complete/);
+    assert.match(rules, /Completing a task is not a dismissal, and neither is an error/);
+  });
+
+  test("the goodbye is part of the same turn", () => {
+    assert.match(rules, /call end_session and say one short goodbye/);
+  });
+});

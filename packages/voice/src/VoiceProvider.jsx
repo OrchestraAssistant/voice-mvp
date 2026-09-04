@@ -46,6 +46,9 @@ async function apiFetch(method, url, body) {
  *   onModeChange(mode)              -- fires on continuous/ptt/ptnt switch.
  *   onTransportChange(transport)    -- fires on connection state change. Not the
  *     same as "the mic is live"; see isListening().
+ *   onHangUp({ because })           -- fires when the model ends the
+ *     conversation because the user dismissed it, carrying the words that
+ *     did it. The widget has already released the microphone by then.
  *
  * Two host integration points, both optional, both injected rather than
  * imported. The widget deliberately does not depend on react-router or
@@ -73,7 +76,19 @@ export function VoiceProvider({
   onPendingAction,
   onModeChange,
   onTransportChange,
+  onHangUp,
   logToRelay = false,
+  /**
+   * How long a hung-up session is held before the connection is closed too.
+   *
+   * Hanging up releases the microphone immediately -- that is the part the
+   * user asked for and can verify from the OS indicator. Closing the
+   * connection is a separate, later decision, because prompt caching is
+   * session-scoped: a session closed and reopened pays the whole instruction
+   * prefix again, and someone who says "actually, one more thing" ten seconds
+   * later should not pay for having been polite.
+   */
+  idleCloseMs = 5 * 60_000,
   /**
    * How much of the connect to do before the user asks to talk.
    *
@@ -131,6 +146,12 @@ export function VoiceProvider({
   const loggerRef = useRef(null);
   if (logToRelay && !loggerRef.current) loggerRef.current = createRelayLogger({ relayUrl });
   const pendingRef = useRef(null); // mirrors pendingAction for use inside the tool-call closure
+  // Set when the model hangs up, cleared the moment anyone starts talking again.
+  const idleCloseRef = useRef(null);
+  // The hang-up handler, reached through a ref for the same reason the
+  // callback props are: warm() builds a session before standDown exists, and
+  // that session is the one start() goes on to adopt.
+  const hangUpRef = useRef(null);
 
   // Fallback nav for hosts that don't pass one: updates the URL and fires
   // popstate, which routers that listen to history will pick up. Hosts
@@ -147,7 +168,7 @@ export function VoiceProvider({
   // Callback props are read through refs so their identity churning on
   // every parent render never forces us to re-create executeTool/effects.
   const callbacksRef = useRef({});
-  callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onTransportChange, onAfterAction };
+  callbacksRef.current = { onToolCall, onTranscript, onPendingAction, onModeChange, onTransportChange, onAfterAction, onHangUp };
 
   const setPendingAction = (value) => {
     pendingRef.current = value ? { action: value.action, batch: value.batch } : null;
@@ -247,9 +268,15 @@ export function VoiceProvider({
         return { status: "navigated", path, ...(path === args.path ? {} : { interpretedFrom: args }) };
       }
 
-      // A signal to the transport layer, already acted on before it got here;
+      // Signals to the transport layer, already acted on before they got here;
       // surfaced so onToolCall can log what the model decided and why.
       if (name === "answer_aloud") {
+        return { acknowledged: true, because: args.because };
+      }
+      // Deliberately not the hang-up itself. The microphone is released when
+      // the goodbye finishes, several seconds after this returns, and saying
+      // so here would be a lie the model then reads aloud.
+      if (name === "end_session") {
         return { acknowledged: true, because: args.because };
       }
 
@@ -374,6 +401,7 @@ export function VoiceProvider({
           },
           onEvent: (event) => loggerRef.current?.record(event),
           onActivity: setActivity,
+          onHangUp: (info) => hangUpRef.current?.(info),
           initialMode: mode,
           relayUrl,
           model,
@@ -402,6 +430,9 @@ export function VoiceProvider({
 
   const start = async (overrides = {}) => {
     setError(null);
+    // Whatever was scheduled by a hang-up, someone is talking again.
+    clearTimeout(idleCloseRef.current);
+    idleCloseRef.current = null;
     // Already warm: the only thing left is the microphone.
     await warmingRef.current;
     if (sessionRef.current) {
@@ -438,6 +469,7 @@ export function VoiceProvider({
         language: overrides.language ?? language,
         onEvent: (event) => loggerRef.current?.record(event),
         onActivity: setActivity,
+        onHangUp: (info) => hangUpRef.current?.(info),
         minted: await ensureMinted(overrides),
       });
       sessionRef.current = session;
@@ -452,6 +484,8 @@ export function VoiceProvider({
   };
 
   const stop = () => {
+    clearTimeout(idleCloseRef.current);
+    idleCloseRef.current = null;
     loggerRef.current?.stop();
     sessionRef.current?.stop();
     sessionRef.current = null;
@@ -460,6 +494,38 @@ export function VoiceProvider({
     setActivity({ userSpeaking: false, agentBusy: false });
     setHolding(false);
   };
+
+  /**
+   * The model hung up, because the user dismissed it.
+   *
+   * Two steps at two speeds, which is the whole design. The microphone goes
+   * NOW: that is what the user asked for, it is the part they can verify from
+   * their own OS indicator, and every second of delay is a second of a live
+   * mic nobody wants. The connection goes later, or not at all if they come
+   * back, because closing it throws away a session-scoped prompt cache and
+   * makes "actually, one more thing" cost a full reconnect.
+   *
+   * A staged destructive action does not survive this. Saying "that's all"
+   * with a delete waiting to be confirmed has to mean the delete is off --
+   * otherwise it sits there and the next "yes", in some later conversation,
+   * executes something nobody is thinking about any more.
+   */
+  const standDown = async ({ because } = {}) => {
+    setPendingAction(null);
+    setHolding(false);
+    await sessionRef.current?.releaseMic();
+    setMicAttached(false);
+    setActivity({ userSpeaking: false, agentBusy: false });
+    callbacksRef.current.onHangUp?.({ because });
+
+    clearTimeout(idleCloseRef.current);
+    idleCloseRef.current = setTimeout(() => {
+      // Only if nobody came back. hasMic() is the session's own answer rather
+      // than this closure's stale copy of micAttached.
+      if (sessionRef.current && !sessionRef.current.hasMic()) stop();
+    }, idleCloseMs);
+  };
+  hangUpRef.current = standDown;
 
   const sendText = (text) => {
     setTranscript((t) => [...t, { role: "user", text }]);
@@ -540,6 +606,10 @@ export function VoiceProvider({
   const holdEndRef = useRef(holdEnd);
   holdStartRef.current = holdStart;
   holdEndRef.current = holdEnd;
+
+  // A pending close outlives the component otherwise, and fires stop() against
+  // a session that unmounting already tore down.
+  useEffect(() => () => clearTimeout(idleCloseRef.current), []);
 
   useEffect(() => {
     function isEditableTarget(el) {

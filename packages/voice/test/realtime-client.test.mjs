@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decideModality, defaultReplyModality, sessionUpdate } from "../src/realtimeClient.js";
+import { decideModality, defaultReplyModality, readyToHangUp, sessionUpdate } from "../src/realtimeClient.js";
 
 const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/realtimeClient.js"), "utf8");
 
@@ -194,5 +194,80 @@ describe("a typed turn is a new turn", () => {
     // push-to-talk, and sendTextTurn -- plus the declaration itself.
     const resets = source.match(/aloudRequested = false/g) ?? [];
     assert.equal(resets.length, 4, "a turn start is missing its reset");
+  });
+});
+
+describe("hanging up", () => {
+  const quiet = { because: "that's all for now", responseActive: false, audioPlaying: false };
+
+  test("nothing happens without a request", () => {
+    // The predicate runs on every audio-stopped event in the session, which is
+    // most of them. A missing `because` is the normal case, not an edge one.
+    assert.equal(readyToHangUp({ ...quiet, because: null }), false);
+    assert.equal(readyToHangUp({ ...quiet, because: null, force: true }), false);
+  });
+
+  test("an empty reason still hangs up", () => {
+    // The model is required to send `because`, so an empty string means it
+    // sent something odd -- not that it changed its mind. Falsy-checking the
+    // reason would silently ignore the call and leave the mic live.
+    assert.equal(readyToHangUp({ ...quiet, because: "" }), true);
+  });
+
+  test("it waits for the goodbye to be generated", () => {
+    // end_session arrives inside a response. The farewell is a SECOND response,
+    // created after the tool result goes back, so acting where the call lands
+    // means tearing the connection down before the goodbye is even written.
+    assert.equal(readyToHangUp({ ...quiet, responseActive: true }), false);
+  });
+
+  test("it waits for the goodbye to finish being spoken", () => {
+    // response.done fires while audio is still coming out of the speaker.
+    // Without this the farewell is cut off mid-word, which is a worse ending
+    // than no farewell at all.
+    assert.equal(readyToHangUp({ ...quiet, audioPlaying: true }), false);
+  });
+
+  test("once the room is quiet, it goes", () => {
+    assert.equal(readyToHangUp(quiet), true);
+  });
+
+  test("the timeout overrides the wait, and only the wait", () => {
+    // If a response or an audio-buffer event never completes, waiting forever
+    // leaves a live microphone after the user said they were done -- the one
+    // outcome this feature must not produce.
+    assert.equal(readyToHangUp({ ...quiet, responseActive: true, audioPlaying: true, force: true }), true);
+  });
+});
+
+describe("hang-up wiring", () => {
+  test("both ways a turn can go quiet reach the gate", () => {
+    // Neither covers both media on its own: a spoken goodbye ends at
+    // output_audio_buffer.stopped, a written one at response.done with no
+    // audio ever starting. Wiring only the first loses every text hang-up.
+    const calls = source.match(/maybeHangUp\(/g) ?? [];
+    assert.ok(calls.length >= 4, `expected the gate to be armed and called from several places, saw ${calls.length}`);
+    assert.match(source, /audioPlaying = false;\s*\n\s*reportActivity\(\);\s*\n\s*maybeHangUp\(\);/);
+  });
+
+  test("a hang-up that never completes still releases the microphone", () => {
+    assert.match(source, /hangUpTimer = setTimeout\(\(\) => maybeHangUp\(\{ force: true \}\), 15_000\)/);
+  });
+
+  test("a spoken dismissal earns a spoken goodbye", () => {
+    // Otherwise the farewell is decided by the transcript heuristic, and
+    // "thanks, that's all" is command-shaped -- so someone who has already
+    // looked away gets a silent goodbye they never see.
+    assert.match(source, /if \(lastTurnWasSpoken\) aloudRequested = true;/);
+    assert.match(source, /lastTurnWasSpoken = true;/);
+    assert.match(source, /lastTurnWasSpoken = false;/);
+  });
+
+  test("releasing the mic is not closing the session", () => {
+    // The two are separate on purpose: prompt caching is session-scoped, so
+    // closing is the expensive way to pause.
+    assert.match(source, /async releaseMic\(\)/);
+    assert.match(source, /micTrack\.stop\(\);\s*\n\s*micTrack = null;/);
+    assert.doesNotMatch(source, /async releaseMic\(\)[\s\S]{0,400}pc\.close\(\)/);
   });
 });

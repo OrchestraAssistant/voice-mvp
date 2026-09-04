@@ -763,3 +763,60 @@ code -- no tokens beyond the result, and no round trip to OpenAI.
 **Also found here:** the language rule carried a hardcoded number and had been
 shipping as a second "7" since the sixth rule was added. Rule numbering is now
 asserted to run 1..n once each, with and without a language pinned.
+
+---
+
+## 16. Hanging up: the microphone goes now, the connection goes later
+
+**Chosen:** an `end_session` tool the model calls when the user dismisses it.
+Acting on it releases the microphone immediately and closes the connection
+five minutes later, or never if the user comes back.
+
+**Why two speeds.** They answer different questions. Releasing the microphone
+is what the user actually asked for, and it is the half they can verify
+themselves: the OS recording indicator goes out. Closing the connection is a
+cost decision, and it points the other way. Prompt caching is session-scoped
+(§13), so a session closed and reopened pays the whole instruction prefix
+again. Someone who says "actually, one more thing" ten seconds after saying
+thank you should not pay for having been polite.
+
+**The bug this is shaped around.** `end_session` arrives *inside* a response,
+and the goodbye it asks for is a *second* response, generated after the tool
+result goes back. Tearing down where the call lands cuts off the farewell the
+same rule just requested. Worse, `response.done` fires while audio is still
+coming out of the speaker, so waiting for the response is not enough either.
+
+Measured, same two turns, once with a written goodbye and once spoken:
+
+| goodbye | reply logged | hang-up fired |
+|---|---|---|
+| text | 8.5s | 8.5s |
+| audio | 9.0s | 10.3s |
+
+The 1.3-second gap is "Take care, goodbye!" being spoken. Both paths are
+needed: a spoken goodbye ends at `output_audio_buffer.stopped`, a written one
+at `response.done` with no audio ever starting, and wiring only the first
+loses every text hang-up silently.
+
+A 15-second timeout forces the release regardless. If a response or an audio
+event never completes, the alternative is a live microphone after the user said
+they were done, which is the one outcome this must not produce.
+
+**The prompt rule is narrow on purpose.** The terseness rules (§11) already
+push toward wrapping up; "act, don't narrate" plus "never offer further help"
+reads a lot like permission to hang up the moment a task succeeds. So the rule
+says outright that completing a task is not a dismissal and neither is an
+error. Tested against a five-turn script containing a completed navigation, a
+successful query, a failed delete, an explicit "no, cancel that" and a final
+question: zero hang-ups. Two farewell phrasings, "thanks, that's all for now"
+and "ok we're done here, bye": one each.
+
+**A spoken dismissal earns a spoken goodbye.** The medium mirrors the turn that
+ended the conversation, rather than going through the transcript heuristic
+(§9), which reads "thanks, that's all" as command-shaped and answers in text.
+Someone who dismissed the agent out loud has probably already looked away, and
+a farewell they never see is not a farewell.
+
+**A staged destructive action does not survive.** Saying "that's all" with a
+delete awaiting confirmation cancels it. Otherwise it waits, and some later
+"yes" executes something nobody is thinking about any more.

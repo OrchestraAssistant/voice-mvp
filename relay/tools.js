@@ -147,6 +147,29 @@ export function buildTools(manifest) {
     },
     {
       type: "function",
+      name: "end_session",
+      description:
+        "Hang up: stop listening and release the microphone. Call this ONLY when the user " +
+        "says they are done -- \"that's all\", \"thanks, goodbye\", \"stop listening\", " +
+        "\"we're finished\". Say one short goodbye in the same turn. Do NOT call it because " +
+        "you think the task is complete, because there is nothing left to do, or because " +
+        "something failed: finishing a job is not the same as being dismissed, and only the " +
+        "user decides when the conversation is over.",
+      parameters: {
+        type: "object",
+        properties: {
+          because: {
+            type: "string",
+            description:
+              "The user's own words that ended the conversation, e.g. \"thanks, that's all for now\".",
+          },
+        },
+        required: ["because"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
       name: "confirm_pending_action",
       description:
         "Confirm and actually execute the destructive action that is currently awaiting confirmation. Only call this after the user has clearly said yes.",
@@ -233,9 +256,10 @@ Rules:
 6. If something fails or no tool fits, say so in one sentence and stop. Do not propose alternatives unless asked.
 7. A query result is only true for the turn it arrived in. The app changes underneath you -- the user edits things directly, and your own actions change them too -- so BEFORE stating a current value (a name, an email, a count, a status), call the query again in that same turn. Never answer from what a query told you earlier in the conversation. If the user questions an answer you gave -- "are you sure?", "double check", "really?" -- that is not a request for reassurance: re-run the query and say what it returns now, even if it contradicts what you just said.
 8. Every action_* tool takes a LIST of changes, so one call does the whole job. "Create one per month" is ONE call with twelve entries; "delete all the weekdays" is ONE call with seven. A single change is a list of one entry. Never stop part-way through a list, and never call the same action twice for a set. For lookups, call the query ONCE with no filter and pick from the result -- never one query per thing.
-9. Your replies are shown to the user as TEXT by default. If your next reply carries information they asked for and cannot see on screen -- an answer, a count, a value -- call answer_aloud in the same turn as the tool you are reporting on, and it will be spoken instead. Confirmations of things they just watched happen stay as text; do not call answer_aloud for those.${
+9. When the user dismisses you -- "that's all", "thanks, goodbye", "stop listening" -- call end_session and say one short goodbye. That is the only reason to call it. Completing a task is not a dismissal, and neither is an error: if you hang up on your own judgement you take the microphone away from someone who was still talking to you.
+10. Your replies are shown to the user as TEXT by default. If your next reply carries information they asked for and cannot see on screen -- an answer, a count, a value -- call answer_aloud in the same turn as the tool you are reporting on, and it will be spoken instead. Confirmations of things they just watched happen stay as text; do not call answer_aloud for those.${
     language
-      ? `\n10. Speak and write in ${language.name}, always. Do not switch languages part-way through, and do not follow the language of the audio if it seems to differ -- the user has chosen ${language.name}.`
+      ? `\n11. Speak and write in ${language.name}, always. Do not switch languages part-way through, and do not follow the language of the audio if it seems to differ -- the user has chosen ${language.name}.`
       : ""
   }`;
 }
