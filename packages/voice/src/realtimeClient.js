@@ -90,11 +90,20 @@ export function sessionUpdate(input) {
  * slowest of the two round trips) well before anyone intends to speak, and
  * still redeem it later.
  */
-export async function mintSession({ relayUrl = "", model, language } = {}) {
+/**
+ * The manifest travels with the mint request.
+ *
+ * It describes the app this page IS, so the page is the only party that can
+ * be sure it is right. The relay used to hold its own copy, read from a file
+ * path, and the two agreed only by convention -- until a relay restarted
+ * without that path and built a calendar app's tools from a task manager's
+ * manifest. Sending it makes them the same object.
+ */
+export async function mintSession({ relayUrl = "", model, language, manifest } = {}) {
   const res = await fetch(`${relayUrl}/voice/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, language }),
+    body: JSON.stringify({ model, language, manifest }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || data.error || "Failed to create realtime session");
@@ -121,6 +130,9 @@ export async function connectRealtimeSession({
   replyModality = defaultReplyModality,
   model,
   language,
+  // The app's own manifest, forwarded to the relay so the tool list it builds
+  // and the one this client executes are the same thing.
+  manifest,
   onEvent,
   // Fires whenever the rim's state could have changed. Derived here because
   // this is the only place that sees the events it is derived from.
@@ -147,7 +159,7 @@ export async function connectRealtimeSession({
   // on a live session, which is why they travel with the mint request rather
   // than a later session.update. The relay validates them -- a browser should
   // not be picking which model the account pays for.
-  const session = isUsable(minted) ? minted : await mintSession({ relayUrl, model, language });
+  const session = isUsable(minted) ? minted : await mintSession({ relayUrl, model, language, manifest });
   const ephemeralKey = session.key;
   record({
     type: "connected",

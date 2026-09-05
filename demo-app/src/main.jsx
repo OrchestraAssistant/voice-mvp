@@ -3,6 +3,10 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { VoiceProvider } from "@yourco/voice";
+// Generated from THIS app's source by `npm run generate`, committed beside it,
+// and bundled with it -- so it cannot describe a different version than the
+// one running. The relay holds no copy.
+import manifest from "../.voice/manifest.json";
 import "./index.css";
 import App from "./App.jsx";
 
@@ -40,6 +44,7 @@ function VoiceIntegration({ children }) {
     // own events to the relay, and the relay ignores them unless VOICE_LOG=1.
     // Both switches are deliberate because this records what people say.
     <VoiceProvider
+      manifest={manifest}
       navigate={navigate}
       onAfterAction={() => qc.invalidateQueries()}
       logToRelay

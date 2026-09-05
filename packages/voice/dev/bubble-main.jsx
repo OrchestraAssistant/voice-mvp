@@ -85,6 +85,14 @@ document.addEventListener("keydown", (e) => {
 // the fetches fail silently and the settings tab has nothing to offer.
 const RELAY = params.get("relay") ?? "";
 
+// A host app supplies its own manifest; this page is standing in for one. Tiny
+// on purpose -- what is being exercised here is chrome, not tool coverage.
+const MANIFEST = {
+  routes: [{ path: "/", component: "Home" }],
+  queries: [],
+  actions: [],
+};
+
 // ?assembled=1 renders the top tier, <Interpreter/>, instead of wiring the
 // bubble and the rim by hand. It is the same page either way, which is the
 // point: the assembled component must produce what a host would have built.
@@ -92,7 +100,7 @@ const ASSEMBLED = params.has("assembled");
 
 createRoot(document.getElementById("widget-mount")).render(
   <StrictMode>
-    <VoiceProvider relayUrl={RELAY}>
+    <VoiceProvider relayUrl={RELAY} manifest={MANIFEST}>
       {ASSEMBLED ? (
         <Interpreter mount={MOUNT} />
       ) : (

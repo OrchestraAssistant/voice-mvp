@@ -6,15 +6,19 @@ import path from "node:path";
 import { summaryEvent, tallySession } from "./usage.js";
 import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
-import { buildTools, buildInstructions, resolveModel, resolveLanguage, MODELS, LANGUAGES } from "./tools.js";
+import { buildTools, buildInstructions, resolveModel, resolveLanguage, validateManifest, MODELS, LANGUAGES } from "./tools.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Where the manifest lives. In the real product this is a per-tenant record
-// in the control plane, written by `voice-cli push`; for local dev it's just
-// the file the CLI generated in the app being analyzed.
-const MANIFEST_PATH =
-  process.env.MANIFEST_PATH || path.resolve(__dirname, "../demo-app/.voice/manifest.json");
+// The manifest is NOT here. It is an artifact of the app -- generated from
+// the app's own source, committed beside it, bundled with it -- and it
+// arrives with each mint request from the page that owns it.
+//
+// It used to be a file path on this server, defaulting to the demo app's.
+// A relay restarted without MANIFEST_PATH silently served a task manager's
+// manifest to a calendar app, and the agent politely explained that the app
+// had no bookings page. Nothing errored, because a wrong-but-plausible answer
+// is what a default produces. There is nothing to misconfigure now.
 const PORT = process.env.PORT || 3002;
 const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 
@@ -103,26 +107,22 @@ app.get("/voice/options", (req, res) => {
   res.json({ models: MODELS, languages: LANGUAGES, defaults: { model: REALTIME_MODEL, language: "auto" } });
 });
 
-app.get("/voice/manifest", (req, res) => {
-  if (!fs.existsSync(MANIFEST_PATH)) {
-    return res.status(404).json({ error: "No manifest found. Run `npx @yourco/voice-cli <srcDir> <outDir>` in your app, and point VOICE_MANIFEST at the result." });
-  }
-  res.json(JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8")));
-});
-
 // Mints an ephemeral Realtime session token, server-side, so OPENAI_API_KEY
-// never reaches the browser. The manifest-derived tool list and confirmation
-// policy are attached here too, so a tampered client can't redefine its own
-// tools or quietly drop a requiresConfirmation flag.
+// never reaches the browser. That key is the only reason this endpoint exists.
+//
+// The tool list is built here because instructions and tools are attached at
+// session CREATION and cannot be changed afterwards -- prompt caching is
+// session-scoped. It is built from the manifest the caller sends, which is the
+// same object the widget uses to execute those tools. One object, one commit,
+// no way for the two to disagree.
 app.post("/voice/session", async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(500).json({ error: "OPENAI_API_KEY is not set on the relay." });
   }
-  if (!fs.existsSync(MANIFEST_PATH)) {
-    return res.status(400).json({ error: "No manifest found. Run the generate step first." });
-  }
 
-  const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
+  const checked = validateManifest(req.body?.manifest);
+  if (checked.error) return res.status(400).json({ error: checked.error });
+  const manifest = checked.manifest;
 
   // Both are session-creation parameters -- neither can be changed on a live
   // session -- so they arrive here, are validated here, and a rejected value
@@ -192,6 +192,16 @@ app.post("/voice/session", async (req, res) => {
         type: "session",
         model: wantedModel.model,
         language: wantedLanguage.language?.code ?? null,
+        // Which app this session was for. The relay holds no manifest now, so
+        // without this a log could not say -- and the failure it replaces was
+        // precisely a session built on the wrong app's manifest, which nothing
+        // recorded and nothing detected.
+        manifest: {
+          routes: manifest.routes.length,
+          queries: manifest.queries.length,
+          actions: manifest.actions.length,
+          empty: checked.empty,
+        },
       };
       appendLog(logId, header);
       // Seeds the tally with the model, which is known here and nowhere else:

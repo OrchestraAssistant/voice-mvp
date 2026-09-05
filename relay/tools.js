@@ -22,6 +22,35 @@ function paramsToJsonSchema(params = [], bodyFields = []) {
   return { type: "object", properties, required };
 }
 
+/**
+ * Is this a manifest at all?
+ *
+ * The client sends it now, so this is the only thing standing between a
+ * typo and a session built on nothing. Deliberately NOT a size limit: on a
+ * relay you host yourself the tokens are your own, and on one we host the
+ * gate belongs at the door rather than in the shape of the payload.
+ *
+ * Returns a normalised copy, because "no actions" and "actions missing" mean
+ * the same thing to everything downstream and should not be two cases.
+ */
+export function validateManifest(manifest) {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return { error: "Expected a manifest object. Generate one with `npx @yourco/voice-cli <srcDir> <outDir>` and pass it to VoiceProvider." };
+  }
+  const normalised = {};
+  for (const key of ["routes", "queries", "actions"]) {
+    const value = manifest[key];
+    if (value !== undefined && !Array.isArray(value)) {
+      return { error: `manifest.${key} must be an array, got ${typeof value}.` };
+    }
+    normalised[key] = value ?? [];
+  }
+  // A manifest with nothing in it is legitimate -- an app whose analysis found
+  // nothing still gets the DOM tools -- but it is almost never intended, so it
+  // is worth being able to see in a log.
+  return { manifest: normalised, empty: !normalised.routes.length && !normalised.queries.length && !normalised.actions.length };
+}
+
 export function buildTools(manifest) {
   const tools = [];
 

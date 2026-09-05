@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildTools, buildInstructions, resolveModel, resolveLanguage, MODELS, LANGUAGES } from "./tools.js";
+import { buildTools, buildInstructions, resolveModel, resolveLanguage, validateManifest, MODELS, LANGUAGES } from "./tools.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../demo-app/.voice/manifest.json", import.meta.url), "utf8"));
 
@@ -184,5 +184,54 @@ describe("hanging up", () => {
 
   test("the goodbye is part of the same turn", () => {
     assert.match(rules, /call end_session and say one short goodbye/);
+  });
+});
+
+describe("the manifest comes from the app", () => {
+  test("a missing one is refused, not defaulted", () => {
+    // The bug this replaces: MANIFEST_PATH fell back to the demo app's file,
+    // so a relay restarted without it served a task manager's manifest to a
+    // calendar app. The agent then correctly explained the app had no
+    // bookings page. A wrong-but-plausible default is the worst outcome
+    // available, so there is no default any more.
+    for (const bad of [undefined, null, "", 0, [], "not-an-object"]) {
+      assert.ok(validateManifest(bad).error, `${JSON.stringify(bad)} was accepted as a manifest`);
+    }
+  });
+
+  test("the three sections are optional but must be arrays if present", () => {
+    assert.ok(validateManifest({ routes: {} }).error);
+    assert.ok(validateManifest({ queries: "none" }).error);
+    assert.match(validateManifest({ actions: 3 }).error, /manifest\.actions must be an array/);
+  });
+
+  test("missing sections normalise to empty, so downstream has one case", () => {
+    const checked = validateManifest({ routes: [{ path: "/" }] });
+    assert.equal(checked.error, undefined);
+    assert.deepEqual(checked.manifest.queries, []);
+    assert.deepEqual(checked.manifest.actions, []);
+  });
+
+  test("an empty manifest is legal, and says so", () => {
+    // Legitimate: an app whose analysis found nothing still gets the DOM
+    // tools. Almost never intended, though, so it is worth seeing in a log.
+    const checked = validateManifest({});
+    assert.equal(checked.error, undefined);
+    assert.equal(checked.empty, true);
+    assert.equal(validateManifest({ routes: [{ path: "/" }] }).empty, false);
+  });
+
+  test("no size limit", () => {
+    // Deliberate. On a relay you host, the tokens are your own; on one we
+    // host, the gate belongs at the door rather than in the payload's shape.
+    const huge = { routes: Array.from({ length: 5000 }, (_, i) => ({ path: `/r${i}` })), queries: [], actions: [] };
+    assert.equal(validateManifest(huge).error, undefined);
+  });
+
+  test("tools are still built from whatever arrives", () => {
+    const checked = validateManifest(JSON.parse(JSON.stringify(manifest)));
+    const names = buildTools(checked.manifest).map((t) => t.name);
+    assert.ok(names.includes("query_tasks"));
+    assert.ok(names.includes("navigate"), "the generic fallbacks do not depend on the manifest");
   });
 });

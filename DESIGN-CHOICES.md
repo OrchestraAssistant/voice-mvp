@@ -989,3 +989,65 @@ completion made a two-second tool look instant. And activity transitions are
 recorded when they change, so a log can say what the user was being SHOWN
 while a tool ran, which is the one thing needed to explain "nothing was
 happening" afterwards.
+
+---
+
+## 21. The manifest belongs to the app, and travels with the session request
+
+**Chosen:** the app imports its own `.voice/manifest.json` and passes it to
+`VoiceProvider`, which sends it with each mint. The relay builds the tool list
+from what arrives and holds no manifest of its own. `MANIFEST_PATH` and
+`GET /voice/manifest` are gone.
+
+**The failure that forced it.** A relay was restarted with only `PORT` in its
+environment. `MANIFEST_PATH` fell back to a default pointing at the demo app,
+so the relay serving a calendar app built its tools from a task manager's
+manifest. Asked to open bookings, the agent explained politely that the app
+had no bookings section and offered to help with tasks instead. It was not
+confused. It was told it was driving a task manager, and it described that
+accurately.
+
+Nothing errored, at any layer, because a default produces a wrong answer that
+looks like a right one.
+
+**What the old shape actually was.** The CLI wrote the manifest into the app's
+repo. Someone copied it where the relay could read it. The relay served it
+back over the network to the widget running inside the app that had produced
+it, and the widget used that copy to resolve endpoints while the relay used
+its own copy to build tools. Two copies of one file, agreeing by convention.
+The round trip was the bug.
+
+**What actually had to be server-side, on inspection.** Less than the code
+claimed. The comment above the mint endpoint said the tool list lived there
+"so a tampered client can't redefine its own tools or quietly drop a
+requiresConfirmation flag". That is wrong twice over: the widget executes every
+tool in the user's own browser against the app's own API with the user's own
+cookies, so redefining tools grants nothing that calling the API directly would
+not; and the relay never enforced confirmation anyway, it only wrote the word
+"destructive" into the prompt, with the staging done entirely client-side.
+
+What genuinely needs the server is the API key, and the decisions that spend
+the relay owner's money. The manifest is neither.
+
+The one real constraint is timing: instructions and tools attach at session
+creation and cannot change afterwards, because prompt caching is
+session-scoped. So the manifest must be known at mint. Sending it satisfies
+that without anyone storing it.
+
+**No size cap, deliberately.** On a relay you host, the tokens are your own. On
+one we host, the gate belongs at the door -- authentication and metering --
+rather than in the shape of the payload. The manifest is validated for shape
+only, and refused outright when absent: a wrong-but-plausible default is worse
+than an error.
+
+**What this buys beyond fixing the bug.** The relay becomes stateless per app,
+so one deployment serves any number of them and there is no per-app
+configuration to get wrong. Verified by minting for two different apps against
+one relay and getting two different tool lists. Self-hosting and
+bring-your-own-key work without a control plane. And the manifest can no
+longer drift from the code, because it ships from the same commit -- which a
+pushed-to-a-server manifest can always do, the moment an app is rolled back.
+
+Sessions now record the shape of the manifest they were built from, since the
+relay no longer knows and a log otherwise could not say which app a session
+was for. That is exactly what nothing recorded when this went wrong.

@@ -57,11 +57,19 @@ portals into an overlay on `document.body`:
 
 ```jsx
 import { VoiceProvider, Interpreter } from "@yourco/voice";
+import manifest from "./.voice/manifest.json";
 
-<VoiceProvider navigate={yourRouterPush}>
+<VoiceProvider manifest={manifest} navigate={yourRouterPush}>
   <Interpreter />
 </VoiceProvider>
 ```
+
+The manifest is yours, not the relay's. It is generated from your source,
+committed beside your code and bundled with your app, so it cannot describe a
+version of the app that is not the one running. The widget executes tool calls
+against it and sends it with each session request; the relay builds the
+model's tool list from that and stores nothing. One relay can therefore serve
+any number of apps, and there is no per-app configuration on it to get wrong.
 
 Wrap your tree instead only if you want to call `useInterpreter()` in your own
 components, to build custom UI against the same session.
