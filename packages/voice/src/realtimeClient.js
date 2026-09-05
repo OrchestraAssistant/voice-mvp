@@ -218,14 +218,37 @@ export async function connectRealtimeSession({
   let responseActive = false;
   let responseQueued = false;
 
+  // Tools currently executing. A counter rather than a flag because one
+  // response can carry several calls, and they finish one at a time.
+  //
+  // Without this the rim went back to "ready" the moment the model finished
+  // ASKING for a tool, and stayed there for the whole time the tool ran and
+  // the follow-up was being requested. Observed live: a user watched the rim
+  // say "ready to listen" while the agent was mid-job, spoke because the
+  // interface invited them to, and reported that tool calls showed no working
+  // state at all. The rim was not merely uninformative there, it was wrong.
+  let toolsRunning = 0;
+
   // What the rim reports. `userSpeaking` is the server's own voice detector
   // saying audio is arriving; `audioPlaying` is the model's reply coming back.
   // Both are bracketed by event pairs, so this is observation rather than
   // inference -- no timers, no guessing when something finished.
   let userSpeaking = false;
   let audioPlaying = false;
-  const reportActivity = () =>
-    onActivity?.({ userSpeaking, agentBusy: responseActive || audioPlaying });
+  // Recorded as well as reported, and only when it actually changes. Without
+  // this the log could say a tool ran but never what the user was being shown
+  // while it ran, which is the one thing needed to explain "nothing was
+  // happening" after the fact.
+  let lastActivity = "";
+  const reportActivity = () => {
+    const state = { userSpeaking, agentBusy: responseActive || audioPlaying || toolsRunning > 0 };
+    const key = `${state.userSpeaking}/${state.agentBusy}`;
+    if (key !== lastActivity) {
+      lastActivity = key;
+      record({ type: "activity", ...state, because: { responseActive, audioPlaying, toolsRunning } });
+    }
+    onActivity?.(state);
+  };
 
   // Is the SERVER deciding turn boundaries? In push-to-talk we send
   // turn_detection: null and the button decides, so the commit is ours and we
@@ -256,6 +279,10 @@ export async function connectRealtimeSession({
     // Optimistic: two requests can leave before the first `response.created`
     // comes back, and the second is the one that gets rejected.
     responseActive = true;
+    // The rim has to hear about this NOW, not when the server gets around to
+    // `response.created`. Between those two points the agent is working and
+    // the rim used to say it was idle.
+    reportActivity();
     // Which decider won is the thing you tune on later, so it is recorded
     // alongside the outcome rather than inferred from it.
     record({
@@ -353,6 +380,12 @@ export async function connectRealtimeSession({
     // completed response -- which is the collision this exists to prevent.
     if (msg.type === "response.done") {
       responseActive = false;
+      // A response that asked for tools has NOT ended the turn: the tool loop
+      // below picks it up. Holding the turn open here stops the rim blinking
+      // idle in the gap between the model finishing its request and the first
+      // tool starting -- a gap of one tick, but a gap the crossfade would
+      // start animating through.
+      if ((msg.response?.output || []).some((o) => o.type === "function_call")) toolsRunning += 1;
       reportActivity();
     }
 
@@ -402,7 +435,19 @@ export async function connectRealtimeSession({
         }
       }
 
-      record({ type: "usage", usage: msg.response?.usage, modalities: msg.response?.output_modalities });
+      // `status` is the whole difference between "the model chose to say
+      // nothing" and "this response never ran". Ten responses in one observed
+      // session reported zero input AND zero output tokens, which no real
+      // generation can do -- but with no status recorded, cancelled, failed
+      // and incomplete were indistinguishable from each other and from a
+      // deliberate silence.
+      record({
+        type: "usage",
+        usage: msg.response?.usage,
+        modalities: msg.response?.output_modalities,
+        status: msg.response?.status,
+        statusDetails: msg.response?.status_details,
+      });
 
       const calls = output.filter((o) => o.type === "function_call");
       if (calls.length === 0) {
@@ -419,54 +464,70 @@ export async function connectRealtimeSession({
         return;
       }
 
-      for (const call of calls) {
-        let args = {};
-        try {
-          args = call.arguments ? JSON.parse(call.arguments) : {};
-        } catch {
-          // leave args empty if the model sent malformed JSON
-        }
-        // answer_aloud is a signal to us rather than work for the host app,
-        // but it still goes through onToolCall so a host can log what the
-        // model decided and the reason it gave.
-        if (call.name === "answer_aloud") aloudRequested = true;
-        if (call.name === "end_session") {
-          hangUpBecause = args.because ?? "";
-          // A spoken dismissal earns a spoken goodbye without the model having
-          // to also remember answer_aloud for it.
-          if (lastTurnWasSpoken) aloudRequested = true;
-          // If the goodbye never arrives -- a dropped response, an audio
-          // buffer event that never fires -- the microphone would stay live
-          // after the user said they were done, which is the one outcome this
-          // feature must not produce. Hang up anyway.
-          clearTimeout(hangUpTimer);
-          hangUpTimer = setTimeout(() => maybeHangUp({ force: true }), 15_000);
-        }
+      // try/finally, because the hold taken when this response asked for
+      // tools MUST come back. A throw anywhere in here -- a closed data
+      // channel on dc.send, say -- would otherwise leave the rim lit for
+      // the rest of the session with nothing running behind it.
+      try {
+        for (const call of calls) {
+          let args = {};
+          try {
+            args = call.arguments ? JSON.parse(call.arguments) : {};
+          } catch {
+            // leave args empty if the model sent malformed JSON
+          }
+          // answer_aloud is a signal to us rather than work for the host app,
+          // but it still goes through onToolCall so a host can log what the
+          // model decided and the reason it gave.
+          if (call.name === "answer_aloud") aloudRequested = true;
+          if (call.name === "end_session") {
+            hangUpBecause = args.because ?? "";
+            // A spoken dismissal earns a spoken goodbye without the model having
+            // to also remember answer_aloud for it.
+            if (lastTurnWasSpoken) aloudRequested = true;
+            // If the goodbye never arrives -- a dropped response, an audio
+            // buffer event that never fires -- the microphone would stay live
+            // after the user said they were done, which is the one outcome this
+            // feature must not produce. Hang up anyway.
+            clearTimeout(hangUpTimer);
+            hangUpTimer = setTimeout(() => maybeHangUp({ force: true }), 15_000);
+          }
 
-        let result;
-        try {
-          result = await onToolCall(call.name, args);
-        } catch (err) {
-          result = { error: String(err.message || err) };
-        }
-        record({ type: "tool_call", name: call.name, args, result });
+          // Timed, because recording only on completion left a tool that took
+          // two seconds indistinguishable from one that took none, and a tool
+          // still running indistinguishable from one that never started.
+          const startedAt = Date.now();
+          let result;
+          try {
+            result = await onToolCall(call.name, args);
+          } catch (err) {
+            result = { error: String(err.message || err) };
+          }
+          record({ type: "tool_call", name: call.name, args, result, ms: Date.now() - startedAt });
 
-        dc.send(
-          JSON.stringify({
-            type: "conversation.item.create",
-            item: {
-              type: "function_call_output",
-              call_id: call.call_id,
-              output: JSON.stringify(result ?? {}),
-            },
-          }),
-        );
+          dc.send(
+            JSON.stringify({
+              type: "conversation.item.create",
+              item: {
+                type: "function_call_output",
+                call_id: call.call_id,
+                output: JSON.stringify(result ?? {}),
+              },
+            }),
+          );
+        }
+        // The follow-up, where answer_aloud decides the medium. Any turn that
+        // arrived mid-flight is folded into this one request rather than queued
+        // behind it.
+        responseQueued = false;
+        requestResponse();
+      } finally {
+        // Only now is the turn handed back. Releasing before the follow-up is
+        // requested would leave a window with no response active and no tool
+        // running, and the rim would call that idle.
+        toolsRunning -= 1;
+        reportActivity();
       }
-      // The follow-up, where answer_aloud decides the medium. Any turn that
-      // arrived mid-flight is folded into this one request rather than queued
-      // behind it.
-      responseQueued = false;
-      requestResponse();
     }
   });
 

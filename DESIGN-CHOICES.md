@@ -937,3 +937,55 @@ overlay layers and a host may legitimately want one without the other -- a rim
 with custom chrome, or a bubble in an app that finds a full-viewport glow too
 loud. Merging them would remove a real choice; adding a component that makes
 the choice for you removes none.
+
+---
+
+## 20. The agent is busy for the whole turn, not just while generating
+
+**Chosen:** `agentBusy` covers the model generating, a tool executing, and the
+follow-up being requested. The turn is held open from the moment a response
+asks for a tool until the reply after it has been asked for.
+
+**What was wrong.** `response.done` cleared the busy flag, and `response.done`
+is exactly when the model finishes ASKING for a tool. So the rim went back to
+"ready to listen" for the entire time the tool ran, and stayed there until the
+server acknowledged the follow-up. Requesting that follow-up set the flag
+without telling the rim at all, so the gap included a network round trip.
+
+Observed live: a user drove cal.diy for four minutes and reported that the
+working colour never appeared once, that the rim went "straight to ready to
+listen" on every tool call. They then spoke, because the interface told them
+it was their turn. Seven of the ten dead responses in that session were the
+follow-up after a tool call.
+
+That is the part worth keeping in mind. The rim was not merely uninformative
+during the agent's turn, it was actively inviting interruption.
+
+**Two blinks, both closed.** Between `response.done` and the first tool
+starting, and between the last tool finishing and the follow-up being
+requested, nothing was active and the rim called it idle. Both are one tick
+wide, and one tick is enough for a 700ms crossfade to start animating. The
+hold is taken in `response.done` when the response carries a function call,
+and released in a `finally` after `requestResponse()` -- a throw on a closed
+data channel would otherwise leave the rim lit forever with nothing behind it.
+
+Measured across a deliberately slow tool, busy now holds continuously:
+
+```
+2.5s  agentBusy true      (response requested)
+3.1s  response done, out=11   (the model asked for a tool)
+3.1s  dom_snapshot STARTED
+5.6s  dom_snapshot FINISHED
+6.4s  response done, out=55   (the reply)
+7.9s  agentBusy false
+```
+
+**Also added, because none of this was answerable from the logs.** A response
+now records its `status` and `status_details`: ten responses in that session
+reported zero input AND zero output tokens, which no real generation can do,
+but cancelled, failed and incomplete were indistinguishable from a deliberate
+silence. Tool calls record how long they took, since recording only on
+completion made a two-second tool look instant. And activity transitions are
+recorded when they change, so a log can say what the user was being SHOWN
+while a tool ran, which is the one thing needed to explain "nothing was
+happening" afterwards.

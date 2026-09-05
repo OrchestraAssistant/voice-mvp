@@ -124,7 +124,16 @@ describe("one response at a time", () => {
 
   test("the flag is set on send, not on the server's echo", () => {
     // Two requests can leave before the first response.created comes back.
-    assert.match(source, /responseActive = true;[\s\S]{0,500}type: "response\.create"/);
+    //
+    // Asserted by position rather than by a fixed-width window: the window
+    // was 500 characters and broke the moment anything was inserted between
+    // the two lines, which says nothing about whether the ORDER is right.
+    const fn = source.slice(source.indexOf("function requestResponse"));
+    const body = fn.slice(0, fn.indexOf("\n  }"));
+    const set = body.indexOf("responseActive = true;");
+    const send = body.indexOf('type: "response.create"');
+    assert.ok(set > 0 && send > 0, "requestResponse no longer looks like itself");
+    assert.ok(set < send, "the flag is set after the send, so a racing request would not be deferred");
   });
 
   test("the queue is drained once, after tool calls have run", () => {
@@ -269,5 +278,74 @@ describe("hang-up wiring", () => {
     assert.match(source, /async releaseMic\(\)/);
     assert.match(source, /micTrack\.stop\(\);\s*\n\s*micTrack = null;/);
     assert.doesNotMatch(source, /async releaseMic\(\)[\s\S]{0,400}pc\.close\(\)/);
+  });
+});
+
+/**
+ * The rim has to be lit for the WHOLE time the agent owns the turn, not just
+ * while the model is generating.
+ *
+ * Observed live: a user watched the rim say "ready to listen" through every
+ * tool call of a four-minute session and reported that working state never
+ * appeared. `response.done` carrying a function call cleared the busy flag,
+ * and nothing set it again until the server acknowledged the follow-up -- so
+ * the interface invited them to speak at exactly the moment it was mid-job.
+ */
+describe("the agent is busy for the whole turn", () => {
+  test("a response that asks for tools does not end the turn", () => {
+    // response.done clears responseActive, but a response carrying a function
+    // call has not finished anything -- the tool has not even started. Without
+    // this hold the rim went idle for the whole tool phase.
+    assert.match(source, /if \(\(msg\.response\?\.output \|\| \[\]\)\.some\(\(o\) => o\.type === "function_call"\)\) toolsRunning \+= 1;/);
+    assert.match(source, /agentBusy: responseActive \|\| audioPlaying \|\| toolsRunning > 0/);
+  });
+
+  test("the hold is released only after the follow-up is requested", () => {
+    // Releasing between the last tool and the next response.create leaves a
+    // window with nothing active, and the rim calls that idle -- a blink the
+    // 700ms crossfade would start animating through.
+    const done = source.slice(source.indexOf("for (const call of calls) {"));
+    const request = done.indexOf("requestResponse();");
+    const release = done.indexOf("toolsRunning -= 1;");
+    assert.ok(request > 0 && release > 0);
+    assert.ok(request < release, "the turn is handed back before the follow-up exists");
+  });
+
+  test("and it is released even if the turn throws", () => {
+    // dc.send on a closed channel throws. Without the finally the rim would
+    // stay lit for the rest of the session with nothing behind it.
+    assert.match(source, /\} finally \{[\s\S]{0,320}toolsRunning -= 1;/);
+  });
+
+  test("asking for a response reports immediately, not on the server's echo", () => {
+    // `response.created` is a round trip away. The agent is working from the
+    // moment we ask, and the rim used to say idle for that whole gap.
+    const request = source.slice(source.indexOf("function requestResponse"), source.indexOf('type: "response_requested"'));
+    assert.match(request, /responseActive = true;[\s\S]{0,220}reportActivity\(\);/);
+  });
+});
+
+describe("what the log can now explain", () => {
+  test("activity is recorded, and only when it changes", () => {
+    // Without it the log could say a tool ran but never what the user was
+    // being SHOWN while it ran, which is the one thing needed to explain
+    // "nothing was happening" after the fact.
+    assert.match(source, /record\(\{ type: "activity"/);
+    assert.match(source, /if \(key !== lastActivity\)/);
+  });
+
+  test("a response records why it ended", () => {
+    // Ten responses in one session reported zero input and zero output, which
+    // no real generation can do. With no status, cancelled, failed and
+    // incomplete were indistinguishable from a deliberate silence.
+    assert.match(source, /status: msg\.response\?\.status/);
+    assert.match(source, /statusDetails: msg\.response\?\.status_details/);
+  });
+
+  test("a tool call records how long it took", () => {
+    // Recorded only on completion, a two-second tool looked like an instant
+    // one, and a tool still running looked like a tool that never started.
+    assert.match(source, /const startedAt = Date\.now\(\)/);
+    assert.match(source, /ms: Date\.now\(\) - startedAt/);
   });
 });
