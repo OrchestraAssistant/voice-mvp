@@ -51,7 +51,7 @@ function pagesRouterPath(relFile) {
  * on a coincidence is worse than one that finds nothing, because what it
  * produces looks exactly like a real result.
  */
-function isNextApp(root) {
+export function isNextApp(root) {
   if (["next.config.js", "next.config.ts", "next.config.mjs"].some((f) => fs.existsSync(path.join(root, f)))) return true;
   const pkgPath = path.join(root, "package.json");
   if (!fs.existsSync(pkgPath)) return false;

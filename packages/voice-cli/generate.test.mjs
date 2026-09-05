@@ -232,3 +232,109 @@ describe("hand corrections survive regeneration", () => {
     assert.match(out, /Stale, or a name that changed/);
   });
 });
+
+describe("Next.js API layers", () => {
+  test("route handlers give the URL and the method with nothing inferred", () => {
+    // The easiest endpoints in any framework to read: the filesystem is the
+    // URL and the exported function names are the verbs. A React Router app
+    // makes us infer both from a fetch call.
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { next: "16" } }),
+      "app/api/tasks/route.ts": `
+        export async function GET(req) {
+          const status = req.nextUrl.searchParams.get("status");
+        }
+        export async function POST(req) {}`,
+      "app/api/tasks/[id]/route.ts": "export async function DELETE(req) {}",
+    });
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+
+    const list = m.queries.find((q) => q.endpoint === "/api/tasks");
+    assert.ok(list, "GET became a query");
+    assert.deepEqual(list.params, [{ name: "status", type: "string", required: false, source: "query-string" }]);
+
+    assert.ok(m.actions.some((a) => a.endpoint === "/api/tasks" && a.method === "POST"));
+    const remove = m.actions.find((a) => a.method === "DELETE");
+    assert.equal(remove.endpoint, "/api/tasks/{id}");
+    assert.equal(remove.requiresConfirmation, true, "DELETE must be staged for confirmation");
+    assert.deepEqual(remove.params, [{ name: "id", type: "string", required: true, source: "url" }]);
+  });
+
+  test("a pages API handler has its methods read out of its branches", () => {
+    // One default export serves every verb and branches on req.method, so
+    // there are no per-verb exports to read.
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { next: "14" } }),
+      "pages/api/things/[id].ts": `
+        export default function handler(req, res) {
+          if (req.method === "GET") return res.json({});
+          switch (req.method) { case "PUT": return res.json({}); }
+        }`,
+    });
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.ok(m.queries.some((q) => q.endpoint === "/api/things/{id}" && q.method === "GET"));
+    assert.ok(m.actions.some((a) => a.method === "PUT"));
+  });
+
+  test("a handler with no branch is assumed to read, never to write", () => {
+    // Guessing a write would invent an operation nobody wrote.
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { next: "14" } }),
+      "pages/api/whatever.ts": "export default function handler(req, res) { res.json({}); }",
+    });
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.equal(m.actions.length, 0);
+    assert.equal(m.queries[0].method, "GET");
+  });
+});
+
+describe("discovery is not exposure", () => {
+  const infra = () =>
+    app({
+      "package.json": JSON.stringify({ dependencies: { next: "16" } }),
+      "app/api/cron/reminders/route.ts": "export async function POST(){}",
+      "app/api/auth/callback/route.ts": "export async function GET(){}",
+      "app/api/trpc/[trpc]/route.ts": "export async function GET(){}",
+      "app/api/bookings/route.ts": "export async function GET(){}",
+    });
+
+  test("machinery is left out, and said out loud", () => {
+    // Reading cal.diy turned up 84 endpoints including cron jobs, OAuth
+    // handshakes and webhook receivers. Nobody asks for those by voice, and
+    // the tool list rides in the session prompt: they took the prefix from
+    // ~2,500 tokens to ~10,900, paid on the first response of every session.
+    const { out } = run(infra(), ["."]);
+    assert.match(out, /left out as infrastructure/);
+    assert.match(out, /scheduled jobs the app calls itself/);
+    assert.match(out, /Name one in manifest\.overlay\.json to keep it/, "excluding silently would be worse than not excluding");
+  });
+
+  test("what a person would actually ask for survives", () => {
+    const root = infra();
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const endpoints = [...m.queries, ...m.actions].map((x) => x.endpoint);
+    assert.ok(endpoints.includes("/api/bookings"), "a real endpoint was filtered away");
+    assert.ok(!endpoints.some((e) => e.startsWith("/api/cron")));
+    assert.ok(!endpoints.some((e) => e.startsWith("/api/trpc")));
+    assert.ok(!endpoints.some((e) => e.includes("/callback")));
+  });
+
+  test("naming one in the overlay keeps it", () => {
+    // The exclusion is a default, not a verdict. Naming an endpoint in the
+    // overlay is a deliberate act and outranks the policy.
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { next: "16" } }),
+      "app/api/cron/reminders/route.ts": "export async function POST(){}",
+      ".voice/manifest.overlay.json": JSON.stringify({
+        actions: [{ name: "createCronReminders", description: "Kick off the reminder job by hand" }],
+      }),
+    });
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.ok(m.actions.some((a) => a.name === "createCronReminders"), "the overlay did not outrank the exclusion");
+  });
+});

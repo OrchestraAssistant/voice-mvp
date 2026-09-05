@@ -15,13 +15,15 @@ import path from "node:path";
 
 import { reactRouter } from "./detectors/reactRouter.js";
 import { nextAppRouter, nextPagesRouter } from "./detectors/nextRoutes.js";
+import { nextRouteHandlers, nextPagesApi } from "./detectors/nextApi.js";
 import { requestHooks } from "./detectors/requestHooks.js";
 import { zodBodies } from "./detectors/zodBodies.js";
 import { merge } from "./merge.js";
 import { OVERLAY_FILE, applyOverlay } from "./overlay.js";
+import { excludeInfrastructure } from "./exclude.js";
 
 // Order matters only for enrichers, which read what earlier detectors found.
-const DETECTORS = [reactRouter, nextAppRouter, nextPagesRouter, requestHooks, zodBodies];
+const DETECTORS = [reactRouter, nextAppRouter, nextPagesRouter, nextRouteHandlers, nextPagesApi, requestHooks, zodBodies];
 
 const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
 
@@ -101,7 +103,11 @@ function main() {
   const { manifest, conflicts, notes, sources } = merge(results);
   manifest.actions.forEach((a) => delete a._hookName);
 
+  // Policy, not detection: what was found is one question, what a voice agent
+  // should be handed is another. Anything named in the overlay is kept, since
+  // naming it there is a deliberate act.
   const overlaid = applyOverlay(manifest, path.join(OUT_DIR, OVERLAY_FILE));
+  const excluded = excludeInfrastructure(manifest, overlaid.named);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const outFile = path.join(OUT_DIR, "manifest.json");
@@ -124,6 +130,13 @@ function main() {
   for (const note of notes) console.log(`  ${note}`);
   if (overlaid.applied.length) {
     console.log(`\n${OVERLAY_FILE}: ${overlaid.applied.length} correction(s) applied -- ${overlaid.applied.join(", ")}`);
+  }
+  if (excluded.length) {
+    const byReason = new Map();
+    for (const e of excluded) byReason.set(e.why, (byReason.get(e.why) ?? 0) + 1);
+    console.log(`\n${excluded.length} endpoint(s) left out as infrastructure:`);
+    for (const [why, count] of byReason) console.log(`  ${String(count).padStart(3)}  ${why}`);
+    console.log(`  Name one in ${OVERLAY_FILE} to keep it.`);
   }
   for (const miss of overlaid.unmatched) {
     console.warn(`  ${OVERLAY_FILE} describes ${miss}, which no detector found. Stale, or a name that changed.`);

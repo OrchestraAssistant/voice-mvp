@@ -25,20 +25,24 @@ export const OVERLAY_FILE = "manifest.overlay.json";
 const singular = { routes: "route", queries: "query", actions: "action" };
 
 export function applyOverlay(manifest, overlayPath) {
-  if (!fs.existsSync(overlayPath)) return { applied: [], unmatched: [] };
+  if (!fs.existsSync(overlayPath)) return { applied: [], unmatched: [], named: [] };
 
   let overlay;
   try {
     overlay = JSON.parse(fs.readFileSync(overlayPath, "utf-8"));
   } catch (err) {
-    return { applied: [], unmatched: [`${OVERLAY_FILE} is not valid JSON: ${err.message}`] };
+    return { applied: [], unmatched: [`${OVERLAY_FILE} is not valid JSON: ${err.message}`], named: [] };
   }
 
   const applied = [];
   const unmatched = [];
+  // Anything the overlay speaks about is deliberate, so exclusion policy
+  // leaves it alone -- that is how an endpoint filtered by default is kept.
+  const named = [];
   for (const kind of ["routes", "queries", "actions"]) {
     for (const patch of overlay[kind] ?? []) {
       const key = kind === "routes" ? "path" : "name";
+      if (kind !== "routes") named.push(patch.name);
       const target = (manifest[kind] ??= []).find((item) => item[key] === patch[key]);
       if (!target) {
         // Not an error: an app whose data layer no detector understands can
@@ -52,5 +56,5 @@ export function applyOverlay(manifest, overlayPath) {
       applied.push(`${singular[kind]} ${patch[key]}`);
     }
   }
-  return { applied, unmatched };
+  return { applied, unmatched, named };
 }
