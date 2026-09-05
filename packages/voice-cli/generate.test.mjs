@@ -338,3 +338,87 @@ describe("discovery is not exposure", () => {
     assert.ok(m.actions.some((a) => a.name === "createCronReminders"), "the overlay did not outrank the exclusion");
   });
 });
+
+describe("TypeScript types close the body gap", () => {
+  const tsApp = (extra = {}) =>
+    app({
+      "package.json": "{}",
+      "src/api.ts": `
+        async function request(url: string, o?: RequestInit) {}
+        export function useUpdateTask() {
+          return useMutation({ mutationFn: (v) => request(\`/api/tasks/\${v.id}\`, { method: "PUT" }) });
+        }`,
+      ...extra,
+    });
+
+  test("an interface named for the action supplies its body", () => {
+    // Zod was the first answer and it is the wrong dependency: a validation
+    // library is one way an app MIGHT describe its data, while a type is how a
+    // TypeScript app describes its data by definition. A Zod schema exists in
+    // order to produce one.
+    const root = tsApp({
+      "src/types.ts": `export interface UpdateTaskInput {
+        id: string;
+        title?: string;
+        done?: boolean;
+        priority?: "low" | "high";
+      }`,
+    });
+    const { out } = run(root);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const update = m.actions.find((a) => a.name === "updateTask");
+
+    assert.match(out, /body fields from TypeScript/);
+    assert.equal(update.bodyFields.find((f) => f.name === "title").required, false, "`?:` is exact optionality, not a guess");
+    assert.equal(update.bodyFields.find((f) => f.name === "done").type, "boolean");
+    const priority = update.bodyFields.find((f) => f.name === "priority");
+    assert.equal(priority.type, "enum");
+    assert.deepEqual(priority.enumValues, ["low", "high"], "a union of string literals tells the model which values are legal");
+  });
+
+  test("a URL parameter is not repeated in the body", () => {
+    // It is already carried in `params`. Repeating it would tell the model to
+    // send the id twice, in two places, and one of them would be wrong.
+    const root = tsApp({ "src/types.ts": "export interface UpdateTaskInput { id: string; title?: string; }" });
+    run(root);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const update = m.actions.find((a) => a.name === "updateTask");
+    assert.deepEqual(update.params.map((p) => p.name), ["id"]);
+    assert.deepEqual(update.bodyFields.map((f) => f.name), ["title"]);
+  });
+
+  test("a member expression in the URL is a parameter, not a hole", () => {
+    // `${variables.id}` is at least as common as a bare identifier, since a
+    // mutation receives one object. Dropping it left "/api/tasks/" with a
+    // dangling slash and nothing addressable.
+    const root = tsApp();
+    run(root);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.equal(m.actions[0].endpoint, "/api/tasks/{id}");
+  });
+
+  test("an explicit schema outranks a type that merely shares a name", () => {
+    // Zod runs first and TypeScript only fills what is still empty: writing a
+    // schema is a statement of intent about the wire, and a type sharing a
+    // name is a correlation.
+    const root = tsApp({
+      "src/types.ts": "export interface UpdateTaskInput { fromType: string; }",
+      "src/Form.jsx": `
+        const schema = z.object({ fromSchema: z.string() });
+        export function Form() { const m = useUpdateTask(); }`,
+    });
+    run(root);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.deepEqual(m.actions[0].bodyFields.map((f) => f.name), ["fromSchema"]);
+  });
+
+  test("no matching type leaves the action honestly empty", () => {
+    // Guessing a body from an unrelated type would be worse than none: the
+    // warning is what tells someone to write an overlay.
+    const root = tsApp({ "src/types.ts": "export interface SomethingElse { a: string; }" });
+    const { out } = run(root);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.deepEqual(m.actions[0].bodyFields, []);
+    assert.match(out, /no body fields/);
+  });
+});

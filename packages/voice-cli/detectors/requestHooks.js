@@ -71,12 +71,23 @@ function urlFrom(node, constants) {
       url.push(expr.name);
       return;
     }
+    // `${variables.id}` is at least as common as a bare identifier, because a
+    // mutation receives one object. The property name IS the parameter name;
+    // dropping it left the endpoint as "/api/tasks/" with a dangling slash and
+    // no way to address anything.
+    if (expr.type === "MemberExpression" && !expr.computed && expr.property?.type === "Identifier") {
+      endpoint += `{${expr.property.name}}`;
+      url.push(expr.property.name);
+      return;
+    }
     // Anything else is an expression we cannot evaluate. It contributes no
     // path text -- guessing produced a URL nothing could satisfy -- but the
     // query-string names inside it are readable and real.
     queryParamNames(expr).forEach((n) => query.add(n));
   });
-  return { endpoint, url, query: [...query] };
+  // A trailing slash left by an expression we could not read is not part of
+  // the route, and would 404 on a strict server.
+  return { endpoint: endpoint.length > 1 ? endpoint.replace(/\/$/, "") : endpoint, url, query: [...query] };
 }
 
 export const requestHooks = {
