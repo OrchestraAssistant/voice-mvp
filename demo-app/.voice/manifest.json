@@ -35,7 +35,7 @@
     },
     {
       "name": "task",
-      "description": "Auto-detected read query from useTask",
+      "description": "Get a single task by id",
       "method": "GET",
       "endpoint": "/api/tasks/{id}",
       "params": [
@@ -49,7 +49,7 @@
     },
     {
       "name": "settings",
-      "description": "Auto-detected read query from useSettings",
+      "description": "Read the user's settings: display name, email, theme",
       "method": "GET",
       "endpoint": "/api/settings",
       "params": []
@@ -58,11 +58,11 @@
   "actions": [
     {
       "name": "createTask",
-      "description": "Auto-detected write action from useCreateTask",
+      "description": "Create a new task",
       "method": "POST",
       "endpoint": "/api/tasks",
-      "requiresConfirmation": false,
       "params": [],
+      "requiresConfirmation": false,
       "bodyFields": [
         {
           "name": "title",
@@ -86,7 +86,6 @@
       "description": "Update fields on an existing task, such as marking it done/not done or changing its title",
       "method": "PUT",
       "endpoint": "/api/tasks/{id}",
-      "requiresConfirmation": false,
       "params": [
         {
           "name": "id",
@@ -95,6 +94,7 @@
           "source": "url"
         }
       ],
+      "requiresConfirmation": false,
       "bodyFields": [
         {
           "name": "done",
@@ -110,10 +110,9 @@
     },
     {
       "name": "deleteTask",
-      "description": "Auto-detected write action from useDeleteTask",
+      "description": "Permanently delete a task",
       "method": "DELETE",
       "endpoint": "/api/tasks/{id}",
-      "requiresConfirmation": true,
       "params": [
         {
           "name": "id",
@@ -122,15 +121,16 @@
           "source": "url"
         }
       ],
+      "requiresConfirmation": true,
       "bodyFields": []
     },
     {
       "name": "updateSettings",
-      "description": "Auto-detected write action from useUpdateSettings",
+      "description": "Change the user's settings: display name, email, or theme",
       "method": "PUT",
       "endpoint": "/api/settings",
-      "requiresConfirmation": false,
       "params": [],
+      "requiresConfirmation": false,
       "bodyFields": [
         {
           "name": "name",
@@ -153,6 +153,5 @@
         }
       ]
     }
-  ],
-  "handEdited": "See README: `generate` overwrites this file; these corrections must be reapplied."
+  ]
 }

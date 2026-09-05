@@ -48,22 +48,26 @@ describe("running it the way a consumer would", () => {
     assert.ok(existsSync(join(root, "out/manifest.json")));
   });
 
-  test("a missing source directory is a diagnosis, not a stack trace", () => {
-    const { code, out } = run(app());
+  test("a source directory that was asked for and is not there is an error", () => {
+    // An explicit path that does not exist is a typo. A MISSING `src/` is not:
+    // plenty of apps keep their source at the root, so that falls back to `.`
+    // rather than refusing to run.
+    const { code, out } = run(app(), ["definitely-not-here"]);
     assert.equal(code, 1);
     assert.match(out, /No source directory/);
     assert.doesNotMatch(out, /ENOENT|at Object\./, "raw exception leaked to the user");
   });
 
-  test("an app it cannot read says what it looked for", () => {
-    // It reads one specific layout. Finding nothing is a legitimate outcome --
-    // the widget still has its DOM fallback -- but silence about why is how a
-    // user concludes the product is broken.
-    const root = app({ "src/main.tsx": "export const nothing = 1;" });
+  test("an app it cannot read names every detector and what each looked for", () => {
+    // Finding nothing is a legitimate outcome -- the widget still has its DOM
+    // tools -- but silence about why is how a user concludes the product is
+    // broken. Every detector reports, including the ones that found nothing.
+    const root = app({ "src/main.tsx": "export const nothing = 1;", "package.json": "{}" });
     const { code, out } = run(root);
     assert.equal(code, 0, "an unrecognised app is not an error");
-    assert.match(out, /src\/App\.jsx/);
-    assert.match(out, /src\/api\.js/);
+    for (const detector of ["react-router", "next-app-router", "next-pages-router", "request-hooks", "zod-bodies"]) {
+      assert.match(out, new RegExp(detector), `${detector} did not report at all`);
+    }
     assert.match(out, /Nothing was extracted/);
   });
 
@@ -81,5 +85,150 @@ describe("what gets published", () => {
     const pkg = JSON.parse(readFileSync(join(dirname(CLI), "package.json"), "utf8"));
     assert.deepEqual(pkg.files, ["generate.js"]);
     assert.equal(pkg.bin["voice-cli"], "./generate.js");
+  });
+});
+
+describe("detectors are separate and additive", () => {
+  test("Next.js routes come from the filesystem, both routers at once", () => {
+    // An app mid-migration genuinely has both, which is the common case rather
+    // than an edge one. Groups in parentheses organise files without appearing
+    // in the URL; [param] is dynamic; @slot is a parallel route rendered into
+    // a layout rather than navigated to.
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { next: "16.0.0" } }),
+      "app/page.tsx": "export default function P(){}",
+      "app/(main)/bookings/[status]/page.tsx": "export default function P(){}",
+      "app/@modal/thing/page.tsx": "export default function P(){}",
+      "app/docs/[...slug]/page.tsx": "export default function P(){}",
+      "pages/legacy/[id].tsx": "export default function P(){}",
+      "pages/_app.tsx": "export default function P(){}",
+      "pages/api/thing.ts": "export default function h(){}",
+    });
+    const { out } = run(root, ["."]);
+    const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const paths = manifest.routes.map((r) => r.path).sort();
+
+    assert.ok(paths.includes("/"), "the root page");
+    assert.ok(paths.includes("/bookings/:status"), "route group dropped, [param] converted");
+    assert.ok(paths.includes("/docs/*"), "catch-all became a wildcard");
+    assert.ok(paths.includes("/legacy/:id"), "the Pages Router was read too");
+    assert.ok(!paths.some((p) => p.includes("@modal")), "a parallel route is not a destination");
+    assert.ok(!paths.some((p) => p.includes("_app")), "framework plumbing is not a destination");
+    assert.ok(!paths.some((p) => p.startsWith("/api")), "API routes are not pages");
+    assert.match(out, /next-app-router/);
+  });
+
+  test("a plain React app with a pages/ folder is not a Next.js app", () => {
+    // This fired for real: the demo app keeps components in src/pages/, a
+    // directory name with no framework meaning, and the Pages Router detector
+    // claimed four routes from it. A detector firing on a coincidence is worse
+    // than one finding nothing, because the result looks real.
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { react: "18" } }),
+      "src/pages/Dashboard.jsx": "export default function D(){}",
+    });
+    const { out } = run(root);
+    assert.match(out, /next-pages-router\s+does not apply/);
+    const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.deepEqual(manifest.routes, []);
+  });
+
+  test("a query string in a ternary is a parameter, not part of the path", () => {
+    // The real shape: `${BASE}/tasks${search ? `?search=${search}` : ""}`.
+    // The ternary is not an identifier, and the old reader emitted it as
+    // {param1} marked REQUIRED, producing "/api/tasks{param1}" -- an endpoint
+    // no request could satisfy. The name is legible in the nested template.
+    const root = app({
+      "package.json": "{}",
+      "src/api.js": `
+        const BASE = "/api";
+        async function request(url, options) {}
+        export function useTasks(search) {
+          return useQuery({ queryFn: () => request(\`\${BASE}/tasks\${search ? \`?search=\${search}\` : ""}\`) });
+        }`,
+    });
+    run(root);
+    const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const tasks = manifest.queries.find((q) => q.name === "tasks");
+    assert.equal(tasks.endpoint, "/api/tasks", "the unreadable expression leaked into the path");
+    assert.deepEqual(tasks.params, [{ name: "search", type: "string", required: false, source: "query-string" }]);
+  });
+
+  test("the source a param carries is one the widget actually acts on", () => {
+    // It used to emit "hook-arg", which nothing reads, so every filter it
+    // found was dropped silently at request time.
+    const root = app({
+      "package.json": "{}",
+      "src/api.js": `
+        async function request(url) {}
+        export const useThing = (id) => useQuery({ queryFn: () => request(\`/api/things/\${id}\`) });`,
+    });
+    run(root);
+    const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.equal(manifest.queries[0].name, "thing", "an arrow-function hook was skipped");
+    assert.deepEqual(manifest.queries[0].params[0].source, "url");
+  });
+
+  test("a write action with no body is called out, not shipped quietly", () => {
+    const root = app({
+      "package.json": "{}",
+      "src/api.js": `
+        async function request(url, o) {}
+        export function useUpdateThing() {
+          return useMutation({ mutationFn: (v) => request("/api/things/1", { method: "PUT" }) });
+        }`,
+    });
+    const { out } = run(root);
+    assert.match(out, /no body fields/);
+    assert.match(out, /cannot change anything/);
+  });
+});
+
+describe("hand corrections survive regeneration", () => {
+  test("the overlay is read, not overwritten", () => {
+    // The generated file used to carry a field asking people not to run the
+    // generator again, because doing so destroyed their corrections. That is a
+    // workflow that punishes improving the thing.
+    const root = app({
+      "package.json": "{}",
+      "src/api.js": `
+        async function request(url) {}
+        export function useTasks() { return useQuery({ queryFn: () => request("/api/tasks") }); }`,
+      ".voice/manifest.overlay.json": JSON.stringify({
+        queries: [{ name: "tasks", description: "List every task, newest first" }],
+      }),
+    });
+    const { out } = run(root);
+    const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.equal(manifest.queries[0].description, "List every task, newest first");
+    assert.match(out, /1 correction\(s\) applied/);
+    // And the overlay itself is untouched.
+    const overlay = JSON.parse(readFileSync(join(root, ".voice/manifest.overlay.json"), "utf8"));
+    assert.equal(overlay.queries[0].description, "List every task, newest first");
+  });
+
+  test("an overlay can describe what no detector found", () => {
+    // The escape hatch that matters: an app whose data layer nothing
+    // understands can still be described entirely by hand.
+    const root = app({
+      "package.json": "{}",
+      ".voice/manifest.overlay.json": JSON.stringify({
+        actions: [{ name: "archive", method: "POST", endpoint: "/api/archive", description: "Archive it", params: [], bodyFields: [] }],
+      }),
+    });
+    const { out } = run(root);
+    const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.equal(manifest.actions[0].name, "archive");
+    assert.match(out, /which no detector found/, "adding by hand should be visible, not silent");
+  });
+
+  test("a stale overlay entry is reported rather than silently added", () => {
+    const root = app({
+      "package.json": "{}",
+      ".voice/manifest.overlay.json": JSON.stringify({ queries: [{ name: "renamedAwayLongAgo", description: "x" }] }),
+    });
+    const { out } = run(root);
+    assert.match(out, /renamedAwayLongAgo/);
+    assert.match(out, /Stale, or a name that changed/);
   });
 });

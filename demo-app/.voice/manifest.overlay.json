@@ -1,0 +1,39 @@
+{
+  "_why": "Corrections the analyser cannot derive. Read by `voice-cli`, never overwritten by it. Structure is not intent: static analysis can see that useUpdateTask does PUT /api/tasks/{id}, but not what a person should be told it means.",
+  "queries": [
+    {
+      "name": "tasks",
+      "description": "List tasks, optionally filtered by a search string"
+    },
+    {
+      "name": "task",
+      "description": "Get a single task by id"
+    },
+    {
+      "name": "settings",
+      "description": "Read the user's settings: display name, email, theme"
+    }
+  ],
+  "actions": [
+    {
+      "name": "createTask",
+      "description": "Create a new task"
+    },
+    {
+      "name": "updateTask",
+      "description": "Update fields on an existing task, such as marking it done/not done or changing its title",
+      "bodyFields": [
+        { "name": "done", "required": false, "type": "boolean" },
+        { "name": "title", "required": false, "type": "string" }
+      ]
+    },
+    {
+      "name": "deleteTask",
+      "description": "Permanently delete a task"
+    },
+    {
+      "name": "updateSettings",
+      "description": "Change the user's settings: display name, email, or theme"
+    }
+  ]
+}
