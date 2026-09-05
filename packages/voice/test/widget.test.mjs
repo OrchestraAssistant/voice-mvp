@@ -195,3 +195,82 @@ describe("widget", { concurrency: false }, () => {
     await page.close();
   });
 });
+
+/**
+ * Reduced from cal.diy, where mounting the widget collapsed a desktop sidebar
+ * into a mobile bottom bar across the whole app.
+ *
+ * The harness page declares `.hidden` and a `.md:flex` override on an element
+ * that must be visible above 768px, which is the shape of every Tailwind app.
+ * The widget must not put a competing `.hidden` into the host document: it
+ * lands later in the same layer, and media queries carry no specificity, so
+ * the host's responsive rule loses silently.
+ */
+describe("the host's own CSS survives the widget", { concurrency: false }, () => {
+  let browser;
+  let harness;
+
+  before(async () => {
+    browser = await launchBrowser();
+    harness = await startHarness();
+  });
+  after(async () => {
+    await browser?.close();
+    await harness?.server.close();
+  });
+
+  test("a host utility overridden at a breakpoint still wins", async () => {
+    const page = await browser.newPage();
+    await preparePage(page);
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.goto(harness.url("?mount=shadow"));
+    await page.waitForFunction(() => window.__find?.(".interpreter-widget"));
+
+    const display = await page.evaluate(() => getComputedStyle(document.querySelector("#host-sidebar")).display);
+    assert.equal(display, "flex", "the widget's stylesheet is overriding the host's own utilities");
+    await page.close();
+  });
+
+  test("nothing of ours reaches a document stylesheet", async () => {
+    // The direct form of the same property, and the one that generalises: the
+    // collision above only happens because our sheet is in the host document
+    // at all. If it is not there, it cannot lose or win against anything.
+    const page = await browser.newPage();
+    await preparePage(page);
+    await page.goto(harness.url("?mount=shadow"));
+    await page.waitForFunction(() => window.__find?.(".interpreter-widget"));
+
+    const leaked = await page.evaluate(() =>
+      [...document.styleSheets]
+        .map((sheet, i) => {
+          try {
+            return { i, text: [...sheet.cssRules].map((r) => r.cssText).join("\n") };
+          } catch {
+            return { i, text: "" };
+          }
+        })
+        .filter((s) => s.text.includes("--iv-surface") || s.text.includes(".interpreter-widget"))
+        .map((s) => s.i),
+    );
+    assert.deepEqual(leaked, [], "the widget's stylesheet is in the host document");
+    await page.close();
+  });
+
+  test("and the widget is styled anyway, from inside its own root", async () => {
+    // The other half of the property: it must not avoid the collision by
+    // simply shipping no styles. The chrome is painted because the bubble
+    // injects the compiled sheet into its shadow root, not the document.
+    const page = await browser.newPage();
+    await preparePage(page);
+    await page.goto(harness.url("?mount=shadow"));
+    await page.waitForFunction(() => window.__find?.(".interpreter-widget"));
+    // The outer wrapper only positions; the pill inside it carries the paint,
+    // and that paint comes from a Tailwind class resolved inside the shadow
+    // root -- which is the whole point being asserted.
+    const bg = await page.evaluate(() =>
+      getComputedStyle(window.__find(".interpreter-widget").firstElementChild).backgroundColor,
+    );
+    assert.ok(bg && bg !== "rgba(0, 0, 0, 0)", `widget chrome is unstyled (${bg})`);
+    await page.close();
+  });
+});

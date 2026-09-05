@@ -43,6 +43,38 @@ The demo app having **no Tailwind is deliberate** — it's the only thing
 proving the compiled package stands alone in a host that doesn't share our
 build setup, and it's what caught the CSS-collision bug in DESIGN-CHOICES §1.
 
+## Installing it in your app
+
+```bash
+npm install @yourco/voice
+npx @yourco/voice-cli src .voice     # your source dir -> a manifest
+```
+
+Wrap your tree once, wherever your other providers live, and drop the bubble
+inside it:
+
+```jsx
+import { VoiceProvider, InterpreterBubble } from "@yourco/voice";
+
+<VoiceProvider navigate={yourRouterPush}>
+  {children}
+  <InterpreterBubble />
+</VoiceProvider>
+```
+
+**Do not import the stylesheet.** The widget renders into its own shadow root
+and injects its compiled CSS there. `@yourco/voice/styles.css` exists for
+`mount="inline"` only, and in a host document it shares a global class
+namespace with your app: a bare `.hidden` from it landed after a real app's
+`.md:flex` in the same cascade layer, and since media queries carry no
+specificity, that app's desktop sidebar stayed hidden at every width and the
+whole layout fell back to its mobile bar. Prefer the default mount.
+
+Your app also has to reach the relay. Same-origin is simplest -- proxy
+`/voice` to it in your dev server and at your edge -- because a page served
+over TLS cannot call an `http://` relay without being blocked as mixed
+content. Otherwise pass `relayUrl`.
+
 ## Run it
 
 ```bash

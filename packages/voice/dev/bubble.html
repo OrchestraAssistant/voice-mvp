@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bubble — clean-host harness</title>
     <style>
+      /* The host's own utility CSS, declared first and IN A LAYER, which is
+         what a Tailwind v4 app emits. The layer matters: unlayered rules beat
+         layered ones outright, so an unlayered host would win by accident and
+         prove nothing. Layered against layered, source order decides, and the
+         widget's sheet would arrive later. */
+      @layer theme, base, components, utilities;
+      @layer utilities {
+        .hidden { display: none; }
+        /* Deliberately NOT named `md:flex`. Our own Tailwind scans this
+           directory, so a real utility name here gets generated into the
+           widget's sheet as well -- which silently repairs the collision the
+           test exists to detect. This name only the host has. */
+        @media (min-width: 48rem) { .host-wide-flex { display: flex; } }
+      }
+    </style>
+    <style>
       /* Deliberately almost nothing. The point of this page is the opposite
          of stress.html: a host with NO opinions, so what you see is the
          widget's own stylesheet and nothing else. That makes it a faithful
@@ -48,6 +64,14 @@
         <code>localhost:3002</code>; override with <code>?relay=</code>.
       </p>
     </div>
+    <!-- A host with its own utility CSS, which is the shape of every Tailwind
+         app. Reduced from a real failure: in cal.diy the widget's stylesheet
+         landed in the host document, and its bare `.hidden` came after the
+         host's `.md:flex` in the same layer, so the desktop sidebar stayed
+         hidden at every width and the app fell back to its mobile bar. Media
+         queries carry no specificity, so within one layer the last rule wins. -->
+    <aside id="host-sidebar" class="hidden host-wide-flex">host sidebar</aside>
+
     <div id="widget-mount"></div>
     <pre id="toggles" style="font: 11px/1.35 ui-monospace, monospace; padding: 4px 28px"></pre>
     <pre id="trace" style="font: 11px/1.35 ui-monospace, monospace; padding: 0 28px"></pre>

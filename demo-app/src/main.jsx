@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { VoiceProvider } from "@yourco/voice";
-import "@yourco/voice/styles.css";
 import "./index.css";
 import App from "./App.jsx";
 
@@ -16,6 +15,16 @@ const queryClient = new QueryClient();
 //   eager  mint on mount and keep it fresh, connect when the panel opens
 //   hover  mint on mount, connect when the pointer reaches the pill
 const WARMUP = new URLSearchParams(window.location.search).get("warm") ?? "hover";
+
+// The stylesheet is for mount="inline" ONLY, and this app offers that mount
+// behind ?mount=inline. Do not import it for the default shadow mount: in the
+// document it shares a global class namespace with the host, and a bare
+// `.hidden` from it landed after a real app's `.md:flex` in the same cascade
+// layer -- media queries carry no specificity, so the app's desktop sidebar
+// stayed hidden at every width and the whole layout fell back to mobile.
+if (new URLSearchParams(window.location.search).get("mount") === "inline") {
+  await import("@yourco/voice/styles.css");
+}
 
 /**
  * The host's half of the integration. The widget doesn't import

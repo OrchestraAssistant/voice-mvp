@@ -22,8 +22,16 @@
 // needs no position of its own -- it renders into that overlay, outside the
 // host's DOM -- so it can go anywhere inside the provider.
 
-// Imported here so the build emits dist/voice.css; consumers still
-// import it explicitly via "@yourco/voice/styles.css".
+// Imported here so the build emits dist/voice.css. Vite extracts it, so
+// importing this package does NOT inject anything into a host document.
+//
+// Consumers should import "@yourco/voice/styles.css" ONLY for mount="inline".
+// The default shadow mount is self-styling: InterpreterBubble injects the
+// compiled sheet into its own root, where it can reach nothing else. In the
+// document the same sheet shares a global class namespace with the host app,
+// and a bare `.hidden` from it once landed after a real app's `.md:flex` in
+// the same cascade layer. Media queries add no specificity, so the app's
+// desktop sidebar stayed hidden at every width.
 import "./styles.css";
 
 export { VoiceProvider, useInterpreter } from "./VoiceProvider.jsx";

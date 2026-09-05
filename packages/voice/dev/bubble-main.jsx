@@ -4,10 +4,6 @@ import { VoiceProvider } from "../src/VoiceProvider.jsx";
 import { InterpreterBubble } from "../src/InterpreterBubble.jsx";
 import { ListeningGlow } from "../src/ListeningGlow.jsx";
 
-// The inline mount has no shadow root to inject into, so the stylesheet has
-// to reach the document the way a host app's `import "@yourco/voice/styles.css"`
-// does. In shadow mode it's redundant but harmless.
-import "../src/styles.css";
 
 /**
  * Entry point for bubble.html -- the *clean* host, as opposed to
@@ -18,6 +14,15 @@ import "../src/styles.css";
  */
 const params = new URLSearchParams(window.location.search);
 const MOUNT = params.get("mount") === "shadow" ? "shadow" : "inline";
+
+// Only the inline mount needs this. It has no shadow root to inject into, so
+// the stylesheet has to reach the document the way a host app's
+// `import "@yourco/voice/styles.css"` does -- and in the document it shares a
+// global class namespace with the host, which is how a bare `.hidden` from
+// here once overrode a real app's responsive sidebar. In shadow mode the
+// bubble injects the compiled sheet into its own root, so importing it here
+// would be pure contamination.
+if (MOUNT === "inline") await import("../src/styles.css");
 if (params.get("bg") === "dark") document.body.classList.add("dark");
 
 /**
