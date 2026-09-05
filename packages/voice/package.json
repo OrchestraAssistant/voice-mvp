@@ -7,9 +7,11 @@
   "module": "./dist/voice.js",
   "exports": {
     ".": {
-      "import": "./dist/voice.js"
+      "import": "./dist/voice.js",
+      "default": "./dist/voice.js"
     },
-    "./styles.css": "./dist/voice.css"
+    "./styles.css": "./dist/voice.css",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"

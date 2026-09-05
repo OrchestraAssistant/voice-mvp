@@ -55,15 +55,32 @@ export function click(elementId) {
   el.click();
 }
 
-const NATIVE_VALUE_SETTERS = {
-  INPUT: Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set,
-  TEXTAREA: Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set,
-};
+/**
+ * React installs its own `value` setter on the element, so assigning
+ * `el.value` updates the DOM without the component ever hearing about it. The
+ * prototype's original setter is the one React's onChange listens behind.
+ *
+ * Read on first use rather than at module scope. At module scope this touched
+ * `window` the instant the bundle was evaluated, which made the whole package
+ * unimportable anywhere there is no DOM -- it threw "window is not defined"
+ * during a server render before a single component was used. Found by
+ * installing the built tarball into a Next.js app, which is the only place
+ * that could have found it: every test we had runs in a browser or imports
+ * the source directly.
+ */
+let nativeValueSetters = null;
+function nativeValueSetter(tagName) {
+  nativeValueSetters ??= {
+    INPUT: Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set,
+    TEXTAREA: Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set,
+  };
+  return nativeValueSetters[tagName];
+}
 
 export function typeText(elementId, text) {
   const el = resolve(elementId);
   el.focus();
-  const setter = NATIVE_VALUE_SETTERS[el.tagName];
+  const setter = nativeValueSetter(el.tagName);
   if (setter) {
     setter.call(el, text);
   } else {
