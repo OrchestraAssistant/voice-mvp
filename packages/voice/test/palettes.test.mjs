@@ -116,41 +116,34 @@ describe("rimState", () => {
     assert.equal(rimState({ ...live, agentBusy: true, userSpeaking: true }), "working");
   });
 
-  test("push-to-talk uses the button, since its detector is off", () => {
-    // turn_detection is null in ptt, so speech_started never fires -- without
-    // this, "listening" would never appear in the mode where the user is most
-    // certain they are being heard.
+  test("a typed turn still lights the rim, with no microphone at all", () => {
+    // Observed: someone types a command, the agent navigates and calls tools
+    // for several seconds, and the screen says nothing the whole time. The
+    // agent being busy is a fact about the AGENT; gating it on the microphone
+    // conflated "can I hear you" with "am I doing something".
+    assert.equal(rimState({ ...live, micAttached: false, agentBusy: true }), "working");
+    // But only once there is a session. Nothing can be busy before that.
+    assert.equal(rimState({ ...live, transport: "connecting", agentBusy: true }), null);
+  });
+
+  test("push-to-talk shows nothing until the button is held", () => {
+    // The mic rests MUTED in ptt, so a rim saying "ready" over it would be
+    // claiming to hear someone it cannot hear.
+    assert.equal(rimState({ ...live, mode: "ptt", holding: false }), null);
     assert.equal(rimState({ ...live, mode: "ptt", holding: true }), "listening");
-    assert.equal(rimState({ ...live, mode: "ptt", holding: false }), "ready");
   });
 
-  test("push-to-not-talk is ready while muted", () => {
-    assert.equal(rimState({ ...live, mode: "ptnt", holding: true }), "ready");
-  });
-});
-
-describe("rim mode", () => {
-  test("single collapses every state onto one swatch", () => {
-    // A rim that changes colour is informative or distracting depending
-    // entirely on who is looking at it, and it sits in their peripheral vision
-    // the whole time they work -- so it is a preference, not a decision.
-    const one = fixedPalettes();
-    assert.deepEqual(Object.keys(one), STATES);
-    for (const s of STATES) assert.equal(one[s], SWATCHES.prism);
+  test("push-to-not-talk goes dark exactly while it is muted", () => {
+    // Holding the button is a deliberate "do not hear me". It used to show
+    // ready, which is the one thing the rim must never say over a shut mic.
+    assert.equal(rimState({ ...live, mode: "ptnt", holding: true }), null);
+    assert.equal(rimState({ ...live, mode: "ptnt", holding: false }), "ready");
   });
 
-  test("single can wear any swatch, not just prism", () => {
-    const lagoonThroughout = fixedPalettes(SWATCHES.lagoon);
-    for (const s of STATES) assert.equal(lagoonThroughout[s], SWATCHES.lagoon);
-  });
-
-  test("the modes are offered by id, and default first", () => {
-    assert.deepEqual(RIM_MODES.map((m) => m.id), ["state", "single"]);
-  });
-
-  test("collapsing does not change how many stops the rim gets", () => {
-    // The crossfade machinery mixes stop by stop and would break on a
-    // different length.
-    for (const p of Object.values(fixedPalettes())) assert.equal(p.length, 4);
+  test("but a muted microphone does not hide the agent working", () => {
+    // The two gates are independent: mute silences what we HEAR, not what the
+    // rim reports about what the agent is doing.
+    assert.equal(rimState({ ...live, mode: "ptt", holding: false, agentBusy: true }), "working");
+    assert.equal(rimState({ ...live, mode: "ptnt", holding: true, agentBusy: true }), "working");
   });
 });

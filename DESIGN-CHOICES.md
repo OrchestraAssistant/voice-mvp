@@ -875,3 +875,65 @@ source.
 comes out near the figure the OpenAI dashboard reported for it, which is the
 only external check available. The rates in `PRICES` are list prices, they go
 stale, and the report says so every time it runs.
+
+---
+
+## 18. The rim reports the microphone, and separately reports the agent
+
+**Chosen:** `working` is shown whenever the agent has the floor, with no regard
+to the microphone. `ready` and `listening` require the microphone to be
+genuinely OPEN, not merely attached.
+
+**What was wrong.** `rimState` returned null whenever no microphone was
+attached, before it ever looked at whether the agent was busy. So someone who
+typed a command got no feedback at all: the agent navigated, called tools and
+answered over several seconds, and the screen said nothing the whole time. The
+two questions had been conflated. "Can I hear you" is about the microphone;
+"am I doing something" is about the agent, and a typed turn puts the agent to
+work exactly as a spoken one does.
+
+**And it was wrong in the other direction too.** A muted microphone showed
+`ready`. Push-to-talk rests muted, so its rim claimed to be listening whenever
+the button was not held; push-to-not-talk showed `ready` while the button was
+deliberately holding the microphone shut. Saying "I can hear you" over a shut
+microphone is the one claim this rim must never make, and it was making it in
+the mode where users are most deliberate about being heard.
+
+Both now go dark. A muted-but-connected state may earn its own palette later;
+it is simply dark for now.
+
+| | before | after |
+|---|---|---|
+| agent working on a typed turn | nothing | working |
+| push-to-talk at rest | ready | nothing |
+| push-to-not-talk while muted | ready | nothing |
+| push-to-talk while held | listening | listening |
+
+The gate reuses `isListening()` rather than re-deriving the mode rules, so the
+widget's one privacy predicate and its most visible affordance cannot drift
+apart.
+
+---
+
+## 19. Three tiers, and the top one exists because the middle failed
+
+**Chosen:** `<Interpreter/>` assembles the bubble and the rim;
+`<InterpreterBubble/>` and `<ListeningGlow/>` remain separately usable;
+`useInterpreter()` exposes the session with no UI.
+
+**Why the top tier was added.** The first real integration rendered only the
+bubble and got no rim. Nothing failed. Nothing warned. The app looked
+finished, and the missing half of the feedback was invisible until someone
+compared it against the demo. Assembling the pieces meant importing three
+exports, calling `useInterpreter()`, deriving the rim's state by hand and
+rendering two components in the right places -- about seven lines that every
+host would write identically, and that a host can silently skip.
+
+Flexibility was never the problem; discoverability was. The lower tiers are
+unchanged and lose nothing.
+
+**Why not fold the rim into the bubble instead.** They occupy different
+overlay layers and a host may legitimately want one without the other -- a rim
+with custom chrome, or a bubble in an app that finds a full-viewport glow too
+loud. Merging them would remove a real choice; adding a component that makes
+the choice for you removes none.

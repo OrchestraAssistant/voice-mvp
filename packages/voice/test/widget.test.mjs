@@ -274,3 +274,77 @@ describe("the host's own CSS survives the widget", { concurrency: false }, () =>
     await page.close();
   });
 });
+
+/**
+ * The assembled tier.
+ *
+ * Reduced from the first real integration: the host rendered only
+ * <InterpreterBubble/>, got no rim, and nothing said so. The bubble and the
+ * rim ship separately on purpose, but "assemble them yourself" is a step a
+ * host can silently skip, and the result looks finished.
+ */
+describe("<Interpreter/> renders the whole interface", { concurrency: false }, () => {
+  let browser;
+  let harness;
+
+  before(async () => {
+    browser = await launchBrowser();
+    harness = await startHarness();
+  });
+  after(async () => {
+    await browser?.close();
+    await harness?.server.close();
+  });
+
+  /**
+   * Which pieces of chrome are MOUNTED, which is not the same as which are
+   * visible. The rim only paints once a session is live, and this harness has
+   * no relay behind it, so counting children would say "no rim" even when the
+   * component is there. Each piece injects its own stylesheet into the shared
+   * root when it mounts, so that is the honest signal.
+   */
+  const mounted = (page) =>
+    page.evaluate(() => {
+      const host = document.querySelector("[data-interpreter-overlay]");
+      if (!host) return null;
+      const css = [...host.shadowRoot.querySelectorAll("style")].map((s) => s.textContent).join("\n");
+      return {
+        panel: css.includes("interpreter-widget") || css.includes("--iv-surface"),
+        rim: css.includes("mask-composite"),
+        layers: [...host.shadowRoot.querySelectorAll("[data-overlay-layer]")].map((el) =>
+          el.getAttribute("data-overlay-layer"),
+        ),
+      };
+    });
+
+  test("one component fills both layers", async () => {
+    const page = await browser.newPage();
+    await preparePage(page);
+    await page.goto(harness.url("?mount=shadow&assembled=1"));
+    await page.waitForFunction(() => window.__find?.(".interpreter-widget"));
+    await page.waitForTimeout(400);
+
+    const on = await mounted(page);
+    assert.ok(on, "no overlay host at all");
+    assert.deepEqual(on.layers, ["rim", "panel"], "the overlay lost a layer");
+    assert.ok(on.panel, "the bubble did not mount");
+    assert.ok(on.rim, "the rim did not mount, which is the bug this exists for");
+    await page.close();
+  });
+
+  test("the bubble alone still leaves the rim empty, as it should", async () => {
+    // The tier below is not broken, it is just a tier lower. Asserting the
+    // difference keeps the two honest: if the bubble started drawing its own
+    // rim, the assembled component would be pointless and this would say so.
+    const page = await browser.newPage();
+    await preparePage(page);
+    await page.goto(harness.url("?mount=shadow"));
+    await page.waitForFunction(() => window.__find?.(".interpreter-widget"));
+    await page.waitForTimeout(400);
+
+    const on = await mounted(page);
+    assert.ok(on.panel, "the bubble did not mount");
+    assert.equal(on.rim, false, "something mounted a rim nobody asked for");
+    await page.close();
+  });
+});

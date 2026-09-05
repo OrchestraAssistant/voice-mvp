@@ -3,17 +3,13 @@ import Dashboard from "./pages/Dashboard.jsx";
 import NewTask from "./pages/NewTask.jsx";
 import TaskDetail from "./pages/TaskDetail.jsx";
 import Settings from "./pages/Settings.jsx";
-import { InterpreterBubble, ListeningGlow, rimState, useInterpreter } from "@yourco/voice";
+import { Interpreter } from "@yourco/voice";
 
-// `?glow=1` forces the rim on without a live mic session, so the visual can be
-// looked at on the real app's real background without an OpenAI key.
-// `?glow=working` (or ready/listening) pins a state as well. A dev affordance,
-// not a feature; read once at module load.
+// Forcing the rim on without a live session used to live here, as `?glow=`.
+// It moved to the tuner at dev/rim.html, which drives the same component with
+// state buttons, live colour pickers and a hue-separation readout -- and this
+// app now renders <Interpreter/>, which owns the rim's state itself.
 const params = new URLSearchParams(window.location.search);
-const FORCE_GLOW = params.has("glow");
-const FORCED_STATE = ["ready", "listening", "working"].includes(params.get("glow"))
-  ? params.get("glow")
-  : null;
 
 // `?mount=inline` renders the widget into this app's own DOM instead of the
 // shadow overlay, so the effect of THIS app's stylesheet on it can be seen
@@ -24,20 +20,13 @@ const FORCED_STATE = ["ready", "listening", "working"].includes(params.get("glow
 const MOUNT = params.get("mount") === "inline" ? "inline" : "shadow";
 
 export default function App() {
-  const { transport, micAttached, mode, holding, userSpeaking, agentBusy, rimPalettes } = useInterpreter();
-  // Three states rather than a boolean: ready (connected, nothing arriving),
-  // listening (audio actually being forwarded), working (the agent has the
-  // floor). null means no session worth showing -- a warm connection with no
-  // microphone included.
-  const state = rimState({ transport, micAttached, mode, holding, userSpeaking, agentBusy });
-
   return (
     <div className="app">
-      <ListeningGlow
-        active={FORCE_GLOW || state !== null}
-        state={FORCED_STATE ?? state ?? "ready"}
-        palettes={rimPalettes}
-      />
+      {/* The whole interface, top tier. It derives the rim's state from the
+          session itself, which is the wiring this app used to do by hand --
+          and the wiring a real host forgot, ending up with no rim and no
+          indication anything was missing. */}
+      <Interpreter mount={MOUNT} />
       <nav className="sidebar">
         <h2>Tasker</h2>
         <Link to="/">Dashboard</Link>

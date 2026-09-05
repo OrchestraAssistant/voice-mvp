@@ -28,22 +28,31 @@ export function isListening({ transport, micAttached, mode, holding }) {
  * floor, and neither is a moment when anything the user does changes what
  * happens next. What the rim has to carry is whose turn it is.
  *
- *   null        no session, or a session with no microphone on it. A warm
- *               connection must not light the rim -- see the transport /
- *               micAttached split, which exists for exactly this.
- *   "working"   the agent has the floor. Checked FIRST: if it is talking and
- *               the user talks over it, the interruption belongs to the next
- *               turn, and flickering between the two would say nothing.
+ *   null        nothing worth saying. No session, no open microphone, or a
+ *               microphone the user is deliberately holding shut.
+ *   "working"   the agent has the floor. Checked FIRST, and before the
+ *               microphone is considered at all, because it is a fact about
+ *               the AGENT rather than about listening -- a typed turn puts the
+ *               agent to work exactly as a spoken one does, and leaving that
+ *               dark meant someone who typed a command got no feedback of any
+ *               kind while it ran.
  *   "listening" audio is actually arriving and being forwarded.
- *   "ready"     connected and able to hear, but nothing is being sent.
+ *   "ready"     the microphone is open and nothing is being sent.
+ *
+ * `ready` is gated on the microphone being genuinely OPEN, not merely
+ * attached. Push-to-talk rests muted, so it shows nothing until the button is
+ * held; push-to-not-talk shows nothing while the button holds it shut. The rim
+ * saying "I can hear you" over a muted microphone is the one claim it must
+ * never make. A muted-but-connected state may earn its own palette later; for
+ * now it is simply dark.
  */
 export function rimState({ transport, micAttached, mode, holding, userSpeaking, agentBusy }) {
-  if (transport !== "ready" || !micAttached) return null;
+  if (transport !== "ready") return null;
+  // Before the microphone gate on purpose -- see "working" above.
   if (agentBusy) return "working";
+  if (!isListening({ transport, micAttached, mode, holding })) return null;
   // Server VAD reports speech directly. Push-to-talk switches that detector
-  // off, so there the button IS the signal -- without this, "listening" would
-  // never appear in the one mode where the user is most certain they are
-  // being heard.
+  // off, so there the button IS the signal.
   if (mode === "ptt" ? holding : userSpeaking) return "listening";
   return "ready";
 }

@@ -35,6 +35,8 @@
 import "./styles.css";
 
 export { VoiceProvider, useInterpreter } from "./VoiceProvider.jsx";
+// The assembled interface: bubble plus rim, wired together. Start here.
+export { Interpreter } from "./Interpreter.jsx";
 export { InterpreterBubble } from "./InterpreterBubble.jsx";
 export { InterpreterPanel } from "./InterpreterPanel.jsx";
 export { ListeningGlow } from "./ListeningGlow.jsx";

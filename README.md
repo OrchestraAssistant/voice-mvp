@@ -56,15 +56,32 @@ components calling `useInterpreter()` are the widget's own and its chrome
 portals into an overlay on `document.body`:
 
 ```jsx
-import { VoiceProvider, InterpreterBubble } from "@yourco/voice";
+import { VoiceProvider, Interpreter } from "@yourco/voice";
 
 <VoiceProvider navigate={yourRouterPush}>
-  <InterpreterBubble />
+  <Interpreter />
 </VoiceProvider>
 ```
 
 Wrap your tree instead only if you want to call `useInterpreter()` in your own
 components, to build custom UI against the same session.
+
+### Three tiers, pick one
+
+`<Interpreter/>` is the top of three, and each tier below it is the one above
+with a piece taken away. Drop a tier when you want something the tier above
+decided for you.
+
+| | you get | you write |
+| --- | --- | --- |
+| `<Interpreter/>` | the bubble and the rim, assembled | one line |
+| `<InterpreterBubble/>` + `<ListeningGlow/>` | the pieces, placed your way | derive `rimState()` yourself and render both |
+| `useInterpreter()` | the session, no UI at all | everything |
+
+The middle tier is the one to be careful with. Rendering the bubble without
+the rim is not an error and nothing warns about it -- the app just has no
+ambient feedback, and it looks finished. That is what happened on the first
+real integration, which is why the top tier exists.
 
 **Do not import the stylesheet.** The widget renders into its own shadow root
 and injects its compiled CSS there. `@yourco/voice/styles.css` exists for

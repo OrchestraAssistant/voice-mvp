@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { VoiceProvider } from "../src/VoiceProvider.jsx";
 import { InterpreterBubble } from "../src/InterpreterBubble.jsx";
 import { ListeningGlow } from "../src/ListeningGlow.jsx";
+import { Interpreter } from "../src/Interpreter.jsx";
 
 
 /**
@@ -84,11 +85,22 @@ document.addEventListener("keydown", (e) => {
 // the fetches fail silently and the settings tab has nothing to offer.
 const RELAY = params.get("relay") ?? "";
 
+// ?assembled=1 renders the top tier, <Interpreter/>, instead of wiring the
+// bubble and the rim by hand. It is the same page either way, which is the
+// point: the assembled component must produce what a host would have built.
+const ASSEMBLED = params.has("assembled");
+
 createRoot(document.getElementById("widget-mount")).render(
   <StrictMode>
     <VoiceProvider relayUrl={RELAY}>
-      {params.has("glow") && <ListeningGlow active />}
-      <InterpreterBubble mount={MOUNT} />
+      {ASSEMBLED ? (
+        <Interpreter mount={MOUNT} />
+      ) : (
+        <>
+          {params.has("glow") && <ListeningGlow active />}
+          <InterpreterBubble mount={MOUNT} />
+        </>
+      )}
     </VoiceProvider>
   </StrictMode>,
 );
