@@ -50,17 +50,21 @@ npm install @yourco/voice
 npx @yourco/voice-cli src .voice     # your source dir -> a manifest
 ```
 
-Wrap your tree once, wherever your other providers live, and drop the bubble
-inside it:
+Mount it once, wherever your other providers live. It is a leaf, not a
+wrapper -- nothing of yours needs to be inside the provider, because the only
+components calling `useInterpreter()` are the widget's own and its chrome
+portals into an overlay on `document.body`:
 
 ```jsx
 import { VoiceProvider, InterpreterBubble } from "@yourco/voice";
 
 <VoiceProvider navigate={yourRouterPush}>
-  {children}
   <InterpreterBubble />
 </VoiceProvider>
 ```
+
+Wrap your tree instead only if you want to call `useInterpreter()` in your own
+components, to build custom UI against the same session.
 
 **Do not import the stylesheet.** The widget renders into its own shadow root
 and injects its compiled CSS there. `@yourco/voice/styles.css` exists for
