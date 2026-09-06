@@ -204,3 +204,94 @@ export function typeText(elementId, text) {
   el.dispatchEvent(new Event("input", { bubbles: true }));
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
+
+/**
+ * A flow: several interactions that together do one thing.
+ *
+ * Some of what an app can do has no URL and no endpoint. Creating an event
+ * type in cal.diy opens a dialog with four fields and a Continue button, and
+ * the address bar never changes. The agent could only reach it by taking a
+ * snapshot, guessing which element was which, and clicking around -- which is
+ * exactly how it typed a description into a URL field.
+ *
+ * Modelled as an ACTION rather than as a new kind of thing, because that is
+ * what it is: it takes named inputs, changes something, and is what a person
+ * asks for. The only difference from an HTTP action is that it executes as a
+ * sequence of interactions. The model calls action_createEventType with three
+ * fields and never learns that a dialog exists.
+ *
+ * Steps target by LABEL, not by selector. Selectors break on every redesign,
+ * and a label is both what dom_snapshot already reports and what the person
+ * asking would have said.
+ */
+export async function runFlow(steps = [], args = {}, { timeoutMs = 4000, pollMs = 100 } = {}) {
+  const performed = [];
+
+  for (const [index, step] of steps.entries()) {
+    const label = step.click ?? step.type ?? step.check;
+    const at = `step ${index + 1} of ${steps.length} ("${label}")`;
+
+    // A field with nothing to put in it is skipped, not failed. That is what
+    // makes optional inputs optional: the model omits `description` and the
+    // flow simply does not visit it.
+    if (step.type) {
+      const value = args[step.from ?? step.type];
+      if (value === undefined || value === null || value === "") {
+        performed.push({ step: index + 1, skipped: `no value for ${step.from ?? step.type}` });
+        continue;
+      }
+      const el = await waitForLabel(label, timeoutMs, pollMs);
+      if (!el) return stopped(at, performed, `could not find a field labelled "${label}"`);
+      typeText(el.id, String(value));
+      performed.push({ step: index + 1, typed: label });
+      continue;
+    }
+
+    const el = await waitForLabel(label, timeoutMs, pollMs);
+    if (!el) return stopped(at, performed, `could not find "${label}"`);
+    click(el.id);
+    performed.push({ step: index + 1, clicked: label });
+  }
+
+  return { status: "completed", steps: performed };
+}
+
+/**
+ * Stopping midway is a real state, not just a failure.
+ *
+ * A flow that filled two fields and could not find the third has left a
+ * half-completed dialog on screen. Saying only "it failed" invites the model
+ * to start again from the top, which fills the first two fields twice.
+ */
+function stopped(at, performed, because) {
+  return {
+    status: "stopped",
+    at,
+    because,
+    completed: performed,
+    hint: "The app is part-way through this flow. Take a dom_snapshot to see where it is rather than starting over.",
+  };
+}
+
+/**
+ * Waits for a labelled element to exist.
+ *
+ * Clicking "New" opens a dialog, and the dialog is not there on the next line
+ * of JavaScript. Without waiting, every flow whose first step opens something
+ * fails on its second step.
+ */
+async function waitForLabel(label, timeoutMs, pollMs) {
+  const deadline = Date.now() + timeoutMs;
+  const wanted = String(label).trim().toLowerCase();
+  for (;;) {
+    const found = snapshot().filter((e) => {
+      const seen = (e.label ?? "").trim().toLowerCase();
+      return seen === wanted || seen.startsWith(`${wanted}:`) || seen.startsWith(`${wanted} `);
+    });
+    // An exact match wins; otherwise the shortest label containing the word,
+    // which prefers "Title" over "Title of the recurring event".
+    if (found.length) return found.sort((a, b) => (a.label ?? "").length - (b.label ?? "").length)[0];
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}

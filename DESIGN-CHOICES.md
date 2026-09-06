@@ -1161,3 +1161,57 @@ future session will carry.
 **One practical note.** Probing every route against a development server
 forces a compile of every route, which is a real memory spike on a large app.
 Probe a production build, or pace the requests.
+
+---
+
+## 24. A flow is an action, not a new kind of thing
+
+**Chosen:** an operation with `transport: "dom"` and a list of steps. The model
+calls it like any other action; the widget performs the interactions.
+
+**What was missing.** Some of what an app can do has no URL and no endpoint.
+Creating an event type in cal.diy opens a dialog with four fields and a
+Continue button, and the address bar never changes. Routes describe where you
+can go; queries and actions describe what you can call. Nothing described what
+you can DO once you are somewhere.
+
+So the agent reached it the only way it could: snapshot the page, guess which
+element was which, click around. That is how it typed a description into a URL
+field.
+
+**Why an action rather than a fourth section.** A flow takes named inputs,
+changes something, is sometimes irreversible at a particular step, and is what
+a person asks for. That is an action. The only difference is that it executes
+as a sequence of interactions instead of one HTTP call, and `transport`
+already existed to say how an operation executes.
+
+The payoff is that nothing else changes. `buildTools` produces an ordinary
+`action_createEventType` from the same `bodyFields`; the tool list gains no new
+category; the model calls it with three named fields and never learns a dialog
+is involved. The steps are not in the prompt at all -- they are execution
+detail, and putting them there would invite the model to reason about clicking,
+which is precisely what this removes.
+
+**Steps target labels, not selectors.** A selector breaks on every redesign. A
+label is what `dom_snapshot` already reports and what the person asking would
+have said. An exact match wins; otherwise the shortest label containing the
+word, so "Title" does not land in "Title of the recurring event".
+
+**Two things a flow must handle that an HTTP call need not.** It has to wait:
+clicking "New" opens a dialog, and the dialog is not there on the next line of
+JavaScript, so without waiting every flow whose first step opens something
+fails on its second. And stopping partway is a real state rather than a plain
+failure -- a flow that filled two fields and could not find the third has left
+a half-completed dialog on screen. It reports which step, what it was looking
+for, what it already did, and that the model should look before starting over,
+because starting over fills the first two fields twice.
+
+**Verified against the dialog that caused all this.** Given
+`{title, description, duration}` and no other knowledge, the flow clicks New,
+waits for the dialog, and fills all three:
+
+```
+Title        "Voice Made This"
+Description  "A quick video meeting."
+Duration     "25"
+```

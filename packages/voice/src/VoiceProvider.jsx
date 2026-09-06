@@ -234,6 +234,11 @@ export function VoiceProvider({
    * detail the caller can be left to get right.
    */
   const perform = async (operation, args) => {
+    // A flow is an action that happens in the page rather than over HTTP.
+    // Same shape, same tool, different execution -- which is why the model
+    // never has to know a dialog is involved.
+    if (operation.transport === "dom") return dom.runFlow(operation.steps, args);
+
     const transport = transportFor(operation);
     const { method, url, body } = transport.request({ operation, args });
     const response = await apiFetch(method, url, body);

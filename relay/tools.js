@@ -116,6 +116,12 @@ export function buildTools(manifest) {
         a.description.replace(/\s*$/, "").replace(/\.?$/, ".") +
         " Takes a LIST: one entry per thing to change, and a single change is a list of one." +
         " Never call this repeatedly for a set -- put them all in one call." +
+        // A flow runs in the page, so the user watches it happen and a step
+        // can fail partway. Worth saying, because "it stopped at step 3"
+        // means something different from a failed HTTP call.
+        (a.transport === "dom"
+          ? " This happens on screen, one step at a time, and can stop partway if the page is not where it expected."
+          : "") +
         (a.requiresConfirmation
           ? " (destructive: requires user confirmation before executing. A list is confirmed once, for the whole set.)"
           : ""),

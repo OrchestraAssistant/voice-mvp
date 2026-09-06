@@ -265,3 +265,51 @@ describe("what a query returns", () => {
     assert.doesNotMatch(buildTools(probed).find((t) => t.name === "query_tasks").description, /Returns/);
   });
 });
+
+describe("a flow is an action that runs in the page", () => {
+  const withFlow = () => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.actions.push({
+      name: "createEventType",
+      description: "Create a new event type",
+      transport: "dom",
+      params: [],
+      bodyFields: [{ name: "title", required: true, type: "string" }, { name: "duration", type: "number" }],
+      requiresConfirmation: false,
+      steps: [{ click: "New" }, { type: "Title", from: "title" }],
+    });
+    return m;
+  };
+
+  test("it becomes an ordinary action tool", () => {
+    // The whole point of modelling it this way: the model calls
+    // action_createEventType with named fields and never learns a dialog is
+    // involved. Nothing in the tool list is new.
+    const tool = buildTools(withFlow()).find((t) => t.name === "action_createEventType");
+    assert.ok(tool);
+    const entry = tool.parameters.properties.items.items;
+    assert.deepEqual(Object.keys(entry.properties), ["title", "duration"]);
+    assert.deepEqual(entry.required, ["title"]);
+  });
+
+  test("but the description says it happens on screen", () => {
+    // "It stopped at step 3" means something different from a failed HTTP
+    // call, and the model has to know that is possible.
+    const tool = buildTools(withFlow()).find((t) => t.name === "action_createEventType");
+    assert.match(tool.description, /on screen, one step at a time/);
+    assert.match(tool.description, /stop partway/);
+  });
+
+  test("an HTTP action says nothing of the kind", () => {
+    const tool = buildTools(manifest).find((t) => t.name === "action_createTask");
+    assert.doesNotMatch(tool.description, /on screen/);
+  });
+
+  test("steps are not exposed to the model", () => {
+    // They are execution detail. Putting them in the prompt would cost tokens
+    // and invite the model to reason about clicking, which is the thing this
+    // exists to stop it doing.
+    const tool = buildTools(withFlow()).find((t) => t.name === "action_createEventType");
+    assert.doesNotMatch(JSON.stringify(tool), /steps|dom_snapshot|click/i);
+  });
+});

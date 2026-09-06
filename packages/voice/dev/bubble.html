@@ -81,6 +81,20 @@
       <div id="host-editor" contenteditable="true" role="textbox"></div>
       <label for="host-title">Title</label>
       <input id="host-title" type="text" />
+
+      <!-- A field that does not exist until something is clicked, which is
+           what a dialog is. Without waiting, every flow whose first step opens
+           something fails on its second. -->
+      <button id="host-open">Add detail</button>
+      <div id="host-later" hidden>
+        <label for="host-notes">Notes</label>
+        <input id="host-notes" type="text" />
+      </div>
+      <script>
+        document.getElementById("host-open").addEventListener("click", () => {
+          setTimeout(() => document.getElementById("host-later").removeAttribute("hidden"), 250);
+        });
+      </script>
     </section>
 
     <div id="widget-mount"></div>

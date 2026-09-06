@@ -103,3 +103,105 @@ describe("what the agent can see and touch", { concurrency: false }, () => {
     assert.match(failure, /dom_snapshot again/, "the message has to say what to do next");
   });
 });
+
+/**
+ * Flows: several interactions that together do one thing.
+ *
+ * Some of what an app can do has no URL and no endpoint. Creating an event
+ * type in cal.diy opens a dialog with four fields, and the address bar never
+ * changes. The agent could reach it only by snapshotting, guessing which
+ * element was which, and clicking around -- which is how it typed a
+ * description into a URL field.
+ */
+describe("running a flow", { concurrency: false }, () => {
+  let browser;
+  let harness;
+
+  before(async () => {
+    browser = await launchBrowser();
+    harness = await startHarness();
+  });
+  after(async () => {
+    await browser?.close();
+    await harness?.server.close();
+  });
+
+  async function fresh() {
+    const page = await browser.newPage();
+    await page.goto(harness.url("?mount=shadow"));
+    await page.addScriptTag({ content: `${source}\nwindow.__dom = { snapshot, typeText, click, runFlow };`, type: "module" });
+    await page.waitForFunction(() => window.__dom);
+    return page;
+  }
+  const run = (page, steps, args) =>
+    page.evaluate(([s, a]) => window.__dom.runFlow(s, a, { timeoutMs: 2000 }), [steps, args]);
+
+  test("named inputs land in labelled fields", async () => {
+    const page = await fresh();
+    const result = await run(page, [{ type: "Title", from: "title" }, { type: "Description", from: "description" }],
+      { title: "Quick chat", description: "A short one." });
+
+    assert.equal(result.status, "completed");
+    assert.equal(await page.inputValue("#host-title"), "Quick chat");
+    assert.equal(await page.evaluate(() => document.getElementById("host-editor").innerText.trim()), "A short one.");
+    await page.close();
+  });
+
+  test("a field with no value is skipped, which is what makes it optional", async () => {
+    // The model omits `description` and the flow simply does not visit it,
+    // rather than typing "undefined" into the page.
+    const page = await fresh();
+    const result = await run(page, [{ type: "Title", from: "title" }, { type: "Description", from: "description" }],
+      { title: "Only a title" });
+
+    assert.equal(result.status, "completed");
+    assert.match(result.steps[1].skipped, /no value for description/);
+    assert.equal(await page.evaluate(() => document.getElementById("host-editor").innerText.trim()), "");
+    await page.close();
+  });
+
+  test("it waits for what a click opens", async () => {
+    // Clicking "New" opens a dialog, and the dialog is not there on the next
+    // line of JavaScript. Without waiting, every flow whose first step opens
+    // something fails on its second.
+    const page = await fresh();
+    const result = await run(page, [{ click: "Add detail" }, { type: "Notes", from: "notes" }], { notes: "later" });
+
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(await page.inputValue("#host-notes"), "later");
+    await page.close();
+  });
+
+  test("stopping partway says where it got to, not just that it failed", async () => {
+    // A flow that filled one field and could not find the next has left a
+    // half-completed form on screen. "It failed" invites the model to start
+    // again from the top, which fills the first field twice.
+    const page = await fresh();
+    const result = await run(page, [{ type: "Title", from: "title" }, { click: "Nonexistent Button" }], { title: "Half" });
+
+    assert.equal(result.status, "stopped");
+    assert.match(result.at, /step 2 of 2/);
+    assert.match(result.because, /could not find "Nonexistent Button"/);
+    assert.deepEqual(result.completed[0], { step: 1, typed: "Title" });
+    assert.match(result.hint, /rather than starting over/);
+    assert.equal(await page.inputValue("#host-title"), "Half", "the partial state is real, and stays");
+    await page.close();
+  });
+
+  test("a shorter label wins over a longer one containing it", async () => {
+    // "Title" must not match "Title of the recurring event" when both exist.
+    const page = await fresh();
+    await page.evaluate(() => {
+      const extra = document.createElement("label");
+      extra.textContent = "Title of the recurring event";
+      const input = document.createElement("input");
+      input.id = "host-decoy";
+      extra.setAttribute("for", "host-decoy");
+      document.getElementById("host-form").append(extra, input);
+    });
+    await run(page, [{ type: "Title", from: "title" }], { title: "right one" });
+    assert.equal(await page.inputValue("#host-title"), "right one");
+    assert.equal(await page.inputValue("#host-decoy"), "");
+    await page.close();
+  });
+});
