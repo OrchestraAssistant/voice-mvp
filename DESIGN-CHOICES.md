@@ -1436,3 +1436,40 @@ saturated.
 **Duration is the smaller half but still real.** 700ms is brisk for a
 full-viewport colour change with nothing to track. 1200ms, spread evenly,
 reads as movement rather than a switch.
+
+## 30. A shadow root is not a document, and @property notices
+
+**Chosen:** strip the `@supports` gate off Tailwind's own fallback block, in
+the package's build, so the `--tw-*` initial values always apply.
+
+**The report was that the widget rendered unstyled.** It did not. The
+stylesheet was in the bundle, reached the shadow root, and every rule matched:
+`--tw-shadow` held `0 8px 24px #00000029` and the panel's computed `box-shadow`
+was `none`.
+
+Tailwind v4 writes shadows as a five-variable chain and `shadow-*` sets only
+the last one. The other four come from `@property` registrations. **`@property`
+is registered per document**, and a stylesheet inside a shadow root is ignored
+for it -- the rules parse and nothing registers. So four of the five vars stay
+guaranteed-invalid, the declaration is invalid at computed-value time, and the
+whole shadow is dropped with the correct value sitting right there.
+
+What it took out, measured in the shipped widget:
+
+| utility | in the document | in the shadow root |
+|---|---|---|
+| `shadow-*` | 0 8px 24px | none |
+| `border` | 1px solid | 0px, style none |
+| `ring-*`, `scale-*`, `blur-*` | applied | dropped |
+
+A white card with no shadow and no border, on a white page, is invisible --
+which reads as "the stylesheet never loaded" and sends you to check the bundle,
+where everything is fine.
+
+Tailwind already emits the fix, a `@layer properties` block assigning every
+initial value on `*`. It gates it behind an `@supports` matching only engines
+without `@property`, because on Chromium the registration is assumed to work.
+In a shadow root it does not, on any engine. Removing the gate is 30 lines of
+build plugin and the declarations land at specificity 0 in the first layer, so
+a host's own utilities still outrank them.
+

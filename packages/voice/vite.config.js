@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { tailwindShadowDomProperties } from "./tailwindProperties.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,7 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // framer-motion is bundled: it's an implementation detail of the widget,
 // and a host shouldn't have to install it to use us.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), tailwindShadowDomProperties()],
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
