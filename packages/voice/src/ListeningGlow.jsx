@@ -245,8 +245,20 @@ export function ListeningGlow({
   cornerRadius = 0,
   palettes = PALETTES,
   rotationMs = 5000,
-  crossfadeMs = 700,
-  space = "linear",
+  /**
+   * How long a change of state takes to reach the eye.
+   *
+   * 700ms measured as abrupt in use, and the duration was only half of why.
+   * The other half was easeInOut, which is right for something moving -- you
+   * track the object, so acceleration reads as weight -- and wrong for a
+   * colour, which has no trajectory to follow. All you see is the middle
+   * burst: with easeInOut, 11% of the change happened in the first 180ms and
+   * 65% in the middle 360ms, which lands as a pause, a snap, and a pause.
+   */
+  crossfadeMs = 1200,
+  // OKLab: equal steps are equally visible, so an even ramp through it looks
+  // even. See palettes.js.
+  space = "oklab",
 }) {
   const angle = useMotionValue(0);
   // How far along the current crossfade we are: 0 at the moment the state
@@ -283,7 +295,10 @@ export function ListeningGlow({
     fromRef.current = mixPalettes(fromRef.current, leaving, mix.get(), sp);
     previousState.current = state;
     mix.set(0);
-    const controls = animate(mix, 1, { duration: crossfadeMs / 1000, ease: "easeInOut" });
+    // Linear, so every moment of the fade carries the same amount of change.
+    // A colour has no inertia to simulate, and evenness is what reads as
+    // "moving" rather than "switching".
+    const controls = animate(mix, 1, { duration: crossfadeMs / 1000, ease: "linear" });
     return () => controls.stop();
   }, [state, crossfadeMs, mix]);
 

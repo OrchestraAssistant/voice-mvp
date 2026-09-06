@@ -3,6 +3,25 @@ import assert from "node:assert/strict";
 import { PALETTES, RIM_MODES, STATES, SWATCHES, fixedPalettes, hueGap, hueSat, meanSat, mixColor, mixPalettes, rimGradient } from "../src/palettes.js";
 import { rimState } from "../src/listening.js";
 
+/** The perceptual ruler. Measuring evenness in RGB distance is exactly what
+ *  OKLab exists to replace, so the tests measure in OKLab. */
+function oklab(color) {
+  const [R, G, B] = color.match(/\d+/g).map(Number);
+  const lin = (c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const [r, g, b] = [lin(R), lin(G), lin(B)];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s2 = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s2,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s2,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s2,
+  ];
+}
+
 describe("rim palettes", () => {
   test("one palette per state, four stops each", () => {
     // Four stops because the gradient has four; the number of STATES is a
@@ -72,12 +91,33 @@ describe("rim palettes", () => {
     assert.equal(onward.length, 4);
   });
 
-  test("mixing in linear light keeps the midpoint brighter than sRGB", () => {
-    // sRGB is not perceptually uniform: a straight lerp between saturated hues
-    // dips through a muddy middle, worst on blue to green -- which is exactly
-    // the trip from listening to working.
-    const lum = (rgb) => rgb.match(/\d+/g).map(Number).reduce((a, b) => a + b, 0);
-    assert.ok(lum(mixColor("#3B82F6", "#22C55E", 0.5, "linear")) > lum(mixColor("#3B82F6", "#22C55E", 0.5, "srgb")));
+  test("the default mix is even to the eye, which is what reads as movement", () => {
+    // A rim change measured as abrupt in use, and the easing was only half of
+    // it. Linear light is not perceptually uniform, so an even ramp through it
+    // LOOKS like it accelerates: on orchid to lagoon it carried 10% of the
+    // visible change in the first eighth and 17% in the last. OKLab is built
+    // so equal steps are equally visible.
+    const spread = (space) => {
+      const steps = [...Array(9)].map((_, i) => oklab(mixColor("#F0ABFC", "#06B6D4", i / 8, space)));
+      const each = steps.slice(1).map((c, i) => Math.hypot(...c.map((v, k) => v - steps[i][k])));
+      const total = each.reduce((a, b) => a + b, 0);
+      const percent = each.map((d) => (d / total) * 100);
+      return Math.max(...percent) - Math.min(...percent);
+    };
+    assert.ok(spread("oklab") < 3, `oklab is uneven: ${spread("oklab").toFixed(1)}%`);
+    assert.ok(spread("oklab") < spread("linear"));
+    assert.ok(spread("linear") < spread("srgb"), "sRGB is the worst of the three, as expected");
+  });
+
+  test("and it keeps the most colour at the midpoint, where sRGB goes muddy", () => {
+    // A straight lerp in sRGB dips through a low-chroma middle, worst on blue
+    // to green -- exactly the trip from listening to working.
+    const chroma = (space) => {
+      const [, a, b] = oklab(mixColor("#3B82F6", "#22C55E", 0.5, space));
+      return Math.hypot(a, b);
+    };
+    assert.ok(chroma("oklab") > chroma("srgb"), "the midpoint is muddier than a plain sRGB lerp");
+    assert.ok(chroma("oklab") > chroma("linear"));
   });
 
   test("the gradient carries the angle and no wrapping fifth stop", () => {

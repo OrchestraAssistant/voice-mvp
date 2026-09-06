@@ -60,8 +60,8 @@ function Tuner() {
   const [width, setWidth] = useState(80);
   const [corner, setCorner] = useState(0);
   const [rotationMs, setRotationMs] = useState(5000);
-  const [crossfadeMs, setCrossfadeMs] = useState(700);
-  const [space, setSpace] = useState("linear");
+  const [crossfadeMs, setCrossfadeMs] = useState(1200);
+  const [space, setSpace] = useState("oklab");
   const [dark, setDark] = useState(false);
 
   useEffect(() => { document.body.classList.toggle("dark", dark); }, [dark]);
@@ -118,6 +118,7 @@ function Tuner() {
           <label>
             <span className="name">mix in</span>
             <select value={space} onChange={(e) => setSpace(e.target.value)}>
+              <option value="oklab">OKLab (even to the eye)</option>
               <option value="linear">linear light</option>
               <option value="srgb">sRGB</option>
             </select>

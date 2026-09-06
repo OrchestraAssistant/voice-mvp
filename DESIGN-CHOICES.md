@@ -1392,3 +1392,47 @@ and then fails halfway.
 **One caution.** A probe signed in as a real user is one careless `--writes`
 away from modifying that user's data, which is an argument for pointing it at
 a seeded, disposable instance rather than anything shared.
+
+
+---
+
+## 29. A colour fade needs a different curve and a different space than a movement
+
+**Chosen:** 1200ms, linear easing, mixed in OKLab.
+
+**The report was that state changes felt abrupt**, and the interpolation was
+working the whole time. Sampling the rendered gradient during a change showed
+it moving through real intermediate colours over ~660ms. Two separate things
+made that read as a snap.
+
+**easeInOut is right for movement and wrong for colour.** You track a moving
+object, so acceleration reads as weight. A colour has no trajectory to follow,
+so all you see is the middle burst. Measured across four windows of a 700ms
+fade, easeInOut carried 11%, 25%, 39% and 26% of the change -- a pause, a
+lunge, a pause.
+
+**And linear light is not perceptually uniform**, which is the subtler half.
+Switching to a linear ramp did not fix it, because an even ramp through
+linear light still *looks* like it accelerates: on orchid to lagoon the first
+eighth carried 10% of the visible change and the last carried 17%.
+
+Measuring that needed the right ruler. Euclidean RGB distance said sRGB was the
+most even of the three, which is exactly the error OKLab exists to correct.
+Measured in OKLab, where equal distances are equally visible:
+
+| space | change per eighth | spread |
+|---|---|---|
+| sRGB | 19 18 17 14 12 9 7 4 | 15 |
+| linear light | 10 10 11 12 12 14 15 17 | 7 |
+| OKLab | 12 13 13 13 12 12 12 13 | **1** |
+
+**OKLab also wins the argument linear light was brought in to settle.** §on the
+palettes chose linear light because sRGB dips through a muddy middle, worst on
+blue to green, which is the trip from listening to working. At that midpoint
+OKLab holds more chroma than either: 0.109 against sRGB's 0.100. So it is not a
+trade at all -- the space that fades evenly is also the one that stays
+saturated.
+
+**Duration is the smaller half but still real.** 700ms is brisk for a
+full-viewport colour change with nothing to track. 1200ms, spread evenly,
+reads as movement rather than a switch.
