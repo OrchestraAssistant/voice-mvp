@@ -39,7 +39,11 @@ export const NEXT_INFRASTRUCTURE = [
   { pattern: /^\/api\/auth\//, why: "authentication handshakes" },
   { pattern: /^\/api\/cron\//, why: "scheduled jobs the app calls itself" },
   { pattern: /^\/api\/webhooks?\b/, why: "inbound webhooks from other services" },
-  { pattern: /^\/api\/trpc\//, why: "the tRPC transport, not an endpoint a user means" },
+  // The catch-all HANDLER, not the procedures behind it. Written to match a
+  // path parameter, because once the tRPC detector can read the router the
+  // individual procedures ARE real endpoints -- and a blanket rule here
+  // filtered all 172 of them away.
+  { pattern: /^\/api\/trpc\/(.*\/)?\{[^}]*\}/, why: "the tRPC transport handler; its procedures are read separately" },
   { pattern: /^\/api\/integrations\//, why: "third-party integration callbacks" },
   { pattern: /\/callback\b/, why: "an OAuth or provider callback" },
   { pattern: /^\/api\/_/, why: "private by naming convention" },

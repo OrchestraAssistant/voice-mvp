@@ -128,6 +128,16 @@ function main() {
     console.warn("  They can be called but cannot change anything. Add a schema, or fill in bodyFields by hand.");
   }
 
+  const toolCount = manifest.queries.length + manifest.actions.length;
+  if (toolCount > 40 && !overlaid.include) {
+    // The tool list rides in the session prompt, so this is a real bill and a
+    // real ask of the model, not a tidiness concern.
+    const tokens = Math.round(JSON.stringify(manifest).length / 4);
+    console.warn(`\n${toolCount} tools is a lot: roughly ${tokens} tokens of prompt prefix, paid on the first`);
+    console.warn(`  response of EVERY session, and ${toolCount} choices for the model on every turn.`);
+    console.warn(`  Add an "include": ["name", ...] array to ${OVERLAY_FILE} to choose which ones ship.`);
+  }
+
   if (conflicts.length) {
     console.warn(`\n${conflicts.length} disagreement(s) between detectors:`);
     for (const c of conflicts) console.warn(`  ${c.kind} ${c.key} (${c.between.join(" vs ")}): ${c.differences.join("; ")}`);

@@ -25,13 +25,13 @@ export const OVERLAY_FILE = "manifest.overlay.json";
 const singular = { routes: "route", queries: "query", actions: "action" };
 
 export function applyOverlay(manifest, overlayPath) {
-  if (!fs.existsSync(overlayPath)) return { applied: [], unmatched: [], named: [] };
+  if (!fs.existsSync(overlayPath)) return { applied: [], unmatched: [], named: [], include: null };
 
   let overlay;
   try {
     overlay = JSON.parse(fs.readFileSync(overlayPath, "utf-8"));
   } catch (err) {
-    return { applied: [], unmatched: [`${OVERLAY_FILE} is not valid JSON: ${err.message}`], named: [] };
+    return { applied: [], unmatched: [`${OVERLAY_FILE} is not valid JSON: ${err.message}`], named: [], include: null };
   }
 
   const applied = [];
@@ -56,5 +56,18 @@ export function applyOverlay(manifest, overlayPath) {
       applied.push(`${singular[kind]} ${patch[key]}`);
     }
   }
-  return { applied, unmatched, named };
+  // `include` narrows to a chosen set. On a small app the whole manifest is
+  // the right answer; on a large one it is not. cal.diy yields 208 tools and
+  // ~23,600 tokens of prompt prefix, paid on the first response of every
+  // session -- and 208 choices is not obviously easier for a model than 20.
+  // Selecting belongs to whoever knows which twenty matter.
+  if (Array.isArray(overlay.include)) {
+    for (const kind of ["queries", "actions"]) {
+      const before = manifest[kind].length;
+      manifest[kind] = manifest[kind].filter((item) => overlay.include.includes(item.name));
+      const dropped = before - manifest[kind].length;
+      if (dropped) applied.push(`include: kept ${manifest[kind].length} of ${before} ${kind}`);
+    }
+  }
+  return { applied, unmatched, named, include: overlay.include ?? null };
 }

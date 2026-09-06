@@ -13,6 +13,7 @@ import { reactRouter } from "./frameworks/react/router.js";
 import { requestHooks } from "./frameworks/react/requestHooks.js";
 import { nextAppRouter, nextPagesRouter } from "./frameworks/next/routes.js";
 import { nextRouteHandlers, nextPagesApi } from "./frameworks/next/api.js";
+import { trpcRouters } from "./frameworks/trpc/router.js";
 import { zodBodies } from "./schema/zod.js";
 import { tsTypes } from "./schema/typescript.js";
 
@@ -24,6 +25,7 @@ export const DETECTORS = [
   nextPagesRouter,
   nextRouteHandlers,
   nextPagesApi,
+  trpcRouters,
 
   // Enrichers: fill in what the producers could not see. Zod before
   // TypeScript on purpose -- writing a schema is a statement of intent about

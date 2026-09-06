@@ -79,12 +79,15 @@ describe("running it the way a consumer would", () => {
 });
 
 describe("what gets published", () => {
-  test("the allowlist ships the binary and nothing else", () => {
+  test("the allowlist ships the code and nothing else", () => {
     // The runtime package restricts itself to dist/; this one shipped whatever
-    // happened to be in the directory.
+    // happened to be in the directory. It is no longer a single file: the
+    // analyser is a core plus a directory per framework, and a published
+    // package missing frameworks/ would resolve nothing at all.
     const pkg = JSON.parse(readFileSync(join(dirname(CLI), "package.json"), "utf8"));
-    assert.deepEqual(pkg.files, ["generate.js"]);
+    assert.deepEqual(pkg.files, ["generate.js", "registry.js", "core", "frameworks", "schema"]);
     assert.equal(pkg.bin["voice-cli"], "./generate.js");
+    assert.ok(!pkg.files.includes("."), "shipping the whole directory is what the allowlist exists to prevent");
   });
 });
 
@@ -420,5 +423,127 @@ describe("TypeScript types close the body gap", () => {
     const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
     assert.deepEqual(m.actions[0].bodyFields, []);
     assert.match(out, /no body fields/);
+  });
+});
+
+describe("tRPC procedures, which have no URLs in the source", () => {
+  const trpcApp = (extra = {}) =>
+    app({
+      "package.json": JSON.stringify({ dependencies: { next: "16", "@trpc/server": "11" } }),
+      "server/routers.ts": `
+        export const scheduleRouter = router({
+          get: authedProcedure.input(ZGetScheduleInput).query(async () => {}),
+          update: authedProcedure.input(ZUpdateScheduleInput).mutation(async () => {}),
+        });
+        export const availabilityRouter = router({
+          list: authedProcedure.query(async () => {}),
+          delete: authedProcedure.input(ZDeleteInput).mutation(async () => {}),
+          schedule: scheduleRouter,
+        });`,
+      "schemas.ts": `
+        export const ZUpdateScheduleInput = z.object({ id: z.number(), name: z.string().optional() });`,
+      "pages/api/trpc/availability/[trpc].ts": `
+        import { availabilityRouter } from "../../../../server/routers";
+        export default createNextApiHandler(availabilityRouter);`,
+      ...extra,
+    });
+
+  test("procedures are read from the router, and the URL from the mount", () => {
+    // There is no URL in the client code to find: tRPC calls procedures by
+    // path and the transport is an implementation detail. Reading the SERVER
+    // is what makes this tractable at all.
+    const root = trpcApp();
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+
+    const list = m.queries.find((q) => q.name === "availabilityList");
+    assert.ok(list, "a .query() procedure did not become a query");
+    assert.equal(list.endpoint, "/api/trpc/availability/list");
+    assert.equal(list.transport, "trpc", "the widget cannot call this as plain REST");
+  });
+
+  test("a nested router becomes a dotted path", () => {
+    // `schedule: scheduleRouter` nests, and the real URL cal.diy serves is
+    // /api/trpc/availability/schedule.update.
+    const root = trpcApp();
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.ok(m.actions.some((a) => a.endpoint === "/api/trpc/availability/schedule.update"));
+  });
+
+  test("the namespace is in the tool name, because procedure names repeat", () => {
+    // `create`, `update` and `delete` appear in nearly every router -- cal.diy
+    // has four of each. Names built from the procedure alone collide, and two
+    // different endpoints become one tool.
+    const root = trpcApp();
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.ok(m.actions.some((a) => a.name === "availabilityDelete"), "the namespace was dropped from the name");
+    assert.ok(!m.actions.some((a) => a.name === "delete"));
+  });
+
+  test("a procedure names its own input schema, so nothing is guessed", () => {
+    // The producer KNOWS: `.input(ZUpdateScheduleInput)` says exactly which
+    // schema describes the body. That beats matching on a shared name.
+    const root = trpcApp();
+    const { out } = run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const update = m.actions.find((a) => a.name === "availabilityScheduleUpdate");
+    assert.deepEqual(update.bodyFields.map((f) => f.name), ["id", "name"]);
+    assert.equal(update.bodyFields.find((f) => f.name === "name").required, false);
+    assert.match(out, /from ZUpdateScheduleInput/);
+  });
+
+  test("the transport handler is excluded but its procedures are not", () => {
+    // The Next detector sees pages/api/trpc/availability/[trpc].ts and calls
+    // it infrastructure, correctly. A blanket /api/trpc rule filtered all 172
+    // real procedures away with it.
+    const root = trpcApp();
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    const endpoints = [...m.queries, ...m.actions].map((x) => x.endpoint);
+    assert.ok(!endpoints.some((e) => e.includes("{trpc}")), "the catch-all handler shipped as a tool");
+    assert.ok(endpoints.includes("/api/trpc/availability/list"), "the procedures went with it");
+  });
+
+  test("a plain Next app is not searched for routers", () => {
+    const root = app({
+      "package.json": JSON.stringify({ dependencies: { next: "16" } }),
+      "app/page.tsx": "export default function P(){}",
+    });
+    const { out } = run(root, ["."]);
+    assert.match(out, /trpc-routers\s+does not apply/);
+  });
+});
+
+describe("choosing what ships, when there is too much of it", () => {
+  test("an include list narrows the manifest", () => {
+    // cal.diy yields 177 readable operations, ~11,700 tokens of prompt prefix
+    // paid on the first response of every session. 177 choices is also not
+    // obviously easier for a model than 20. Selecting belongs to whoever knows
+    // which twenty matter.
+    const root = app({
+      "package.json": "{}",
+      "src/api.js": `
+        async function request(u, o) {}
+        export function useTasks() { return useQuery({ queryFn: () => request("/api/tasks") }); }
+        export function useSecrets() { return useQuery({ queryFn: () => request("/api/secrets") }); }`,
+      ".voice/manifest.overlay.json": JSON.stringify({ include: ["tasks"] }),
+    });
+    run(root);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.deepEqual(m.queries.map((q) => q.name), ["tasks"]);
+  });
+
+  test("without one, a large manifest says what it will cost", () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 45 }, (_, i) => [`src/api${i}.js`, `
+        async function request(u) {}
+        export function useThing${i}() { return useQuery({ queryFn: () => request("/api/t${i}") }); }`]),
+    );
+    const { out } = run(app({ "package.json": "{}", ...many }));
+    assert.match(out, /tools is a lot/);
+    assert.match(out, /tokens of prompt prefix/);
+    assert.match(out, /include/);
   });
 });

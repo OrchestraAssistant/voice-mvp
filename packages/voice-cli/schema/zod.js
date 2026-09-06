@@ -1,4 +1,5 @@
 import traverse from "@babel/traverse";
+import path from "node:path";
 import { parseFile, walk } from "../core/parse.js";
 
 /**
@@ -42,10 +43,50 @@ export const zodBodies = {
   role: "enricher",
   describe: "z.object({...}) schemas beside the form that submits them",
 
-  run({ srcDir, actions = [] }) {
+  run({ srcDir, root, actions = [] }) {
     if (!actions.length) return {};
     const visit = traverse.default ?? traverse;
     const enriched = [];
+
+    // A producer that KNOWS which schema describes its input says so, and
+    // that beats every heuristic below. tRPC procedures declare it outright
+    // with `.input(ZDeleteInputSchema)`, so there is nothing left to guess.
+    const named = actions.filter((a) => a._inputSchema && !a.bodyFields?.length);
+    if (named.length) {
+      const byName = new Map();
+      for (const dir of [...new Set([srcDir, root, path.resolve(root ?? srcDir, "..", "..")])]) {
+        for (const file of walk(dir, (n) => /\.tsx?$/.test(n))) {
+          let ast;
+          try {
+            ast = parseFile(file);
+          } catch {
+            continue;
+          }
+          visit(ast, {
+            VariableDeclarator(nodePath) {
+              const { id, init } = nodePath.node;
+              if (id.type !== "Identifier" || byName.has(id.name)) return;
+              if (
+                init?.type === "CallExpression" &&
+                init.callee?.type === "MemberExpression" &&
+                init.callee.object?.name === "z" &&
+                init.callee.property?.name === "object" &&
+                init.arguments[0]?.type === "ObjectExpression"
+              ) {
+                byName.set(id.name, fieldsOf(init.arguments[0]));
+              }
+            },
+          });
+        }
+        if (byName.size) break;
+      }
+      for (const action of named) {
+        const fields = byName.get(action._inputSchema);
+        if (!fields) continue;
+        action.bodyFields = fields;
+        enriched.push(`${action.name} from ${action._inputSchema}`);
+      }
+    }
 
     for (const file of walk(srcDir, (n) => /\.(t|j)sx?$/.test(n))) {
       let ast;
