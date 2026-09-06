@@ -1,5 +1,5 @@
 import traverse from "@babel/traverse";
-import { parseFile, walk } from "../shared.js";
+import { parseFile, walk } from "../../core/parse.js";
 
 /**
  * React Router's declarative form: <Route path="/tasks/:id" element={<X/>} />.
@@ -10,6 +10,7 @@ import { parseFile, walk } from "../shared.js";
  */
 export const reactRouter = {
   name: "react-router",
+  role: "producer",
   describe: "<Route path=... element={<X/>} /> elements",
 
   run({ srcDir }) {

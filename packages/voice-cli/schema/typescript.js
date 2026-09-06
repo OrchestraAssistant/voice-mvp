@@ -1,5 +1,5 @@
 import traverse from "@babel/traverse";
-import { parseFile, walk } from "../shared.js";
+import { parseFile, walk } from "../core/parse.js";
 
 /**
  * Request body shapes, read from TypeScript.
@@ -79,6 +79,7 @@ const candidateNames = (typeName) => {
 
 export const tsTypes = {
   name: "typescript-types",
+  role: "enricher",
   describe: "type aliases and interfaces naming an action's input",
 
   run({ srcDir, actions = [] }) {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { firstDir, walk } from "../shared.js";
+import { firstDir, walk } from "../../core/parse.js";
+import { isNextApp } from "./detect.js";
 
 /**
  * Next.js routes the filesystem, so there is nothing in the source to parse:
@@ -42,29 +43,9 @@ function pagesRouterPath(relFile) {
   return "/" + parts.map(segmentToParam).join("/");
 }
 
-/**
- * Is this actually a Next.js app?
- *
- * Without this check the Pages Router detector claimed four routes from a
- * plain React app that happened to keep its components in `src/pages/` -- a
- * directory name with no framework meaning whatsoever. A detector that fires
- * on a coincidence is worse than one that finds nothing, because what it
- * produces looks exactly like a real result.
- */
-export function isNextApp(root) {
-  if (["next.config.js", "next.config.ts", "next.config.mjs"].some((f) => fs.existsSync(path.join(root, f)))) return true;
-  const pkgPath = path.join(root, "package.json");
-  if (!fs.existsSync(pkgPath)) return false;
-  try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    return Boolean(pkg.dependencies?.next || pkg.devDependencies?.next);
-  } catch {
-    return false;
-  }
-}
-
 export const nextAppRouter = {
   name: "next-app-router",
+  role: "producer",
   describe: "app/**/page.tsx, the filesystem as the router",
   applies: ({ root }) => isNextApp(root),
 
@@ -84,6 +65,7 @@ export const nextAppRouter = {
 
 export const nextPagesRouter = {
   name: "next-pages-router",
+  role: "producer",
   describe: "pages/**/*.tsx, the older filesystem router",
   applies: ({ root }) => isNextApp(root),
 

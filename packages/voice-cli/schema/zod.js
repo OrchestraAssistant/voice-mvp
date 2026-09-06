@@ -1,5 +1,5 @@
 import traverse from "@babel/traverse";
-import { parseFile, walk } from "../shared.js";
+import { parseFile, walk } from "../core/parse.js";
 
 /**
  * Request body shapes, read from Zod schemas.
@@ -39,6 +39,7 @@ function fieldsOf(objectExpression) {
 
 export const zodBodies = {
   name: "zod-bodies",
+  role: "enricher",
   describe: "z.object({...}) schemas beside the form that submits them",
 
   run({ srcDir, actions = [] }) {

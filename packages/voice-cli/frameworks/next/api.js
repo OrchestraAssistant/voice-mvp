@@ -1,7 +1,7 @@
 import path from "node:path";
 import traverse from "@babel/traverse";
-import { firstDir, parseFile, walk } from "../shared.js";
-import { isNextApp } from "./nextRoutes.js";
+import { firstDir, parseFile, walk } from "../../core/parse.js";
+import { isNextApp, NEXT_INFRASTRUCTURE } from "./detect.js";
 
 /**
  * Next.js's own API layers, both of them.
@@ -90,6 +90,8 @@ function entryFor({ method, endpoint, urlParams, queryParams, source }) {
 
 export const nextRouteHandlers = {
   name: "next-route-handlers",
+  role: "producer",
+  excludes: NEXT_INFRASTRUCTURE,
   describe: "app/**/route.ts exporting GET/POST/PUT/PATCH/DELETE",
   applies: ({ root }) => isNextApp(root),
 
@@ -137,6 +139,8 @@ export const nextRouteHandlers = {
 
 export const nextPagesApi = {
   name: "next-pages-api",
+  role: "producer",
+  excludes: NEXT_INFRASTRUCTURE,
   describe: "pages/api/**/*.ts, with methods read from req.method branches",
   applies: ({ root }) => isNextApp(root),
 

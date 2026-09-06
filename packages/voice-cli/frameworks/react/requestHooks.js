@@ -1,5 +1,5 @@
 import traverse from "@babel/traverse";
-import { dedupeBy, objectProp, parseFile, toolName, walk, walkCalls } from "../shared.js";
+import { dedupeBy, objectProp, parseFile, toolName, walk, walkCalls } from "../../core/parse.js";
 
 /**
  * Exported hooks that wrap a fetch helper: useQuery/useMutation plus a call to
@@ -92,6 +92,7 @@ function urlFrom(node, constants) {
 
 export const requestHooks = {
   name: "request-hooks",
+  role: "producer",
   describe: "exported hooks calling useQuery/useMutation plus a fetch helper",
 
   run({ srcDir }) {

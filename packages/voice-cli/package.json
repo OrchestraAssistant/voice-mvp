@@ -18,6 +18,10 @@
     "@babel/traverse": "^8.0.4"
   },
   "files": [
-    "generate.js"
+    "generate.js",
+    "registry.js",
+    "core",
+    "frameworks",
+    "schema"
   ]
 }

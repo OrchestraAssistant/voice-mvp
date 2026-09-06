@@ -13,18 +13,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { reactRouter } from "./detectors/reactRouter.js";
-import { nextAppRouter, nextPagesRouter } from "./detectors/nextRoutes.js";
-import { nextRouteHandlers, nextPagesApi } from "./detectors/nextApi.js";
-import { requestHooks } from "./detectors/requestHooks.js";
-import { zodBodies } from "./detectors/zodBodies.js";
-import { tsTypes } from "./detectors/tsTypes.js";
-import { merge } from "./merge.js";
-import { OVERLAY_FILE, applyOverlay } from "./overlay.js";
-import { excludeInfrastructure } from "./exclude.js";
-
-// Order matters only for enrichers, which read what earlier detectors found.
-const DETECTORS = [reactRouter, nextAppRouter, nextPagesRouter, nextRouteHandlers, nextPagesApi, requestHooks, zodBodies, tsTypes];
+import { DETECTORS } from "./registry.js";
+import { runDetectors, activeExcludes } from "./core/run.js";
+import { merge } from "./core/merge.js";
+import { OVERLAY_FILE, applyOverlay } from "./core/overlay.js";
+import { excludeInfrastructure } from "./core/exclude.js";
 
 const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
 
@@ -79,27 +72,8 @@ function main() {
     process.exit(1);
   }
 
-  const context = { srcDir: SRC_DIR, root: ROOT, routes: [], queries: [], actions: [] };
-  const results = [];
-  for (const detector of DETECTORS) {
-    // "Does not apply" is a different answer from "found nothing", and
-    // conflating them hides the case that matters: a detector firing on a
-    // coincidence, which produces results indistinguishable from real ones.
-    if (detector.applies && !detector.applies(context)) {
-      results.push({ detector: detector.name, found: {}, skipped: true });
-      continue;
-    }
-    let found;
-    try {
-      found = detector.run(context) ?? {};
-    } catch (err) {
-      console.warn(`  ${detector.name} failed: ${err.message}`);
-      found = {};
-    }
-    results.push({ detector: detector.name, found });
-    // Enrichers read what earlier detectors produced, so the context grows.
-    for (const kind of ["routes", "queries", "actions"]) context[kind].push(...(found[kind] ?? []));
-  }
+  const { results } = runDetectors(DETECTORS, { srcDir: SRC_DIR, root: ROOT });
+  for (const r of results) if (r.failed) console.warn(`  ${r.detector} failed: ${r.failed}`);
 
   const { manifest, conflicts, notes, sources } = merge(results);
   manifest.actions.forEach((a) => delete a._hookName);
@@ -108,7 +82,9 @@ function main() {
   // should be handed is another. Anything named in the overlay is kept, since
   // naming it there is a deliberate act.
   const overlaid = applyOverlay(manifest, path.join(OUT_DIR, OVERLAY_FILE));
-  const excluded = excludeInfrastructure(manifest, overlaid.named);
+  // Only the frameworks that actually applied get a say in what counts as
+  // infrastructure, so a React app is never filtered by Next.js conventions.
+  const excluded = excludeInfrastructure(manifest, activeExcludes(DETECTORS, results), overlaid.named);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const outFile = path.join(OUT_DIR, "manifest.json");
@@ -120,11 +96,12 @@ function main() {
   console.log(`  actions: ${manifest.actions.length} (${manifest.actions.filter((a) => a.requiresConfirmation).length} require confirmation)`);
 
   console.log("\nDetectors:");
-  for (const { detector, found, skipped } of results) {
+  for (const { detector, found, skipped, failed } of results) {
     const counts = ["routes", "queries", "actions"].map((k) => (found[k] ?? []).length);
     const total = counts.reduce((a, b) => a + b, 0);
     const which = DETECTORS.find((d) => d.name === detector);
-    if (skipped) console.log(`  ${detector.padEnd(20)} does not apply to this app`);
+    if (failed) console.log(`  ${detector.padEnd(20)} failed: ${failed}`);
+    else if (skipped) console.log(`  ${detector.padEnd(20)} does not apply to this app`);
     else if (total || (found.notes ?? []).length) console.log(`  ${detector.padEnd(20)} ${counts[0]} routes, ${counts[1]} queries, ${counts[2]} actions`);
     else console.log(`  ${detector.padEnd(20)} nothing -- looked for ${which.describe}`);
   }
