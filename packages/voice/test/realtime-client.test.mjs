@@ -333,12 +333,28 @@ describe("the agent is busy for the whole turn", () => {
 });
 
 describe("what the log can now explain", () => {
-  test("activity is recorded, and only when it changes", () => {
-    // Without it the log could say a tool ran but never what the user was
-    // being SHOWN while it ran, which is the one thing needed to explain
-    // "nothing was happening" after the fact.
-    assert.match(source, /record\(\{ type: "activity"/);
-    assert.match(source, /if \(key !== lastActivity\)/);
+  test("activity is recorded and reported, and only when it changes", async () => {
+    // Two reasons, and the second is why this is a behaviour test now rather
+    // than a look at the source. The log has to be able to say what the user
+    // was being SHOWN while a tool ran, which is the one thing that explains
+    // "nothing was happening" afterwards. And `onActivity` is React state in
+    // the provider, handed a fresh object every call -- so reporting an
+    // unchanged value re-renders the whole widget, rim included, for nothing.
+    const seen = [];
+    const { transport, events } = await fakeSession({ onActivity: (a) => seen.push(a) });
+    await transport.play([
+      { type: "input_audio_buffer.speech_started" },
+      { type: "input_audio_buffer.speech_started" },
+      { type: "input_audio_buffer.speech_stopped" },
+      { type: "input_audio_buffer.speech_stopped" },
+    ]);
+    assert.deepEqual(
+      seen.map((a) => `${a.userSpeaking}/${a.agentBusy}`),
+      ["true/false", "false/false"],
+      "an unchanged activity was reported again",
+    );
+    const recorded = events.filter((e) => e.type === "activity");
+    assert.equal(recorded.length, 2, "an unchanged activity was recorded again");
   });
 
   test("a response records why it ended", () => {

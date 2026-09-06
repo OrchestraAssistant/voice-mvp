@@ -248,10 +248,13 @@ export async function connectRealtimeSession({
   const reportActivity = () => {
     const state = { userSpeaking, agentBusy: responseActive || audioPlaying || toolsRunning > 0 };
     const key = `${state.userSpeaking}/${state.agentBusy}`;
-    if (key !== lastActivity) {
-      lastActivity = key;
-      record({ type: "activity", ...state, because: { responseActive, audioPlaying, toolsRunning } });
-    }
+    // Reported as well as recorded only on a real change. `onActivity` is
+    // React state in the provider and this is a fresh object every call, so
+    // firing it on every event re-rendered the whole widget -- rim included --
+    // for a value that had not moved.
+    if (key === lastActivity) return;
+    lastActivity = key;
+    record({ type: "activity", ...state, because: { responseActive, audioPlaying, toolsRunning } });
     onActivity?.(state);
   };
 
