@@ -41,8 +41,10 @@ describe("warming", () => {
 
   test("the audio sender is negotiated up front so no renegotiation is needed", () => {
     // replaceTrack does not renegotiate; addTrack after the fact would need a
-    // second offer/answer, which this endpoint may not accept.
-    const c = src("realtimeClient.js");
+    // second offer/answer, which this endpoint may not accept. This lives in
+    // webrtcTransport.js now: the protocol was separated from the wire so the
+    // protocol could be driven by a test instead of grepped for.
+    const c = src("webrtcTransport.js");
     assert.match(c, /addTransceiver\("audio", \{ direction: "sendrecv" \}\)/);
     assert.match(c, /sender\.replaceTrack\(micTrack\)/);
   });

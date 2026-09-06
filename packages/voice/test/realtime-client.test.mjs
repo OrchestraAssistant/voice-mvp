@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decideModality, defaultReplyModality, readyToHangUp, sessionUpdate } from "../src/realtimeClient.js";
+import { fakeSession } from "./fakeTransport.mjs";
 
 const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/realtimeClient.js"), "utf8");
 
@@ -272,12 +273,18 @@ describe("hang-up wiring", () => {
     assert.match(source, /lastTurnWasSpoken = false;/);
   });
 
-  test("releasing the mic is not closing the session", () => {
+  test("releasing the mic is not closing the session", async () => {
     // The two are separate on purpose: prompt caching is session-scoped, so
     // closing is the expensive way to pause.
-    assert.match(source, /async releaseMic\(\)/);
-    assert.match(source, /micTrack\.stop\(\);\s*\n\s*micTrack = null;/);
-    assert.doesNotMatch(source, /async releaseMic\(\)[\s\S]{0,400}pc\.close\(\)/);
+    // Behaviour, not text: releasing the microphone must leave the channel
+    // usable, because prompt caching is session-scoped and closing is the
+    // expensive way to pause.
+    const { session, transport } = await fakeSession({ withMic: true });
+    assert.equal(transport.hasMic(), true);
+    await session.releaseMic();
+    assert.equal(transport.hasMic(), false, "the microphone was not released");
+    session.sendTextTurn("still here?");
+    assert.ok(transport.ofType("response.create").length > 0, "the session died with the microphone");
   });
 });
 

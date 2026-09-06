@@ -8,6 +8,8 @@
 // for a response on release), or "ptnt" ("push to not talk" -- the mirror
 // image: mic starts live and VAD keeps driving turns, caller mutes only
 // while held, e.g. to say something off to the side without being heard).
+import { webrtcTransport } from "./webrtcTransport.js";
+
 /**
  * Every session.update has to carry `session.type`, and getting it wrong fails
  * in the worst available way: the API answers with an async `error` event on
@@ -146,6 +148,9 @@ export async function connectRealtimeSession({
   // one can be attached later without renegotiating -- which matters because
   // it is not clear the endpoint would accept a second offer/answer.
   withMic = true,
+  // How to reach the world. Replaced in tests by an in-memory channel, which
+  // is what makes the protocol testable at all.
+  openTransport = webrtcTransport,
 }) {
   // Structured record of what actually happened, for whoever wants it. Emitted
   // here rather than reconstructed by a caller, because most of it -- which
@@ -167,29 +172,17 @@ export async function connectRealtimeSession({
     premintedBy: isUsable(minted) ? Math.round((Date.now() - (minted.expiresAt - 600_000)) / 1000) : null,
   });
 
-  const pc = new RTCPeerConnection();
-
-  const audioEl = document.createElement("audio");
-  audioEl.autoplay = true;
-  pc.ontrack = (event) => {
-    audioEl.srcObject = event.streams[0];
-  };
-
-  // The audio sender is negotiated NOW, with or without a track in it, so a
-  // microphone attached later needs only replaceTrack() -- which does not
-  // renegotiate. addTrack() after the fact would need a second offer/answer,
-  // and it is not clear this endpoint accepts one.
-  const sender = pc.addTransceiver("audio", { direction: "sendrecv" }).sender;
-  let micTrack = null;
+  // Everything that touches WebRTC lives behind this, so a test can supply
+  // an object with `send` and `addEventListener` and drive the protocol
+  // directly. See webrtcTransport.js for why.
+  const transport = openTransport({ initialMode });
+  const dc = transport.channel;
 
   async function attachMic() {
-    if (micTrack) return micTrack;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micTrack = stream.getAudioTracks()[0];
-    micTrack.enabled = initialMode !== "ptt"; // ptt rests muted; the others rest live
-    await sender.replaceTrack(micTrack);
-    record({ type: "mic_attached" });
-    return micTrack;
+    const already = transport.hasMic();
+    const track = await transport.attachMic();
+    if (!already) record({ type: "mic_attached" });
+    return track;
   }
 
   if (withMic) await attachMic();
@@ -267,7 +260,6 @@ export async function connectRealtimeSession({
   // must not answer it here as well -- that would be two responses per turn.
   let serverTurns = initialMode !== "ptt";
 
-  const dc = pc.createDataChannel("oai-events");
 
   /**
    * Ask for a response. This is the whole of what `create_response: false`
@@ -543,22 +535,7 @@ export async function connectRealtimeSession({
     }
   });
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-
-  const sdpRes = await fetch("https://api.openai.com/v1/realtime/calls", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${ephemeralKey}`,
-      "Content-Type": "application/sdp",
-    },
-    body: offer.sdp,
-  });
-  if (!sdpRes.ok) {
-    throw new Error(`Realtime SDP exchange failed: ${sdpRes.status}`);
-  }
-  const answerSdp = await sdpRes.text();
-  await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+  await transport.connect(ephemeralKey);
   await opened;
 
   return {
@@ -569,10 +546,7 @@ export async function connectRealtimeSession({
       audioPlaying = false;
       responseActive = false;
       reportActivity();
-      dc.close();
-      micTrack = null;
-      pc.getSenders().forEach((s) => s.track?.stop());
-      pc.close();
+      transport.close();
       onStatus?.("closed");
     },
     sendTextTurn(text) {
@@ -605,12 +579,7 @@ export async function connectRealtimeSession({
      * expensive way to pause.
      */
     async releaseMic() {
-      if (!micTrack) return;
-      micTrack.stop();
-      micTrack = null;
-      // Order matters: null the field first, so an attachMic() racing this
-      // does not hand back a track that is already stopped.
-      await sender.replaceTrack(null);
+      if (!(await transport.releaseMic())) return;
       userSpeaking = false;
       reportActivity();
       record({ type: "mic_released" });
@@ -619,10 +588,8 @@ export async function connectRealtimeSession({
     // --- PTT / PTNT primitives, all on this same connection + history ---
 
     attachMic,
-    hasMic: () => !!micTrack,
-    setMicEnabled(enabled) {
-      if (micTrack) micTrack.enabled = enabled;
-    },
+    hasMic: () => transport.hasMic(),
+    setMicEnabled: (enabled) => transport.setMicEnabled(enabled),
     // auto=true restores server VAD (continuous); auto=false switches to
     // manual turn detection (push-to-talk decides turn end itself).
     setTurnDetection(auto) {
