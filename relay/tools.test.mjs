@@ -254,8 +254,12 @@ describe("what a query returns", () => {
   });
 
   test("a manifest that has never been probed reads exactly as before", () => {
-    // Most manifests will not have this. It has to be additive.
-    const tool = buildTools(manifest).find((t) => t.name === "query_tasks");
+    // Most manifests will not have this. It has to be additive. Built from a
+    // copy with the field removed rather than from the demo's own manifest,
+    // which has since been probed and legitimately carries one.
+    const unprobed = JSON.parse(JSON.stringify(manifest));
+    unprobed.queries.forEach((q) => delete q.returns);
+    const tool = buildTools(unprobed).find((t) => t.name === "query_tasks");
     assert.doesNotMatch(tool.description, /Returns/);
   });
 

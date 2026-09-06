@@ -204,7 +204,7 @@ describe("hand corrections survive regeneration", () => {
     const { out } = run(root);
     const manifest = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
     assert.equal(manifest.queries[0].description, "List every task, newest first");
-    assert.match(out, /1 correction\(s\) applied/);
+    assert.match(out, /hand-corrections: 1 correction\(s\)/);
     // And the overlay itself is untouched.
     const overlay = JSON.parse(readFileSync(join(root, ".voice/manifest.overlay.json"), "utf8"));
     assert.equal(overlay.queries[0].description, "List every task, newest first");
@@ -232,7 +232,7 @@ describe("hand corrections survive regeneration", () => {
     });
     const { out } = run(root);
     assert.match(out, /renamedAwayLongAgo/);
-    assert.match(out, /Stale, or a name that changed/);
+    assert.match(out, /which no detector found/);
   });
 });
 
@@ -310,9 +310,8 @@ describe("discovery is not exposure", () => {
     // the tool list rides in the session prompt: they took the prefix from
     // ~2,500 tokens to ~10,900, paid on the first response of every session.
     const { out } = run(infra(), ["."]);
-    assert.match(out, /left out as infrastructure/);
-    assert.match(out, /scheduled jobs the app calls itself/);
-    assert.match(out, /Name one in manifest\.overlay\.json to keep it/, "excluding silently would be worse than not excluding");
+    assert.match(out, /infrastructure: \d+ endpoint\(s\) left out/);
+    assert.match(out, /scheduled jobs the app calls itself/, "excluding silently would be worse than not excluding");
   });
 
   test("what a person would actually ask for survives", () => {

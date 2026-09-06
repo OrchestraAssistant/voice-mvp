@@ -17,8 +17,11 @@ import { trpcRouters } from "./frameworks/trpc/router.js";
 import { zodBodies } from "./schema/zod.js";
 import { tsTypes } from "./schema/typescript.js";
 import { pageMetadata } from "./schema/pageMetadata.js";
+import { callSites } from "./stages/callSites.js";
+import { handCorrections } from "./stages/handCorrections.js";
+import { infrastructure } from "./stages/infrastructure.js";
 
-export const DETECTORS = [
+export const STAGES = [
   // Producers: find the operations.
   reactRouter,
   requestHooks,
@@ -35,4 +38,14 @@ export const DETECTORS = [
   zodBodies,
   tsTypes,
   pageMetadata,
+  callSites,
+
+  // Policies: what the result should look like, rather than what is in it.
+  // Hand corrections first, because naming something there is a deliberate act
+  // that outranks the exclusion default.
+  handCorrections,
+  infrastructure,
 ];
+
+/** The old name, kept because "detector" reads better for the producers. */
+export const DETECTORS = STAGES;

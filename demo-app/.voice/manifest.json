@@ -1,5 +1,15 @@
 {
   "generatedAt": "static-analysis",
+  "generatedBy": [
+    "react-router",
+    "request-hooks",
+    "zod-bodies",
+    "typescript-types",
+    "page-metadata",
+    "call-sites",
+    "hand-corrections",
+    "infrastructure"
+  ],
   "routes": [
     {
       "path": "/",
@@ -31,7 +41,18 @@
           "required": false,
           "source": "query-string"
         }
-      ]
+      ],
+      "callSites": 3,
+      "returns": {
+        "kind": "array",
+        "of": [
+          "id",
+          "title",
+          "done",
+          "dueDate",
+          "notes"
+        ]
+      }
     },
     {
       "name": "task",
@@ -45,14 +66,24 @@
           "required": true,
           "source": "url"
         }
-      ]
+      ],
+      "callSites": 3
     },
     {
       "name": "settings",
       "description": "Read the user's settings: display name, email, theme",
       "method": "GET",
       "endpoint": "/api/settings",
-      "params": []
+      "params": [],
+      "callSites": 2,
+      "returns": {
+        "kind": "object",
+        "fields": [
+          "name",
+          "email",
+          "theme"
+        ]
+      }
     }
   ],
   "actions": [
@@ -79,7 +110,8 @@
           "required": false,
           "type": "string"
         }
-      ]
+      ],
+      "callSites": 3
     },
     {
       "name": "updateTask",
@@ -106,7 +138,8 @@
           "required": false,
           "type": "string"
         }
-      ]
+      ],
+      "callSites": 3
     },
     {
       "name": "deleteTask",
@@ -122,7 +155,8 @@
         }
       ],
       "requiresConfirmation": true,
-      "bodyFields": []
+      "bodyFields": [],
+      "callSites": 3
     },
     {
       "name": "updateSettings",
@@ -151,7 +185,8 @@
             "dark"
           ]
         }
-      ]
+      ],
+      "callSites": 2
     }
   ]
 }

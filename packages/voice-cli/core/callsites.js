@@ -33,8 +33,21 @@ export function countCallSites(operations, roots) {
 
   const counts = new Map();
   for (const operation of operations) {
-    const needle = searchTermFor(operation);
-    counts.set(operation.name, needle ? sources.filter((s) => s.includes(needle)).length : null);
+    const needles = searchTermsFor(operation);
+    if (!needles.length) {
+      counts.set(operation.name, null);
+      continue;
+    }
+    // The first needle that finds anything wins. A URL assembled from a
+    // constant prefix -- `${BASE}/tasks` -- contains the literal "/api/tasks"
+    // nowhere in the source, so searching only for the resolved endpoint
+    // reported every operation in such an app as called by nothing.
+    let count = 0;
+    for (const needle of needles) {
+      count = sources.filter((s) => s.includes(needle)).length;
+      if (count) break;
+    }
+    counts.set(operation.name, count);
   }
   return counts;
 }
@@ -47,6 +60,28 @@ export function countCallSites(operations, roots) {
  * that will match. A REST endpoint is searched by its literal path with any
  * parameter placeholder cut off, since the text after it is interpolated.
  */
+/**
+ * What to look for, most specific first.
+ *
+ * The resolved endpoint is the best needle when it appears literally. When the
+ * app builds it from a prefix constant, which is the common case, the path
+ * without its first segment is what is actually written down.
+ */
+export function searchTermsFor(operation) {
+  const exact = searchTermFor(operation);
+  if (!exact) return [];
+  if (!exact.startsWith("/")) return [exact];
+
+  const terms = [exact];
+  const segments = exact.split("/").filter(Boolean);
+  if (segments.length > 1) {
+    const withoutPrefix = `/${segments.slice(1).join("/")}`;
+    // Short enough to match anything is worse than not looking.
+    if (withoutPrefix.length >= 5) terms.push(withoutPrefix);
+  }
+  return terms;
+}
+
 export function searchTermFor(operation) {
   const endpoint = operation.endpoint ?? "";
   if (operation.transport === "trpc" || endpoint.includes("/api/trpc/")) {

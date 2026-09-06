@@ -13,12 +13,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { DETECTORS } from "./registry.js";
-import { runDetectors, activeExcludes } from "./core/run.js";
+import { STAGES } from "./registry.js";
+import { runDetectors, selectStages } from "./core/run.js";
 import { merge } from "./core/merge.js";
-import { OVERLAY_FILE, applyOverlay } from "./core/overlay.js";
-import { excludeInfrastructure } from "./core/exclude.js";
-import { countCallSites } from "./core/callsites.js";
+import { OVERLAY_FILE } from "./core/overlay.js";
 
 const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
 
@@ -27,11 +25,31 @@ const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
   srcDir   where the app's source lives   (default: ./src, falling back to .)
   outDir   where the manifest is written  (default: ./.voice)
 
-Run it from your app's root. Every detector that fired is listed in the output,
-along with every one that found nothing and why.`;
+  --stages            list every stage and what it does
+  --only <names>      run only these, comma-separated
+  --without <names>   run everything except these
+
+Run it from your app's root. Every stage that fired is listed in the output,
+along with every one that found nothing and why. --only and --without exist so
+a configuration can be tested by running it rather than by checking out an old
+commit.`;
+
+/** Repeatable, comma-separated: --without call-sites,trpc-routers */
+const valued = (name) => {
+  const out = [];
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === name) out.push(...(process.argv[++i] ?? "").split(",").filter(Boolean));
+  }
+  return out;
+};
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(USAGE);
+  process.exit(0);
+}
+
+if (process.argv.includes("--stages")) {
+  for (const stage of STAGES) console.log(`  ${stage.role.padEnd(9)} ${stage.name.padEnd(21)} ${stage.describe}`);
   process.exit(0);
 }
 
@@ -73,69 +91,76 @@ function main() {
     process.exit(1);
   }
 
-  const { results } = runDetectors(DETECTORS, { srcDir: SRC_DIR, root: ROOT });
+  const { stages, unknown } = selectStages(STAGES, {
+    only: valued("--only"),
+    without: valued("--without"),
+  });
+  for (const name of unknown) console.warn(`  no stage called "${name}"; run --stages to list them`);
+
+  // Producers and enrichers fill a pile; policies reshape the merged result.
+  // Merging happens between the two, which is why the runner asks for it here
+  // rather than deciding when it happens itself.
+  let merged = null;
+  const { results, context } = runDetectors(stages, {
+    srcDir: SRC_DIR,
+    root: ROOT,
+    outDir: OUT_DIR,
+    stages,
+    onPhase(role, ctx, soFar) {
+      if (role !== "policy") return null;
+      merged = merge(soFar);
+      merged.manifest.actions.forEach((a) => {
+        delete a._hookName;
+        delete a._inputSchema;
+      });
+      merged.manifest.routes.forEach((r) => delete r._file);
+      return { manifest: merged.manifest, results: soFar };
+    },
+  });
+  if (!merged) merged = merge(results);
+  const { manifest, conflicts, notes } = merged;
   for (const r of results) if (r.failed) console.warn(`  ${r.detector} failed: ${r.failed}`);
-
-  const { manifest, conflicts, notes, sources } = merge(results);
-  manifest.actions.forEach((a) => delete a._hookName);
-  // Internal, carried between detectors and never shipped: a file path in the
-  // manifest would be a path from someone else's machine in the model's prompt.
-  manifest.routes.forEach((r) => delete r._file);
-  manifest.actions.forEach((a) => delete a._inputSchema);
-
-  // Policy, not detection: what was found is one question, what a voice agent
-  // should be handed is another. Anything named in the overlay is kept, since
-  // naming it there is a deliberate act.
-  const overlaid = applyOverlay(manifest, path.join(OUT_DIR, OVERLAY_FILE));
-  // Only the frameworks that actually applied get a say in what counts as
-  // infrastructure, so a React app is never filtered by Next.js conventions.
-  const excluded = excludeInfrastructure(manifest, activeExcludes(DETECTORS, results), overlaid.named);
-
-  // How often the app's own code calls each operation. Recorded rather than
-  // acted on: zero is a strong signal and still only a signal, since an
-  // endpoint added last week for a page shipping next week counts zero and is
-  // perfectly real. Whoever writes the include list should see it.
-  const counts = countCallSites([...manifest.queries, ...manifest.actions], [SRC_DIR, ROOT]);
-  const uncalled = [];
-  for (const op of [...manifest.queries, ...manifest.actions]) {
-    const count = counts.get(op.name);
-    if (count === null || count === undefined) continue;
-    op.callSites = count;
-    if (count === 0) uncalled.push(op.name);
-  }
+  const include = context.include ?? null;
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const outFile = path.join(OUT_DIR, "manifest.json");
-  fs.writeFileSync(outFile, JSON.stringify({ generatedAt: "static-analysis", ...manifest }, null, 2));
+  // Stamped with what produced it. Comparing versions of this tool meant
+  // checking out nine commits; a manifest that says which stages made it can
+  // be read back without guessing.
+  const stamp = {
+    generatedAt: "static-analysis",
+    generatedBy: results.filter((r) => !r.skipped && !r.failed).map((r) => r.detector),
+  };
+  fs.writeFileSync(outFile, JSON.stringify({ ...stamp, ...manifest }, null, 2));
 
   console.log(`Wrote manifest: ${outFile}`);
   console.log(`  routes:  ${manifest.routes.length}`);
   console.log(`  queries: ${manifest.queries.length}`);
   console.log(`  actions: ${manifest.actions.length} (${manifest.actions.filter((a) => a.requiresConfirmation).length} require confirmation)`);
 
-  console.log("\nDetectors:");
-  for (const { detector, found, skipped, failed } of results) {
+  console.log("\nStages:");
+  for (const { detector, role, found, skipped, failed } of results) {
     const counts = ["routes", "queries", "actions"].map((k) => (found[k] ?? []).length);
     const total = counts.reduce((a, b) => a + b, 0);
-    const which = DETECTORS.find((d) => d.name === detector);
-    if (failed) console.log(`  ${detector.padEnd(20)} failed: ${failed}`);
-    else if (skipped) console.log(`  ${detector.padEnd(20)} does not apply to this app`);
-    else if (total || (found.notes ?? []).length) console.log(`  ${detector.padEnd(20)} ${counts[0]} routes, ${counts[1]} queries, ${counts[2]} actions`);
-    else console.log(`  ${detector.padEnd(20)} nothing -- looked for ${which.describe}`);
+    const which = stages.find((d) => d.name === detector);
+    const label = `  ${role.padEnd(9)} ${detector.padEnd(21)}`;
+    if (failed) console.log(`${label} failed: ${failed}`);
+    else if (skipped) console.log(`${label} does not apply to this app`);
+    else if (total) console.log(`${label} ${counts[0]} routes, ${counts[1]} queries, ${counts[2]} actions`);
+    else if ((found.notes ?? []).length) console.log(`${label} ${found.notes[0]}`);
+    else console.log(`${label} nothing -- looked for ${which.describe}`);
   }
   for (const note of notes) console.log(`  ${note}`);
-  if (overlaid.applied.length) {
-    console.log(`\n${OVERLAY_FILE}: ${overlaid.applied.length} correction(s) applied -- ${overlaid.applied.join(", ")}`);
+  // Every stage says what it did in its own words, so the report needs no
+  // knowledge of which stages exist.
+  for (const { detector, found } of results) {
+    for (const note of found.notes ?? []) console.log(`  ${detector}: ${note}`);
   }
-  if (excluded.length) {
-    const byReason = new Map();
-    for (const e of excluded) byReason.set(e.why, (byReason.get(e.why) ?? 0) + 1);
-    console.log(`\n${excluded.length} endpoint(s) left out as infrastructure:`);
-    for (const [why, count] of byReason) console.log(`  ${String(count).padStart(3)}  ${why}`);
-    console.log(`  Name one in ${OVERLAY_FILE} to keep it.`);
-  }
-  for (const miss of overlaid.unmatched) {
-    console.warn(`  ${OVERLAY_FILE} describes ${miss}, which no detector found. Stale, or a name that changed.`);
+
+  const uncalled = context.uncalled ?? [];
+  if (uncalled.length) {
+    console.log(`\nSchedulers, webhooks, public API endpoints and dead code look like this.`);
+    console.log(`  A strong hint about what to leave out of "include", not a verdict.`);
   }
 
   // An action with no body fields can be addressed but carries nothing, which
@@ -146,15 +171,8 @@ function main() {
     console.warn("  They can be called but cannot change anything. Add a schema, or fill in bodyFields by hand.");
   }
 
-  if (uncalled.length) {
-    console.log(`\n${uncalled.length} operation(s) the app's own code never calls:`);
-    console.log(`  ${uncalled.slice(0, 12).join(", ")}${uncalled.length > 12 ? `, and ${uncalled.length - 12} more` : ""}`);
-    console.log(`  Schedulers, webhooks, public API endpoints and dead code look like this.`);
-    console.log(`  A strong hint about what to leave out of "include", not a verdict.`);
-  }
-
   const toolCount = manifest.queries.length + manifest.actions.length;
-  if (toolCount > 40 && !overlaid.include) {
+  if (toolCount > 40 && !include) {
     // The tool list rides in the session prompt, so this is a real bill and a
     // real ask of the model, not a tidiness concern.
     const tokens = Math.round(JSON.stringify(manifest).length / 4);
@@ -173,7 +191,6 @@ function main() {
     console.warn(`\nNothing was extracted. Every detector and what it looks for is listed above;` +
       ` an app matching none of them still has the widget's DOM tools.`);
   }
-  return sources;
 }
 
 main();

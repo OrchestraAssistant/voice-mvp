@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { validateDetector, validateRegistry } from "./contract.js";
-import { runDetectors, activeExcludes } from "./run.js";
+import { ROLES, STATIC_ROLES, validateDetector, validateRegistry } from "./contract.js";
+import { runDetectors, activeExcludes, selectStages } from "./run.js";
 import { DETECTORS } from "../registry.js";
 
 const ok = (over = {}) => ({ name: "x", describe: "y", role: "producer", run: () => ({}), ...over });
@@ -89,5 +89,58 @@ describe("exclusion rules belong to the framework that applied", () => {
     const nextish = ok({ name: "nextish", excludes: [{ pattern: /^\/api\/auth\//, why: "auth" }] });
     const { results } = runDetectors([nextish], {});
     assert.equal(activeExcludes([nextish], results).length, 1);
+  });
+});
+
+describe("stages, not just detectors", () => {
+  test("every role a stage can have is known and ordered", () => {
+    // Detection was modular from the start; everything after it was a fixed
+    // sequence in generate.js. Naming the later steps the same way is what
+    // makes them removable and switchable.
+    assert.deepEqual(ROLES, ["producer", "enricher", "policy", "probe"]);
+    assert.deepEqual(STATIC_ROLES, ["producer", "enricher", "policy"]);
+    assert.ok(!STATIC_ROLES.includes("probe"), "a probe needs a running app, so it cannot run at generate time");
+  });
+
+  test("policies run after everything that finds or annotates", () => {
+    const order = [];
+    const stage = (name, role) => ok({ name, role, run: () => (order.push(name), {}) });
+    runDetectors([stage("p", "policy"), stage("e", "enricher"), stage("d", "producer")], {});
+    assert.deepEqual(order, ["d", "e", "p"]);
+  });
+
+  test("a stage can hand something to the ones after it", () => {
+    // The overlay names what the exclusion policy must keep; without a way to
+    // pass that along, a deliberate include would be filtered by a default.
+    const registry = [
+      ok({ name: "first", role: "enricher", run: () => ({ named: ["keepMe"] }) }),
+      ok({ name: "second", role: "policy", run: (ctx) => ({ notes: [`saw ${ctx.named?.join()}`] }) }),
+    ];
+    const { results } = runDetectors(registry, {});
+    assert.match(results.find((r) => r.detector === "second").found.notes[0], /saw keepMe/);
+  });
+});
+
+describe("choosing a configuration", () => {
+  const registry = [ok({ name: "a" }), ok({ name: "b" }), ok({ name: "c" })];
+
+  test("--only keeps just what was asked for", () => {
+    // Comparing nine versions of this tool meant nine git worktrees.
+    // Comparing nine configurations should mean nine flags.
+    assert.deepEqual(selectStages(registry, { only: ["a", "c"] }).stages.map((s) => s.name), ["a", "c"]);
+  });
+
+  test("--without drops it and keeps the rest", () => {
+    assert.deepEqual(selectStages(registry, { without: ["b"] }).stages.map((s) => s.name), ["a", "c"]);
+  });
+
+  test("a name nobody recognises is reported, not ignored", () => {
+    // Silently running everything because a flag was misspelled would make a
+    // comparison say the opposite of the truth.
+    assert.deepEqual(selectStages(registry, { without: ["typo"] }).unknown, ["typo"]);
+  });
+
+  test("asking for nothing runs everything", () => {
+    assert.equal(selectStages(registry, {}).stages.length, 3);
   });
 });
