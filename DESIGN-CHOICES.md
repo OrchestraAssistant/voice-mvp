@@ -1215,3 +1215,62 @@ Title        "Voice Made This"
 Description  "A quick video meeting."
 Duration     "25"
 ```
+
+---
+
+## 25. Deferred: an agent pass, and tiering the manifest
+
+Two ideas we decided are worth having and not worth building yet. Recorded
+because the reasoning is the perishable part, not the idea.
+
+**An agent that drives the app and writes down what it learned.** Contextual
+descriptions in natural language, how multi-step flows actually work, and a
+judgement about which operations are worth offering at all.
+
+Deferred in favour of two cheaper signals that get most of the way. Apps
+describe themselves: cal.diy's event-types page renders "Event types /
+Configure different events for people to book on your calendar", written by
+someone who knew what the page was for, and better than anything a model would
+invent. Nav link text, `<title>` and meta descriptions are the same. And which
+operations matter can be counted rather than judged -- 52 of cal's 177
+discovered operations are referenced nowhere in the client or shared source at
+all.
+
+**Revisit if** harvesting comes back thin, which it will on an app whose
+headings are decorative or absent. Harvesting reads what a careful team wrote;
+a model is what you need when nobody wrote anything. So this belongs as an
+opt-in extra pass rather than a replacement, and the output belongs in the
+overlay where a human reviews it before it becomes prompt content.
+
+**Tiers, with a tool to look deeper.** The manifest carries everything, richly
+described. Only tier one reaches the session prompt; the model can look up the
+rest through a tool when it has reason to.
+
+Deferred because we have not yet got a manifest large enough to need it. Cal
+went from 208 operations to 30 with an include list, and 30 tools is about
+3,900 tokens of prefix -- billed once per session and cached after the first
+response, so roughly a cent and a half. The cost that actually hurt was 208
+tools, most of which were cron jobs and OAuth callbacks that belong in no tier.
+
+**One constraint to design around when we do build it.** The tool list is
+fixed at session creation, and a `session.update` that changes it rewrites the
+cached prefix, so the next response pays the full amount again:
+
+```
+response 1   1,947 input,     0 cached
+response 2   1,986 input, 1,984 cached
+```
+
+So expansion has to be information rather than tools: a fixed, small tool list
+plus a lookup that returns descriptions, with a generic executor for what is
+not in the list. The widget already holds the whole manifest, so both run
+client-side with no round trip.
+
+**And tier one needs a table of contents, not just tools.** A capability the
+model cannot see is one it will never think to look for; it will say "I can't
+do that" rather than search. A sentence naming the territory -- "this app also
+handles teams, webhooks and integrations" -- is about thirty tokens and is what
+makes the rest reachable at all.
+
+**Revisit if** a real app has hundreds of genuinely user-facing operations
+after honest pruning.
