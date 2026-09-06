@@ -11,6 +11,7 @@
  *   --header "K: V"       any other header, repeatable
  *   --writes              also probe write actions by omitting required fields
  *   --fix                 write what was learned into manifest.overlay.json
+ *   --only / --without    run a subset of the probe stages, comma-separated
  *
  * Not part of `npm test`: it needs a live app, it makes real requests, and
  * with --writes it makes real writes. Run it deliberately, against an instance
@@ -19,17 +20,26 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describePages, describeShape, harvestPage, omissionProbes, readOmission, readOnlyPlan, readRoute } from "./core/probe.js";
+import { STAGES } from "./registry.js";
+import { runProbes, selectStages } from "./core/run.js";
 import { OVERLAY_FILE } from "./core/overlay.js";
 import { cookieJar, pick, signedIn } from "./core/session.js";
 
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(name);
 // Flags that take a value, so their value is not mistaken for a positional.
-const VALUED = new Set(["--cookie", "--header", "--login"]);
+const VALUED = new Set(["--cookie", "--header", "--login", "--only", "--without"]);
 const flag = (name) => {
   const i = argv.indexOf(name);
   return i === -1 ? null : argv[i + 1];
+};
+/** Repeatable and comma-separated: --without page-copy,query-shapes */
+const valued = (name) => {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === name) out.push(...(argv[++i] ?? "").split(",").filter(Boolean));
+  }
+  return out;
 };
 
 const positional = [];
@@ -85,9 +95,20 @@ const ask = async (method, url, body, form) => {
   }
 };
 
-const problems = [];
-const learned = { routes: [], queries: [], actions: [] };
-const harvested = [];
+/**
+ * Requests are remembered for the length of a run.
+ *
+ * Reachability, page copy and query shapes all walk the same routes, and on a
+ * development server every one of those is a route compile. Without this the
+ * probe would ask for each page three times and pay for it three times.
+ */
+const seen = new Map();
+const askOnce = (method, url, body) => {
+  if (body || method !== "GET") return ask(method, url, body);
+  const key = `${method} ${url}`;
+  if (!seen.has(key)) seen.set(key, ask(method, url));
+  return seen.get(key);
+};
 
 /**
  * Signs in before probing, if asked. Without a session most routes answer
@@ -128,102 +149,51 @@ async function main() {
       console.error(`Probing anonymously instead, which mostly measures the login page.\n`);
     }
   }
+  const { stages, unknown } = selectStages(STAGES, {
+    only: valued("--only"),
+    without: valued("--without"),
+  });
+  for (const name of unknown) console.warn(`  no stage called "${name}"`);
+
   console.log(`Probing ${manifest.routes?.length ?? 0} routes and ${manifest.queries?.length ?? 0} queries against ${baseUrl}\n`);
 
-  let reachable = 0;
-  let skipped = 0;
-  for (const probe of readOnlyPlan(manifest)) {
-    if (probe.skipped) {
-      skipped++;
-      continue;
-    }
-    const { status, body, text, error } = await ask(probe.method, probe.url);
-    if (error) {
-      problems.push(`${probe.kind} ${probe.name}: could not reach the app (${error})`);
-      continue;
-    }
+  const { results, problems, corrections } = await runProbes(stages, {
+    manifest,
+    ask: askOnce,
+    allowWrites: has("--writes"),
+  });
 
-    if (probe.kind === "route") {
-      const verdict = readRoute(status);
-      if (!verdict.ok) {
-        problems.push(`route ${probe.name}: ${verdict.why}`);
-        continue;
-      }
-      reachable++;
-      // The page usually describes itself better than anything we could
-      // invent from its filename. Collected raw; what counts as a description
-      // is decided across all pages once they are all in.
-      const page = harvestPage(text);
-      if (page) harvested.push({ path: probe.name, ...page });
-      continue;
-    }
-
-    // A query answers two questions at once: is it there, and what does it
-    // return -- the second being something the manifest cannot say today.
-    const verdict = readRoute(status);
-    if (!verdict.ok) {
-      problems.push(`query ${probe.name} (${probe.url}): ${verdict.why}`);
-      continue;
-    }
-    reachable++;
-    const shape = body ? describeShape(body) : null;
-    if (shape?.fields?.length || shape?.of?.length) learned.queries.push({ name: probe.name, returns: shape });
-  }
-
-  console.log(`  ${reachable} reachable, ${problems.length} problems, ${skipped} not probeable without a value`);
-
-  if (has("--writes")) {
-    console.log(`\nChecking which fields the SERVER requires. This makes real requests.`);
-    for (const action of manifest.actions ?? []) {
-      const probes = omissionProbes(action);
-      if (!probes.length) continue;
-      const corrections = [];
-      for (const { omitted, body } of probes) {
-        const { status } = await ask(action.method, action.endpoint, body);
-        const result = readOmission(omitted, status);
-        if (result.required === false) corrections.push(omitted);
-      }
-      if (corrections.length) {
-        learned.actions.push({ name: action.name, notRequired: corrections });
-        console.log(`  ${action.name}: ${corrections.join(", ")} accepted without it, though the manifest says required`);
-      }
-    }
+  console.log("Stages:");
+  for (const { detector, found, skipped, why, failed } of results) {
+    const label = `  ${detector.padEnd(18)}`;
+    if (failed) console.log(`${label} failed: ${failed}`);
+    else if (skipped) console.log(`${label} skipped: ${why}`);
+    else if ((found.notes ?? []).length) console.log(`${label} ${found.notes.join("; ")}`);
+    else console.log(`${label} nothing found`);
   }
 
   if (problems.length) {
     console.log(`\n${problems.length} thing(s) the manifest is wrong about:`);
-    for (const p of problems) console.log(`  ${p}`);
+    for (const problem of problems) console.log(`  ${problem}`);
     console.log(`\n  Each of these is something the agent has been told exists. It will send`);
     console.log(`  someone there, confidently, and be wrong.`);
   }
 
-  learned.routes = describePages(harvested);
-  if (learned.routes.length) {
-    console.log(`\n${learned.routes.length} page(s) describe themselves:`);
-    for (const r of learned.routes.slice(0, 6)) console.log(`  ${r.path}  "${r.description}"`);
-    if (learned.routes.length > 6) console.log(`  ...and ${learned.routes.length - 6} more`);
-  }
-
+  const learned = corrections;
   const found = learned.routes.length + learned.queries.length + learned.actions.length;
   if (found && has("--fix")) {
     const overlayPath = path.join(path.dirname(manifestPath), OVERLAY_FILE);
     const existing = fs.existsSync(overlayPath) ? JSON.parse(fs.readFileSync(overlayPath, "utf-8")) : {};
     const merged = { ...existing };
-    // Into the OVERLAY, never the generated file: what a probe learned is a
-    // correction, it survives regeneration, and a human can read the diff.
-    for (const { path, description } of learned.routes) {
-      merged.routes = upsertBy(merged.routes ?? [], "path", { path, description });
+
+    // Every stage returns overlay-shaped patches, so the writer does not need
+    // to know what any of them mean. Into the OVERLAY, never the generated
+    // file: what a probe learned is a correction, it survives regeneration,
+    // and a person reads the diff before it becomes prompt content.
+    for (const [kind, key] of [["routes", "path"], ["queries", "name"], ["actions", "name"]]) {
+      for (const patch of learned[kind]) merged[kind] = upsertBy(merged[kind] ?? [], key, patch);
     }
-    for (const { name, returns } of learned.queries) {
-      merged.queries = upsert(merged.queries ?? [], { name, returns });
-    }
-    for (const { name, notRequired } of learned.actions) {
-      const action = manifest.actions.find((a) => a.name === name);
-      const bodyFields = (action.bodyFields ?? []).map((f) =>
-        notRequired.includes(f.name) ? { ...f, required: false } : f,
-      );
-      merged.actions = upsert(merged.actions ?? [], { name, bodyFields });
-    }
+
     fs.writeFileSync(overlayPath, JSON.stringify(merged, null, 2));
     console.log(`\nWrote ${found} correction(s) to ${overlayPath}`);
   } else if (found) {
@@ -232,8 +202,6 @@ async function main() {
 
   process.exit(problems.length ? 1 : 0);
 }
-
-const upsert = (list, patch) => upsertBy(list, "name", patch);
 
 function upsertBy(list, key, patch) {
   const existing = list.find((i) => i[key] === patch[key]);

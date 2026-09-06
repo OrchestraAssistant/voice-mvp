@@ -20,6 +20,10 @@ import { pageMetadata } from "./schema/pageMetadata.js";
 import { callSites } from "./stages/callSites.js";
 import { handCorrections } from "./stages/handCorrections.js";
 import { infrastructure } from "./stages/infrastructure.js";
+import { reachability } from "./stages/probe/reachability.js";
+import { queryShapes } from "./stages/probe/queryShapes.js";
+import { pageCopy } from "./stages/probe/pageCopy.js";
+import { requiredFields } from "./stages/probe/requiredFields.js";
 
 export const STAGES = [
   // Producers: find the operations.
@@ -45,6 +49,13 @@ export const STAGES = [
   // that outranks the exclusion default.
   handCorrections,
   infrastructure,
+
+  // Probes: run by the probe command, against a live app. They never run at
+  // generate time -- they need a running application and, usually, a session.
+  reachability,
+  queryShapes,
+  pageCopy,
+  requiredFields,
 ];
 
 /** The old name, kept because "detector" reads better for the producers. */

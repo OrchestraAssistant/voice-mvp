@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "bin": {
-    "voice-cli": "./generate.js"
+    "voice-cli": "./generate.js",
+    "voice-probe": "./probe.js"
   },
   "scripts": {
     "generate": "node generate.js"
@@ -19,9 +20,12 @@
   },
   "files": [
     "generate.js",
+    "probe.js",
     "registry.js",
     "core",
     "frameworks",
-    "schema"
+    "schema",
+    "stages",
+    "MANIFEST-FEATURES.md"
   ]
 }

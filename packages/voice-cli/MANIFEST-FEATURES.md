@@ -140,30 +140,36 @@ described 20, because a client-rendered page serves a shell.
 
 # What the probe adds, against a running app
 
-Not part of generation: these need the app up, and they write their findings
-into the overlay, which generation reads next time.
+Stages too, with `role: "probe"`. They never run at generate time, because
+they need a live application and usually a session. Findings come back as
+overlay-shaped patches rather than being applied, so a person reads the diff
+before any of it becomes prompt content.
 
-## Route reachability
+Requests are remembered for the length of a run: three of these walk the same
+routes, and on a development server every one of those is a route compile.
+
+## Route reachability — `reachability`
 
 A route that 404s is one the agent has been told exists; it will send someone
 there confidently and be wrong. Found `/auth/verify-email-change` on cal —
 which turned out to exist as a file and return 404 without a token, so the
 manifest has no way yet to say "real, given a parameter".
 
-## What a query returns
+## What a query returns — `query-shapes`
 
 The manifest cannot express this, so the model infers the shape from the tool
 name. One call answers it, and it reaches the model as a sentence for about a
 dozen tokens.
 
-## Which fields the server truly requires
+## Which fields the server truly requires — `required-fields`
 
-Sends one request per declared-required field, each missing exactly that one.
+Needs `--writes`, because probing a write means performing one. Sends one
+request per declared-required field, each missing exactly that one.
 Found the demo's `updateSettings` declaring `name`, `email` and `theme` all
 required while the server accepts `{"theme":"dark"}` alone — so the manifest was
 telling the model to invent a name and an email to change one setting.
 
-## Page copy, harvested
+## Page copy, harvested — `page-copy`
 
 The rendered heading and the line under it. Superseded for most apps by reading
 the source (11), which sees pages that never render on the server.

@@ -69,3 +69,41 @@ export function activeExcludes(detectors, results) {
   const ran = new Set(results.filter((r) => !r.skipped).map((r) => r.detector));
   return detectors.filter((d) => ran.has(d.name)).flatMap((d) => d.excludes ?? []);
 }
+
+/**
+ * Runs the probe stages, which are async because they talk to a running app.
+ *
+ * Separate from runDetectors rather than a role inside it: a probe needs a
+ * live application and a session, so it cannot run at generate time, and
+ * pretending both pipelines are one would mean every generate carried the
+ * machinery for a network it never touches.
+ *
+ * Corrections come back rather than being applied. What a probe learns is a
+ * suggestion for the overlay, which a person reads in a diff before it becomes
+ * prompt content for every future session.
+ */
+export async function runProbes(stages, context) {
+  const results = [];
+  const problems = [];
+  const corrections = { routes: [], queries: [], actions: [] };
+
+  for (const stage of stages.filter((s) => s.role === "probe")) {
+    if (stage.needsWrites && !context.allowWrites) {
+      results.push({ detector: stage.name, role: "probe", found: {}, skipped: true, why: "needs --writes" });
+      continue;
+    }
+    let found;
+    try {
+      found = (await stage.run(context)) ?? {};
+    } catch (err) {
+      results.push({ detector: stage.name, role: "probe", found: {}, failed: err.message });
+      continue;
+    }
+    results.push({ detector: stage.name, role: "probe", found });
+    for (const problem of found.problems ?? []) problems.push(`${stage.name}: ${problem}`);
+    for (const kind of ["routes", "queries", "actions"]) {
+      corrections[kind].push(...(found.corrections?.[kind] ?? []));
+    }
+  }
+  return { results, problems, corrections };
+}

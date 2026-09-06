@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { ROLES, STATIC_ROLES, validateDetector, validateRegistry } from "./contract.js";
-import { runDetectors, activeExcludes, selectStages } from "./run.js";
+import { runDetectors, runProbes, activeExcludes, selectStages } from "./run.js";
 import { DETECTORS } from "../registry.js";
 
 const ok = (over = {}) => ({ name: "x", describe: "y", role: "producer", run: () => ({}), ...over });
@@ -142,5 +142,60 @@ describe("choosing a configuration", () => {
 
   test("asking for nothing runs everything", () => {
     assert.equal(selectStages(registry, {}).stages.length, 3);
+  });
+});
+
+describe("probe stages", () => {
+  const probe = (name, over = {}) => ok({ name, role: "probe", ...over });
+
+  test("a probe never runs at generate time", async () => {
+    // It needs a live application and usually a session. Running one during
+    // generation would mean every generate carried machinery for a network it
+    // never touches.
+    const order = [];
+    runDetectors([probe("p", { run: () => order.push("probe") }), ok({ name: "d", run: () => order.push("producer") })], {});
+    assert.deepEqual(order, ["producer"], "a probe ran in the static pipeline");
+  });
+
+  test("a write probe is skipped unless writes are allowed", async () => {
+    // Probing a write means performing one. That is the caller's decision to
+    // make explicitly, not a default a verification tool takes.
+    const stage = probe("writer", { needsWrites: true, run: () => ({ notes: ["ran"] }) });
+    const off = await runProbes([stage], { allowWrites: false });
+    assert.equal(off.results[0].skipped, true);
+    assert.match(off.results[0].why, /--writes/);
+
+    const on = await runProbes([stage], { allowWrites: true });
+    assert.deepEqual(on.results[0].found.notes, ["ran"]);
+  });
+
+  test("corrections are returned, not applied", async () => {
+    // What a probe learns is a suggestion for the overlay, which a person
+    // reads in a diff before it becomes prompt content for every session.
+    const stage = probe("shapes", {
+      run: () => ({ corrections: { queries: [{ name: "tasks", returns: { kind: "array" } }] } }),
+    });
+    const { corrections } = await runProbes([stage], {});
+    assert.deepEqual(corrections.queries, [{ name: "tasks", returns: { kind: "array" } }]);
+  });
+
+  test("problems are collected and attributed", async () => {
+    const { problems } = await runProbes(
+      [probe("reach", { run: () => ({ problems: ["route /gone: the page is not there (404)"] }) })],
+      {},
+    );
+    assert.deepEqual(problems, ["reach: route /gone: the page is not there (404)"]);
+  });
+
+  test("one probe throwing does not cost the others their findings", async () => {
+    const { results, corrections } = await runProbes(
+      [
+        probe("boom", { run: () => { throw new Error("connection reset"); } }),
+        probe("fine", { run: () => ({ corrections: { routes: [{ path: "/", description: "Home." }] } }) }),
+      ],
+      {},
+    );
+    assert.match(results.find((r) => r.detector === "boom").failed, /connection reset/);
+    assert.equal(corrections.routes.length, 1);
   });
 });
