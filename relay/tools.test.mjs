@@ -313,3 +313,39 @@ describe("a flow is an action that runs in the page", () => {
     assert.doesNotMatch(JSON.stringify(tool), /steps|dom_snapshot|click/i);
   });
 });
+
+describe("what the model is told about routes", () => {
+  test("a description is used when there is one", () => {
+    // Built the harvest, then found it never reached the model: the prompt
+    // said "- /:user/:type/embed (embed)" and nothing else, so 53 harvested
+    // sentences were inert.
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.routes[0] = { path: "/event-types", component: "[type]", description: "Event types. Configure different events." };
+    assert.match(buildInstructions(m), /- \/event-types -- Event types\. Configure different events\./);
+  });
+
+  test("the component name is only a fallback", () => {
+    // It is frequently noise -- cal.diy's routes are called "[type]" and
+    // "embed" -- while a description is the app's own sentence.
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.routes[0] = { path: "/x", component: "Thing", description: "What this page is for." };
+    const line = buildInstructions(m).split("\n").find((l) => l.startsWith("- /x"));
+    assert.equal(line, "- /x -- What this page is for.");
+    assert.ok(!line.includes("Thing"));
+  });
+
+  test("a route with neither reads as just its path", () => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.routes[0] = { path: "/bare" };
+    assert.ok(buildInstructions(m).includes("\n- /bare\n"));
+  });
+
+  test("call-site counts never reach the model", () => {
+    // Diagnostic, for whoever writes the include list. In the prompt it would
+    // be tokens spent on a number the model cannot use.
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.queries[0].callSites = 7;
+    const payload = JSON.stringify({ i: buildInstructions(m), t: buildTools(m) });
+    assert.ok(!payload.includes("callSites"));
+  });
+});

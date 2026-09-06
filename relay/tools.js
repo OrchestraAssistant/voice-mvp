@@ -290,7 +290,13 @@ export function resolveLanguage(requested) {
 
 export function buildInstructions(manifest, language = null) {
 
-  const routeList = manifest.routes.map((r) => `- ${r.path} (${r.component})`).join("\n");
+  // The description when there is one, the component name only as a fallback.
+  // A component name is frequently noise -- cal.diy's routes are called things
+  // like "[type]" and "embed" -- while a description is the app's own sentence
+  // about what the page is for, which is the whole reason it was harvested.
+  const routeList = manifest.routes
+    .map((r) => `- ${r.path}${r.description ? ` -- ${r.description}` : r.component ? ` (${r.component})` : ""}`)
+    .join("\n");
   const confirmActions = manifest.actions.filter((a) => a.requiresConfirmation).map((a) => a.name);
 
   return `You are a voice assistant embedded in a task-management web app. You can see and control the app on the user's behalf using the tools available to you.
