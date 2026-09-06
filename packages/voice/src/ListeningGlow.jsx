@@ -167,16 +167,100 @@ const BLOOMS = CORNERS.map(([x, y]) => cornerBloom(x, y));
    amount, without clipping.
 
    Layers composite bottom-up while the list reads top-first: the two edge
-   masks (last) union into the square-cornered rim, the four blooms union
-   into it, and the four holes then multiply. Only one of blooms/holes is
-   ever live -- they're the two signs of one control, and the other side is
-   sitting at its no-op -- so their relative order doesn't matter.
+   masks (last) union into the square-cornered rim, and the corner layers
+   shape it from there.
 
    `-webkit-mask-composite` is a different keyword set and is deliberately
    not emitted: on an engine too old for the standard property every layer
    just unions, which loses the corner shaping and keeps everything else. */
-const MASK_LAYERS = [...HOLES, ...BLOOMS, edgeMask("right"), edgeMask("bottom")].join(", ");
-const MASK_COMPOSITE = "intersect, intersect, intersect, intersect, add, add, add, add, add, add";
+
+/**
+ * Three masks, one per sign of `cornerRadius`, and only the layers that sign
+ * actually uses.
+ *
+ * The holes and the blooms are the two sides of one control, so one of them is
+ * always sitting at its no-op -- and a no-op mask layer is free to *write* and
+ * expensive to *run*. Every frame the rim moves, the browser recomposites the
+ * whole mask stack over the viewport, no-ops included.
+ *
+ * Measured on this machine at 1440x900, rim on, nothing else animating:
+ *
+ *     10 layers (holes + blooms + edges)    21 fps
+ *      6 layers (one side + edges)          28 fps
+ *      2 layers (edges only)                40 fps
+ *
+ * -- roughly linear in the layer count, and at the default cornerRadius of 0
+ * EIGHT of the ten were identity operations. That is where the rim's stutter
+ * was coming from: not the colour, not the gradient (unmasked, the same
+ * animation holds a flat 60), but repainting under a mask stack eight layers
+ * of which did nothing.
+ *
+ * The output is identical for every setting. At carve 0 each hole's stops all
+ * collapse to 0px and the layer is opaque everywhere past a single point; at
+ * bulge 0 each bloom collapses to fully transparent. Dropping a layer that
+ * multiplies by 1, or unions in nothing, changes no pixel.
+ *
+ * Written as three static classes rather than a computed stylesheet because
+ * the layer keys its <style> injection on the CSS text: making this depend on
+ * a prop would tear the element down and rebuild it as the slider crossed 0.
+ */
+const EDGES = [edgeMask("right"), edgeMask("bottom")];
+const MASKS = {
+  // cornerRadius === 0: the square inner corner the two edge masks produce.
+  square: { layers: EDGES, composite: "add, add" },
+  // cornerRadius > 0: cut the inner corner back.
+  carve: { layers: [...HOLES, ...EDGES], composite: "intersect, intersect, intersect, intersect, add, add" },
+  // cornerRadius < 0: bloom it outward.
+  bulge: { layers: [...BLOOMS, ...EDGES], composite: "add, add, add, add, add, add" },
+};
+
+/**
+ * Clips the rim to the band it actually occupies, so the browser stops
+ * rasterising and masking the empty middle of the screen.
+ *
+ * The frame is viewport-sized, but FALLOFF reaches alpha 0 at exactly
+ * `--rim-width` -- everything inside that is transparent already. Clipping it
+ * away removes no pixel and takes roughly two thirds of the masked area with
+ * it. Measured: p95 frame time 24.6ms -> 19.2ms, which is the 60fps floor.
+ *
+ * `polygon()` is ONE closed path and has no way to declare a second subpath,
+ * so the hole is cut the way SVG does it: walk the outer rectangle clockwise,
+ * return to the start, then walk the inner one counter-clockwise. Opposite
+ * winding is what makes the nonzero rule treat the inner rectangle as a hole;
+ * listing the two rectangles as eight points and asking for `evenodd` instead
+ * builds a self-intersecting octagon, which clipped away most of the left and
+ * right bands. The outer rectangle sits 2px OUTSIDE the
+ * element: a clip edge is antialiased, and along the screen edge the rim is at
+ * its brightest, so a boundary drawn exactly at 0% cut that column's coverage
+ * roughly in half and left a dark 1px outline around the whole viewport --
+ * measured at a channel delta of 78. Nothing is painted out there anyway, so
+ * moving the seam off the element removes it. The INNER edge needs no such
+ * treatment: the mask is already at alpha 0 where it falls.
+ *
+ * NOT applied to the bulge variant: that is the one setting where glow
+ * deliberately reaches past `--rim-width`, into the corners, and this would
+ * cut it off.
+ */
+const RING_CLIP =
+  "polygon(" +
+  // Outer, clockwise, 2px outside the element.
+  "-2px -2px, calc(100% + 2px) -2px, calc(100% + 2px) calc(100% + 2px), -2px calc(100% + 2px), -2px -2px, " +
+  // Inner, counter-clockwise, so the nonzero rule reads it as a hole.
+  "var(--rim-width) var(--rim-width), var(--rim-width) calc(100% - var(--rim-width)), " +
+  "calc(100% - var(--rim-width)) calc(100% - var(--rim-width)), calc(100% - var(--rim-width)) var(--rim-width), " +
+  "var(--rim-width) var(--rim-width))";
+
+const maskRule = (name) => {
+  const { layers, composite } = MASKS[name];
+  const image = layers.join(", ");
+  return `
+  .frame.${name} {
+    -webkit-mask-image: ${image};
+    mask-image: ${image};
+    mask-composite: ${composite};${name === "bulge" ? "" : `
+    clip-path: ${RING_CLIP};`}
+  }`;
+};
 
 const GLOW_CSS = `
   .frame {
@@ -184,11 +268,8 @@ const GLOW_CSS = `
     inset: 0;
     pointer-events: none;
     overflow: hidden;
-
-    -webkit-mask-image: ${MASK_LAYERS};
-    mask-image: ${MASK_LAYERS};
-    mask-composite: ${MASK_COMPOSITE};
   }
+${Object.keys(MASKS).map(maskRule).join("\n")}
 
   /* Viewport-sized, exactly like the original's \`absolute size-full\`. The
      sweep is the gradient's angle animating 0->360deg, not a rotating
@@ -256,9 +337,15 @@ export function ListeningGlow({
    * 65% in the middle 360ms, which lands as a pause, a snap, and a pause.
    */
   crossfadeMs = 1200,
-  // OKLab: equal steps are equally visible, so an even ramp through it looks
-  // even. See palettes.js.
-  space = "oklab",
+  /**
+   * OKLCh: equal steps are equally visible AND the path stays on the outside
+   * of the hue wheel. OKLab alone fixed the pace and left the route: between
+   * two near-opposite hues its straight line is a chord through the neutral
+   * axis, so the rim desaturated to near-grey halfway and, at 53% alpha over a
+   * light page, all but disappeared before coming back as the new colour. See
+   * palettes.js for the measured chroma collapse.
+   */
+  space = "oklch",
 }) {
   const angle = useMotionValue(0);
   // How far along the current crossfade we are: 0 at the moment the state
@@ -267,8 +354,10 @@ export function ListeningGlow({
 
   // Read inside the per-frame transform, so a palette edited in the tuner or a
   // colour space toggled shows up immediately without restarting the fade.
-  const live = useRef({ palettes, space, state });
-  live.current = { palettes, space, state };
+  // Palettes and space only. `state` deliberately does NOT live here -- see
+  // `fadingTo` below for the frame of wrong colour that put it there.
+  const live = useRef({ palettes, space });
+  live.current = { palettes, space };
 
   // Where the crossfade started FROM: the actual colours on screen when the
   // state last changed, not a palette. Interrupting a half-finished fade then
@@ -276,7 +365,34 @@ export function ListeningGlow({
   // palette they never fully saw -- and these states change faster than the
   // fade, since listening, working and speaking can all land inside a second.
   const fromRef = useRef(palettes[state] ?? PALETTES.listening);
-  const previousState = useRef(state);
+
+  /**
+   * Which state the fade is heading FOR, and the reason it is a ref set in the
+   * effect rather than the `state` prop read straight off.
+   *
+   * `background` recomputes on framer's frame loop, and it needs three things
+   * to agree: where the fade started, where it is going, and how far along it
+   * is. Two of those are set in the effect. Reading the third from a value
+   * assigned during RENDER breaks the agreement for exactly as long as it
+   * takes the effect to run -- and in that window `mix` is still 1 from the
+   * fade that just finished, so `mix(oldOrigin, NEW target, 1)` paints the
+   * destination palette at full strength. One frame of prism in the middle of
+   * a violet rim, then a snap back to violet as the effect resets `mix` to 0
+   * and the real fade begins. Measured at 68x the fade's own per-frame
+   * movement.
+   *
+   * It only shows when the change did NOT come from a click. React flushes
+   * passive effects synchronously for discrete input, so pressing a button in
+   * the tuner never reproduced it -- which is why every measurement said the
+   * fade was even while the app plainly was not. A data channel message is not
+   * discrete input, and that is every state change in a real session.
+   *
+   * Setting it here, beside `fromRef` and `mix`, means the three cannot
+   * disagree: until the effect runs they describe the finished previous fade,
+   * which is the colour already on screen, and after it they describe the new
+   * one. No ordering assumption, no layout effect, nothing to get wrong again.
+   */
+  const fadingTo = useRef(state);
 
   useEffect(() => {
     if (!active) return;
@@ -291,9 +407,9 @@ export function ListeningGlow({
 
   useEffect(() => {
     const { palettes: p, space: sp } = live.current;
-    const leaving = p[previousState.current] ?? PALETTES.listening;
+    const leaving = p[fadingTo.current] ?? PALETTES.listening;
     fromRef.current = mixPalettes(fromRef.current, leaving, mix.get(), sp);
-    previousState.current = state;
+    fadingTo.current = state;
     mix.set(0);
     // Linear, so every moment of the fade carries the same amount of change.
     // A colour has no inertia to simulate, and evenness is what reads as
@@ -303,8 +419,8 @@ export function ListeningGlow({
   }, [state, crossfadeMs, mix]);
 
   const background = useTransform([angle, mix], ([a, m]) => {
-    const { palettes: p, space: sp, state: st } = live.current;
-    return rimGradient(a, mixPalettes(fromRef.current, p[st] ?? PALETTES.listening, m, sp));
+    const { palettes: p, space: sp } = live.current;
+    return rimGradient(a, mixPalettes(fromRef.current, p[fadingTo.current] ?? PALETTES.listening, m, sp));
   });
 
   return (
@@ -312,7 +428,7 @@ export function ListeningGlow({
       <AnimatePresence>
         {active && (
           <motion.div
-            className="frame"
+            className={`frame ${cornerRadius === 0 ? "square" : cornerRadius > 0 ? "carve" : "bulge"}`}
             style={{
               "--rim-width": `${width}px`,
               "--rim-carve": `${Math.max(0, cornerRadius)}px`,

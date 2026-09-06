@@ -13,6 +13,7 @@ import {
   MicOff,
   Palette,
   Settings2,
+  SlidersHorizontal,
 } from "lucide-react";
 import useMeasure from "react-use-measure";
 
@@ -68,6 +69,22 @@ const TABS = [
   { title: "Talk", icon: Mic },
   { title: "Settings", icon: Settings2 },
 ];
+
+/**
+ * ---- TEMPORARY: the rim bench -------------------------------------------
+ *
+ * A third tab that drives the rim by hand, so a transition can be judged over
+ * a real host app instead of over the tuner page at dev/rim.html. The tuner
+ * still exists and still has the palette editors; this is the same idea moved
+ * to where the app is.
+ *
+ * It does NOT exist unless a host passes `tuneRim` to <Interpreter/>, so
+ * nothing here reaches a customer by default. To delete it, remove: this
+ * block, the RimTabContent component, `case 2:` in the content switch, and
+ * the `tuneRim` prop in Interpreter.jsx.
+ */
+const RIM_TAB = { title: "Rim", icon: SlidersHorizontal };
+const RIM_STATES = ["ready", "listening", "working"];
 
 const transition = {
   delay: 0.1,
@@ -360,6 +377,136 @@ function ChoiceRow({ icon: Icon, flag, label, note, selected, onSelect }) {
  * conversation so far is lost. The note under those sections says so, because
  * a control that silently drops your history is worse than one that warns you.
  */
+/**
+ * ---- TEMPORARY: the rim bench, continued --------------------------------
+ *
+ * `bench` is `{ tuning, setTuning }` from <Interpreter/>. `driving` decides
+ * whether the rim listens to these buttons or to the session; `space` and
+ * `crossfadeMs` are passed to the rim EITHER way, so an A/B can be judged
+ * during a real conversation without taking the session's state away.
+ *
+ * "Play a turn" is here because a real spoken turn is not one transition. The
+ * server ends it with two separate messages -- speech_stopped clears the
+ * speaking flag, and input_audio_buffer.committed is what asks for the
+ * response -- so the rim genuinely passes through `ready` on the way from
+ * listening to working. How long that lasts is a network question we cannot
+ * currently read back from a log, hence the slider: set the gap, watch what it
+ * does to the fade.
+ */
+function RimTabContent({ tuning, setTuning }) {
+  const set = (patch) => setTuning((current) => ({ ...current, ...patch }));
+  const timers = useRef([]);
+
+  // A replay is a chain of timeouts, so every one of them has to be
+  // cancellable: switching tabs mid-turn would otherwise leave the rim being
+  // driven by a sequence nobody can see any more.
+  const stop = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  };
+  useEffect(() => stop, []);
+
+  const playTurn = () => {
+    stop();
+    const steps = [
+      [0, "listening"],
+      [1400, "ready"],
+      [1400 + tuning.gapMs, "working"],
+      [3600 + tuning.gapMs, "ready"],
+    ];
+    for (const [at, state] of steps) {
+      timers.current.push(setTimeout(() => set({ driving: true, state }), at));
+    }
+  };
+
+  const Row = ({ label, children }) => (
+    <div className="flex items-center justify-between gap-2 px-2 py-1">
+      <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
+      {children}
+    </div>
+  );
+
+  return (
+    <div className="mb-2 flex flex-col gap-0.5">
+      <div className="flex gap-1 px-2">
+        {RIM_STATES.map((name) => (
+          <button
+            key={name}
+            type="button"
+            onClick={() => { stop(); set({ driving: true, state: name }); }}
+            className={cn(
+              "h-8 flex-1 cursor-pointer rounded-lg text-xs font-medium",
+              tuning.driving && tuning.state === name ? "bg-foreground text-background" : "bg-foreground/4",
+            )}
+          >
+            {name}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => { stop(); set({ driving: true, state: null }); }}
+          className={cn(
+            "h-8 flex-1 cursor-pointer rounded-lg text-xs font-medium",
+            tuning.driving && tuning.state === null ? "bg-foreground text-background" : "bg-foreground/4",
+          )}
+        >
+          off
+        </button>
+      </div>
+
+      <div className="flex gap-1 px-2 pt-1">
+        <button type="button" onClick={playTurn} className="bg-foreground/4 h-8 flex-1 cursor-pointer rounded-lg text-xs font-medium">
+          Play a turn
+        </button>
+        <button
+          type="button"
+          onClick={() => { stop(); set({ driving: false }); }}
+          className={cn(
+            "h-8 flex-1 cursor-pointer rounded-lg text-xs font-medium",
+            tuning.driving ? "bg-foreground/4" : "bg-foreground text-background",
+          )}
+        >
+          Session
+        </button>
+      </div>
+
+      <Row label="path">
+        <select
+          value={tuning.space}
+          onChange={(e) => set({ space: e.target.value })}
+          className="bg-foreground/4 h-8 cursor-pointer rounded-lg px-2 text-xs"
+        >
+          <option value="oklch">OKLCh (round the wheel)</option>
+          <option value="oklab">OKLab (through grey)</option>
+          <option value="linear">linear light</option>
+          <option value="srgb">sRGB</option>
+        </select>
+      </Row>
+
+      <Row label={`fade ${tuning.crossfadeMs}ms`}>
+        <input
+          type="range" min="200" max="3000" step="100" value={tuning.crossfadeMs}
+          onChange={(e) => set({ crossfadeMs: Number(e.target.value) })}
+          className="w-32 cursor-pointer"
+        />
+      </Row>
+
+      <Row label={`ready gap ${tuning.gapMs}ms`}>
+        <input
+          type="range" min="0" max="1000" step="25" value={tuning.gapMs}
+          onChange={(e) => set({ gapMs: Number(e.target.value) })}
+          className="w-32 cursor-pointer"
+        />
+      </Row>
+
+      <p className="text-muted-foreground px-2 pt-1 text-xs">
+        The gap is the `ready` a real turn passes through between speaking and
+        the reply being asked for.
+      </p>
+    </div>
+  );
+}
+
 function SettingsTabContent() {
   const { mode, setMode, options, model, language, setModel, setLanguage, rimMode, setRimMode, rimModes } =
     useInterpreter();
@@ -448,7 +595,7 @@ function SettingsTabContent() {
  * Inside the shadow root neither side can reach the other, so both problems
  * stop existing rather than being traded against each other.
  */
-export function InterpreterBubble({ mount = "shadow" }) {
+export function InterpreterBubble({ mount = "shadow", bench = null }) {
   const [direction, setDirection] = useState(1);
   const [ref, bounds] = useMeasure();
   const [selected, setSelected] = useState(null);
@@ -493,8 +640,10 @@ export function InterpreterBubble({ mount = "shadow" }) {
   });
 
   // Settings only exists once the panel is open; indices stay stable
-  // (talk 0, settings 1) so `selected` survives the array growing.
-  const tabs = selected === null ? TABS.slice(0, 1) : TABS;
+  // (talk 0, settings 1, rim bench 2) so `selected` survives the array
+  // growing. The bench is absent unless a host asked for it -- see RIM_TAB.
+  const all = bench ? [...TABS, RIM_TAB] : TABS;
+  const tabs = selected === null ? all.slice(0, 1) : all;
 
   const content = useMemo(() => {
     switch (selected) {
@@ -502,10 +651,15 @@ export function InterpreterBubble({ mount = "shadow" }) {
         return <TalkTabContent />;
       case 1:
         return <SettingsTabContent />;
+      case 2:
+        return bench ? <RimTabContent {...bench} /> : <div></div>;
       default:
         return <div></div>;
     }
-  }, [selected]);
+    // `bench` as well as `selected`: the bench's controls read and write its
+    // own state, so memoising on the tab index alone would hand back a pane
+    // rendered from the values the tab was opened with.
+  }, [selected, bench]);
 
   const widget = (
     <div ref={containerRef} className="interpreter-widget" onPointerEnter={onPointerEnter}>

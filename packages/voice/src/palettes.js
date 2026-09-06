@@ -168,10 +168,159 @@ const oklabToRgb = ([L, A, B]) => {
   ];
 };
 
+/**
+ * The OKLCh route from one colour to another, as a function of `t`.
+ *
+ * Lightness, chroma and hue each move on their own, so the colour stays on the
+ * outside of the hue wheel instead of cutting across the middle of it. Where
+ * the arc would leave sRGB, chroma is pulled back to the boundary -- clamping
+ * there instead would flatten a stretch of the route into a plateau.
+ */
+function oklchRoute(from, to) {
+  const [L1, A1, B1] = rgbToOklab(from);
+  const [L2, A2, B2] = rgbToOklab(to);
+  const C1 = Math.hypot(A1, B1);
+  const C2 = Math.hypot(A2, B2);
+  // A grey has no hue to travel from, so it borrows the other end's rather
+  // than swinging through whichever one atan2 happened to return.
+  const H1 = C1 < 1e-4 ? Math.atan2(B2, A2) : Math.atan2(B1, A1);
+  const H2 = C2 < 1e-4 ? H1 : Math.atan2(B2, A2);
+  let turn = H2 - H1;
+  if (turn > Math.PI) turn -= 2 * Math.PI;
+  if (turn < -Math.PI) turn += 2 * Math.PI;
+
+  return (t) => {
+    const L = L1 + (L2 - L1) * t;
+    const H = H1 + turn * t;
+    const C = fitChroma(L, C1 + (C2 - C1) * t, H);
+    return [L, C * Math.cos(H), C * Math.sin(H)];
+  };
+}
+
+/**
+ * The same route, walked at a constant perceptual speed.
+ *
+ * The route and the pace are two different things, and OKLCh only fixes the
+ * route. Its own parameter does not advance evenly in OKLab: the hue term
+ * contributes chroma times the turn, and pulling chroma back at the gamut
+ * boundary stretches and squeezes the rest. Measured on listening -> working,
+ * the eighths of a raw OKLCh fade carried 16.5% down to 10.2% of the visible
+ * change -- a 1.6x spread, about what linear light gave, and §29 is the record
+ * of why that reads as accelerating.
+ *
+ * So: sample the route, measure how far each sample actually is from the last
+ * in OKLab, and use that table to turn "fraction of the fade elapsed" into
+ * "fraction of the way along the route". 24 samples is far more than the ~72
+ * frames of a 1200ms fade can resolve.
+ *
+ * Cached per pair of colours, because a fade re-evaluates the same pair every
+ * frame and only changes pair when the state does. Bounded rather than
+ * unbounded: an interrupted fade starts from whatever was on screen, so the
+ * "from" colour is a fresh string each time and the keys would otherwise
+ * accumulate for the life of the page.
+ */
+const ROUTES = new Map();
+const STEPS = 24;
+
+function evenlyPaced(from, to) {
+  const key = `${from}>${to}`;
+  const cached = ROUTES.get(key);
+  if (cached) return cached;
+
+  const route = oklchRoute(from, to);
+  const points = [];
+  for (let i = 0; i <= STEPS; i++) points.push(route(i / STEPS));
+  const walked = [0];
+  for (let i = 1; i <= STEPS; i++) {
+    const [x, y, z] = points[i - 1];
+    const [p, q, r] = points[i];
+    walked.push(walked[i - 1] + Math.hypot(p - x, q - y, r - z));
+  }
+  const total = walked[STEPS];
+
+  const paced = (t) => {
+    if (!(total > 0) || t <= 0 || t >= 1) return route(t);
+    const target = t * total;
+    let i = 1;
+    while (i < STEPS && walked[i] < target) i++;
+    const span = walked[i] - walked[i - 1];
+    const within = span > 0 ? (target - walked[i - 1]) / span : 0;
+    return route((i - 1 + within) / STEPS);
+  };
+
+  if (ROUTES.size > 64) ROUTES.clear();
+  ROUTES.set(key, paced);
+  return paced;
+}
+
+/**
+ * Is this OKLab colour reachable in sRGB?
+ *
+ * Asked BEFORE converting, because the conversion clamps: an unreachable
+ * colour comes back as the nearest thing on the cube's face, which flattens a
+ * stretch of the path into a plateau and then releases it. Checking first
+ * means chroma can be pulled back to the boundary instead, which keeps the
+ * path moving.
+ */
+function inGamut([L, A, B]) {
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].every((c) => c >= -0.0001 && c <= 1.0001);
+}
+
+/** The most chroma this lightness and hue can hold in sRGB. */
+function fitChroma(L, C, H) {
+  const at = (c) => [L, c * Math.cos(H), c * Math.sin(H)];
+  if (inGamut(at(C))) return C;
+  let lo = 0;
+  let hi = C;
+  for (let i = 0; i < 16; i++) {
+    const mid = (lo + hi) / 2;
+    if (inGamut(at(mid))) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /** One colour, `t` of the way from `a` to `b`. */
-export function mixColor(a, b, t, space = "oklab") {
+export function mixColor(a, b, t, space = "oklch") {
   const from = parse(a);
   const to = parse(b);
+
+  /**
+   * OKLCh: the same space, walked around the hue circle instead of across it.
+   *
+   * OKLab fixed the PACE of a fade (see the space comparison above) and left
+   * its PATH alone. A straight line between two a/b coordinates is a chord,
+   * and a chord between near-opposite hues passes close to the neutral axis --
+   * so the colour desaturates on the way through and re-saturates on the way
+   * out. Measured on the shipped palettes, chroma at the halfway point as a
+   * fraction of the endpoints':
+   *
+   *   listening -> working   hue gap 106-173 deg    13-19%   reported as sharp
+   *   working   -> ready     hue gap  45-124 deg    49-65%   reported as sharp
+   *   listening -> ready     hue gap  18- 84 deg    83-100%  not reported
+   *
+   * The rim sits at 53% alpha over the host page, so near-grey is very close
+   * to invisible: it washes out mid-fade and comes back as the new colour,
+   * which reads as a switch rather than a move. The two transitions reported
+   * as abrupt are exactly the two that collapse, and the one that holds its
+   * chroma was never mentioned.
+   *
+   * Interpolating lightness, chroma and HUE separately keeps the colour on the
+   * outside of the wheel the whole way. Shorter arc, because a fade should
+   * take the near way round; chroma pulled back to the sRGB boundary where the
+   * arc would leave it, since clamping there would reintroduce a flat spot.
+   */
+  if (space === "oklch") {
+    const [r, g, b2] = oklabToRgb(evenlyPaced(from, to)(t));
+    return `rgb(${r}, ${g}, ${b2})`;
+  }
 
   if (space === "oklab") {
     const [L1, A1, B1] = rgbToOklab(from);
@@ -188,21 +337,10 @@ export function mixColor(a, b, t, space = "oklab") {
 }
 
 /** Two palettes, mixed stop by stop. */
-export function mixPalettes(from, to, t, space = "oklab") {
+export function mixPalettes(from, to, t, space = "oklch") {
   return from.map((c, i) => mixColor(c, to[i] ?? c, t, space));
 }
 
-/**
- * The gradient at a given angle.
- *
- * Stops are mixed pairwise rather than two whole gradients being cross-faded
- * as stacked layers. Stacking shows BOTH rainbows at once through the middle,
- * which reads as a smear; mixing stop by stop stays one rainbow that changes
- * hue, which is what a change of state should look like.
- *
- * No wrapping fifth stop: the angle rotates across a viewport-sized box, so
- * the two ends sit on opposite screen edges and never meet at a seam.
- */
 export function rimGradient(angle, stops) {
   return `linear-gradient(${angle}deg, ${stops.join(", ")})`;
 }

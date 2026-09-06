@@ -1473,3 +1473,149 @@ In a shadow root it does not, on any engine. Removing the gate is 30 lines of
 build plugin and the declarations land at specificity 0 in the first layer, so
 a host's own utilities still outrank them.
 
+## 31. A mask layer that does nothing still costs a frame
+
+**Chosen:** emit only the corner layers the current `cornerRadius` sign uses,
+and clip the rim to the band it occupies.
+
+**The rim stuttered.** Not the colour: sampled through a state change, the
+crossfade moves at a flat 0.83 OKLab units per second for its whole 1200ms,
+which is what §29 built. The stutter was the frame rate.
+
+The rim's mask is ten full-viewport layers: four corner holes, four corner
+blooms, two edges. Holes and blooms are the two signs of one control, so **one
+set is always at its no-op** -- and at the default `cornerRadius: 0`, both are.
+A no-op layer is free to write and expensive to run: every frame the rim moves,
+the browser recomposites the whole stack.
+
+Measured at 1440x900, rim on, nothing else animating:
+
+| configuration | fps | median frame | p95 |
+|---|---|---|---|
+| 10 layers, as it shipped | 21 | 49ms | 64ms |
+| 6 layers (one side) | 28 | 35ms | -- |
+| 2 layers (edges only) | 40 | 25ms | -- |
+| 2 layers + ring clip | **59** | 17ms | 21ms |
+
+Roughly linear in the layer count. Neither half is expensive alone -- unmasked,
+the same animation holds a flat 60; masked but frozen, also 60. It is the
+combination, and eight of the ten layers were paying into it for nothing.
+
+**Verified by pixel comparison, not by argument.** Both stacks rendered over a
+held-still sweep and diffed: the largest difference is 1 of 256 on 0.14% of
+bytes, which is compositor rounding. Two mistakes were caught that way and
+neither would have shown up in a screenshot glance:
+
+- `clip-path: polygon()` is ONE closed path with no way to declare a subpath.
+  Listing an outer and an inner rectangle as eight points with `evenodd` builds
+  a self-intersecting octagon, and it clipped away most of the left and right
+  bands. The hole has to be cut the way SVG does it: outer clockwise, back to
+  the start, inner counter-clockwise, nonzero rule.
+- A clip edge is antialiased. Drawn at exactly `0%`, it halved the coverage of
+  the brightest column of the rim and left a dark 1px outline around the whole
+  viewport. The outer rectangle now sits 2px outside the element.
+
+**The measurement rig had to be fixed first, twice.** framer rewrites the
+`background` SHORTHAND every frame, which clears an `!important`
+`background-image` -- so "freezing" the sweep in place did nothing and the two
+screenshots differed by the rotation. And session logs cannot answer a timing
+question: the widget batches events for 2s with no timestamp and the relay
+stamps them on receipt, so a whole turn arrives sharing one millisecond. That
+made a real turn look like four rim states inside 1ms. It is not; the log
+simply cannot say. Worth fixing separately.
+
+## 32. The route and the pace are two different problems
+
+**Chosen:** interpolate in OKLCh, walking around the hue wheel, and
+reparameterise that route by arc length so it still advances evenly.
+
+**§29 fixed the pace and left the route alone.** The report this time named two
+transitions and not the third: violet to lime and lime to prism felt sharp,
+violet to prism did not. That pattern is the whole diagnosis.
+
+A straight line between two OKLab a/b coordinates is a **chord**, and a chord
+between near-opposite hues passes close to the neutral axis. Chroma at the
+halfway point, as a fraction of the endpoints':
+
+| transition | hue gap | OKLab | OKLCh |
+|---|---|---|---|
+| listening → working (violet → lime) | 106-173° | **13-19%** | 89-115% |
+| working → ready (lime → prism) | 45-124° | 49-65% | 72-151% |
+| listening → ready (violet → prism) | 18-84° | 83-105% | 106-116% |
+
+The two that collapse are exactly the two that were reported. The rim sits at
+53% alpha over the host page, so near-grey is very close to invisible: it
+washes out mid-fade and reappears as the new colour, which reads as a switch
+rather than a move. Screenshots at the halfway point show it plainly -- a dull
+olive-grey band under OKLab, a clear blue one under OKLch.
+
+**But swapping the route broke the pace, which is why this is one entry and not
+two.** OKLCh's own parameter does not advance evenly in OKLab: the hue term
+contributes chroma times the turn, and pulling chroma back at the sRGB boundary
+stretches and squeezes what is left. Raw OKLCh carried 16.5% of the change in
+its first eighth and 10.2% in its sixth -- a 1.6x spread, about what linear
+light gave, and §29 records why that reads as accelerating.
+
+So the route is sampled once per colour pair, the OKLab distance between
+samples is measured, and that table converts "fraction of the fade elapsed"
+into "fraction of the way along the route". Both properties, measured on the
+shipped palettes:
+
+| space | spread across eighths | chroma held at halfway (worst stop) |
+|---|---|---|
+| OKLab | 1.06x | 13% |
+| OKLCh, raw | 1.63x | 78% |
+| OKLCh, paced | **1.10x** | **89%** |
+
+**Two instruments had to be thrown away to get there.** Sampling one 6x40 patch
+of the rim said the fade was front-loaded 2.1x, which was the sweep rotating
+through that patch, not the fade. Averaging the whole top edge said something
+different again -- the mean colour of a rainbow is near-grey and moves
+erratically while every stop moves smoothly. Only the per-stop reading, taken
+off the live gradient each frame, measures the thing the eye is tracking.
+
+## 33. A click is not the same event as a message
+
+**Chosen:** the fade's destination is a ref set beside its origin and its
+progress, never the `state` prop read during render.
+
+**The rim flashed the destination palette for one frame before every fade.**
+Measured on a replayed turn: at the instant the state changed, the gradient
+painted `rgb(59,130,246)` and `rgb(249,115,22)` -- prism's blue and orange, at
+full strength, in the middle of a violet rim -- and on the next frame snapped
+back to violet and faded properly. 68x the fade's own per-frame movement.
+
+`background` recomputes on framer's frame loop and needs three things to
+agree: where the fade started, where it is going, and how far along it is.
+Origin and progress were set in the effect; the destination was read from a
+value assigned during **render**. Between those two moments the trio
+disagrees, and `mix` is still 1 from the fade that just finished -- so
+`mix(oldOrigin, newDestination, 1)` is the destination, exactly.
+
+**Why every measurement said the fade was even.** React flushes passive effects
+synchronously for discrete input, so a click closes the window before the
+browser can paint. Every instrument built for §29 and §32 drove the change with
+a click, and none of them ever saw it. A `setTimeout` does not get that
+treatment. Neither does a data channel message, which is what changes the rim's
+state in a real session -- so the bug was in every real turn and in none of the
+tests. The user could see it and the tooling could not, for four rounds.
+
+What broke the deadlock was a control the user could work themselves: a bench
+tab in the widget with buttons for each state and a "play a turn" that steps
+through one on timers. Clicking the buttons was smooth, playing a turn was not.
+That difference is the whole diagnosis, and it took one message to obtain
+against four rounds of measuring the wrong thing.
+
+**The fix is not a layout effect.** Running the setup before paint would close
+this particular window and leave the same disagreement available to anything
+else that reads state during render. Moving the destination into a ref updated
+beside the other two removes the possibility instead: before the effect all
+three describe the finished previous fade, which is the colour already on
+screen, and after it all three describe the new one. There is no ordering to
+get right.
+
+**Kept, from the same round:** the rim bench is behind `tuneRim` on
+`<Interpreter/>` and `?tune` on the demo app, off everywhere else. `space` and
+`crossfadeMs` reach the rim whether or not the bench is driving it, so an
+interpolation can be judged against another during a real conversation rather
+than against a memory of one.
