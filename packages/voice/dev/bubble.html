@@ -72,6 +72,17 @@
          queries carry no specificity, so within one layer the last rule wins. -->
     <aside id="host-sidebar" class="hidden host-wide-flex">host sidebar</aside>
 
+    <!-- A rich-text editor with its name in a heading above it, which is how
+         most apps render a description. Reduced from cal.diy: the agent was
+         asked to fill one in, could not see it, and typed into the URL field
+         instead. -->
+    <section id="host-form">
+      <div>Description</div>
+      <div id="host-editor" contenteditable="true" role="textbox"></div>
+      <label for="host-title">Title</label>
+      <input id="host-title" type="text" />
+    </section>
+
     <div id="widget-mount"></div>
     <pre id="toggles" style="font: 11px/1.35 ui-monospace, monospace; padding: 4px 28px"></pre>
     <pre id="trace" style="font: 11px/1.35 ui-monospace, monospace; padding: 0 28px"></pre>
