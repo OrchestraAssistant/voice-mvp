@@ -57,7 +57,9 @@ export const nextAppRouter = {
       const relDir = path.relative(appDir, path.dirname(file));
       const routePath = appRouterPath(relDir);
       if (routePath === null) continue;
-      routes.push({ path: routePath, component: path.basename(path.dirname(file)) || "home" });
+      // The file is carried so an enricher can read what the page says about
+      // itself. Stripped before the manifest is written.
+      routes.push({ path: routePath, component: path.basename(path.dirname(file)) || "home", _file: file });
     }
     return { routes };
   },
@@ -78,7 +80,7 @@ export const nextPagesRouter = {
       // _app, _document and _error are framework plumbing, not destinations;
       // api/ is handled by the route-handler detector, not this one.
       if (rel.split("/").some((s) => s.startsWith("_")) || rel.startsWith("api/")) continue;
-      routes.push({ path: pagesRouterPath(rel), component: path.basename(file).replace(/\.(t|j)sx?$/, "") });
+      routes.push({ path: pagesRouterPath(rel), component: path.basename(file).replace(/\.(t|j)sx?$/, ""), _file: file });
     }
     return { routes };
   },

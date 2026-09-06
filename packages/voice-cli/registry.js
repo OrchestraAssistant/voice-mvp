@@ -16,6 +16,7 @@ import { nextRouteHandlers, nextPagesApi } from "./frameworks/next/api.js";
 import { trpcRouters } from "./frameworks/trpc/router.js";
 import { zodBodies } from "./schema/zod.js";
 import { tsTypes } from "./schema/typescript.js";
+import { pageMetadata } from "./schema/pageMetadata.js";
 
 export const DETECTORS = [
   // Producers: find the operations.
@@ -33,4 +34,5 @@ export const DETECTORS = [
   // TypeScript reader only fills what is still empty.
   zodBodies,
   tsTypes,
+  pageMetadata,
 ];

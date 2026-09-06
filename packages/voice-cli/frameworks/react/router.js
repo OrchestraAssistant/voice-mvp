@@ -38,7 +38,7 @@ export const reactRouter = {
               component = attr.value.expression.openingElement.name.name;
             }
           }
-          if (routePath) routes.push({ path: routePath, component });
+          if (routePath) routes.push({ path: routePath, component, _file: file });
         },
       });
     }

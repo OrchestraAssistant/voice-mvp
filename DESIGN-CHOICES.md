@@ -1322,3 +1322,73 @@ shipping next week counts zero and is perfectly real. An operation with no
 searchable term records `null` rather than `0`, because "nothing calls this"
 is a claim and "no question was asked" is not, and writing the first when you
 mean the second is how something gets pruned for the wrong reason.
+
+
+---
+
+## 27. A page's own description is in its source, not only on the screen
+
+**Chosen:** a detector reads what each page declares about itself -- a
+metadata export, a heading, a title prop, or a translated key resolved against
+the app's locale files. Probing keeps its harvest as a second source.
+
+**Why this beats probing at the same job.** Probing can only recover a
+description from a page that renders on the server. cal.diy serves a shell for
+61 of its 81 routes, so probing learned nothing about any of them. Reading the
+source described 53, and the text is better:
+
+```
+/event-types   Event types. Configure different events for people to book on your calendar.
+/bookings/:status   Bookings. See upcoming and past events booked through your event type links.
+/availability  Availability. Configure times when you are available for bookings.
+```
+
+That is the exact sentence the rendered page shows, recovered without running
+anything.
+
+**Generic by looking for shapes rather than a framework's API.** A `metadata`
+export is Next.js's answer; `<h1>` and a `title` prop are nobody's in
+particular; a positional `generateMetadata(t => t("a"), t => t("b"))` is a
+convention every wrapper of that shape follows. All three reduce to "string
+literals in title-ish positions", which is a question you can ask of a
+component tree without knowing what built it.
+
+**Internationalisation is the hop that makes it work at all.** Source holds
+`t("event_types_page_title")`; the sentence lives in a locale file, in cal's
+case four directories away in a sibling package. Without resolving it, every
+page in an internationalised app describes itself as a key -- which is worse
+than describing itself as nothing, because a key looks like information. A key
+with no English is skipped for exactly that reason.
+
+**Cost:** 53 descriptions add 955 tokens to cal's routes, taking them from
+1,117 to 2,072. Worth it, and worth watching: seven of them run past 90
+characters, and if that grew it would be the first thing to trim.
+
+---
+
+## 28. The probe signs in, because an anonymous probe measures the login page
+
+**Chosen:** `--login <spec.json>` runs a described sign-in sequence and keeps
+the cookies. The spec is a file, not arguments, because credentials in a
+command end up in shell history.
+
+**What it changes.** Without a session most routes answer with a redirect to a
+login page, which the probe correctly records as "exists" and nothing more.
+Every question worth asking is answered by the logged-in version: whether the
+page is real, what it says about itself, what a query returns, which fields the
+server requires.
+
+Signed in against cal, the probe found `/auth/verify-email-change` returning
+404 -- a route the manifest claims and the app does not have. Anonymously that
+route redirected to login and counted as fine.
+
+**A cookie is the proof of sign-in, not a status code.** A login endpoint
+answering 200 with an error in its body is the ordinary way to fail. A session
+IS a cookie: if none arrived that was not there before, nothing happened. And
+an expired cookie is treated as a deletion, since sending a dead session back
+is worse than sending none -- the app answers as though someone is signed in
+and then fails halfway.
+
+**One caution.** A probe signed in as a real user is one careless `--writes`
+away from modifying that user's data, which is an argument for pointing it at
+a seeded, disposable instance rather than anything shared.

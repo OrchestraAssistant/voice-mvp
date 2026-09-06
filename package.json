@@ -15,6 +15,6 @@
     "dev:api": "npm run dev -w demo-api",
     "dev:demo": "npm run dev -w demo-app",
     "dev:stress": "npm run stress -w @yourco/voice",
-    "test": "npm run build:pkg && node --test relay/*.test.mjs packages/voice-cli/*.test.mjs packages/voice-cli/core/*.test.mjs && npm test -w @yourco/voice"
+    "test": "npm run build:pkg && node --test relay/*.test.mjs packages/voice-cli/*.test.mjs packages/voice-cli/core/*.test.mjs packages/voice-cli/schema/*.test.mjs && npm test -w @yourco/voice"
   }
 }

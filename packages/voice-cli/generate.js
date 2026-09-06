@@ -78,6 +78,10 @@ function main() {
 
   const { manifest, conflicts, notes, sources } = merge(results);
   manifest.actions.forEach((a) => delete a._hookName);
+  // Internal, carried between detectors and never shipped: a file path in the
+  // manifest would be a path from someone else's machine in the model's prompt.
+  manifest.routes.forEach((r) => delete r._file);
+  manifest.actions.forEach((a) => delete a._inputSchema);
 
   // Policy, not detection: what was found is one question, what a voice agent
   // should be handed is another. Anything named in the overlay is kept, since
