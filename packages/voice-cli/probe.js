@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describeShape, omissionProbes, readOmission, readOnlyPlan, readRoute } from "./core/probe.js";
+import { describePages, describeShape, harvestPage, omissionProbes, readOmission, readOnlyPlan, readRoute } from "./core/probe.js";
 import { OVERLAY_FILE } from "./core/overlay.js";
 
 const argv = process.argv.slice(2);
@@ -64,14 +64,15 @@ const ask = async (method, url, body) => {
     } catch {
       parsed = null; // an HTML page, which is normal for a route
     }
-    return { status: res.status, body: parsed };
+    return { status: res.status, body: parsed, text };
   } catch (err) {
     return { status: 0, error: err.message };
   }
 };
 
 const problems = [];
-const learned = { queries: [], actions: [] };
+const learned = { routes: [], queries: [], actions: [] };
+const harvested = [];
 
 async function main() {
   console.log(`Probing ${manifest.routes?.length ?? 0} routes and ${manifest.queries?.length ?? 0} queries against ${baseUrl}\n`);
@@ -83,7 +84,7 @@ async function main() {
       skipped++;
       continue;
     }
-    const { status, body, error } = await ask(probe.method, probe.url);
+    const { status, body, text, error } = await ask(probe.method, probe.url);
     if (error) {
       problems.push(`${probe.kind} ${probe.name}: could not reach the app (${error})`);
       continue;
@@ -91,8 +92,16 @@ async function main() {
 
     if (probe.kind === "route") {
       const verdict = readRoute(status);
-      if (verdict.ok) reachable++;
-      else problems.push(`route ${probe.name}: ${verdict.why}`);
+      if (!verdict.ok) {
+        problems.push(`route ${probe.name}: ${verdict.why}`);
+        continue;
+      }
+      reachable++;
+      // The page usually describes itself better than anything we could
+      // invent from its filename. Collected raw; what counts as a description
+      // is decided across all pages once they are all in.
+      const page = harvestPage(text);
+      if (page) harvested.push({ path: probe.name, ...page });
       continue;
     }
 
@@ -135,13 +144,23 @@ async function main() {
     console.log(`  someone there, confidently, and be wrong.`);
   }
 
-  const found = learned.queries.length + learned.actions.length;
+  learned.routes = describePages(harvested);
+  if (learned.routes.length) {
+    console.log(`\n${learned.routes.length} page(s) describe themselves:`);
+    for (const r of learned.routes.slice(0, 6)) console.log(`  ${r.path}  "${r.description}"`);
+    if (learned.routes.length > 6) console.log(`  ...and ${learned.routes.length - 6} more`);
+  }
+
+  const found = learned.routes.length + learned.queries.length + learned.actions.length;
   if (found && has("--fix")) {
     const overlayPath = path.join(path.dirname(manifestPath), OVERLAY_FILE);
     const existing = fs.existsSync(overlayPath) ? JSON.parse(fs.readFileSync(overlayPath, "utf-8")) : {};
     const merged = { ...existing };
     // Into the OVERLAY, never the generated file: what a probe learned is a
     // correction, it survives regeneration, and a human can read the diff.
+    for (const { path, description } of learned.routes) {
+      merged.routes = upsertBy(merged.routes ?? [], "path", { path, description });
+    }
     for (const { name, returns } of learned.queries) {
       merged.queries = upsert(merged.queries ?? [], { name, returns });
     }
@@ -161,8 +180,10 @@ async function main() {
   process.exit(problems.length ? 1 : 0);
 }
 
-function upsert(list, patch) {
-  const existing = list.find((i) => i.name === patch.name);
+const upsert = (list, patch) => upsertBy(list, "name", patch);
+
+function upsertBy(list, key, patch) {
+  const existing = list.find((i) => i[key] === patch[key]);
   if (existing) {
     Object.assign(existing, patch);
     return list;

@@ -1274,3 +1274,51 @@ makes the rest reachable at all.
 
 **Revisit if** a real app has hundreds of genuinely user-facing operations
 after honest pruning.
+
+
+---
+
+## 26. Harvest the app's own words, and count who calls what
+
+**Chosen:** the probe collects each page's heading, the line beneath it and
+its title, and turns them into route descriptions. The generator counts how
+often the app's own code calls each operation.
+
+**Why not a model, at least not first.** Apps describe themselves. cal.diy's
+event-types page renders "Event types / Configure different events for people
+to book on your calendar" -- written by someone who knew what the page was for,
+and better than anything a model would invent from a filename. Harvesting it
+costs one extra read of a response the probe already fetched.
+
+**Deciding what counts as a description takes all the pages at once.** A title
+is usually "Availability | Cal.diy", and no single page can tell which half is
+the product. Picking the longer half chose "Cal.diy" over "Error" and
+described every page as the product name. Counting which segment repeats
+across pages cannot make that mistake.
+
+Two rejections matter as much as the harvest. A description equal to the last
+path segment is dropped -- "/availability" described as "Availability" costs
+tokens and says nothing the model could not read off the route. And a title
+that is only the product name is dropped for the same reason. On cal that took
+46 candidates down to 20 real ones.
+
+**What it cannot do.** A client-rendered page serves a shell, so its heading
+exists only after hydration and the served HTML has nothing to harvest. Twenty
+of cal's 81 routes described themselves; the rest are behind authentication
+and rendered on the client. Reading a rendered DOM would need a browser, which
+is a heavy dependency for a published CLI, so that is the natural home for the
+optional agent pass in §25 rather than for this.
+
+**Counting call sites is the pruning signal that patterns miss.** 52 of cal's
+177 discovered operations are referenced nowhere in the client or shared
+source: `/api/tasks/cron` is called by a scheduler, `/api/stripe/webhook` by
+Stripe, `/api/me` by third-party consumers of the public API, `/api/version`
+by an uptime check. Path rules already caught cron and webhooks. Nothing in a
+pattern catches `/api/version` or `/api/me`.
+
+Recorded as a number on each operation and reported, never acted on. Zero is a
+strong signal and still only a signal: an endpoint added last week for a page
+shipping next week counts zero and is perfectly real. An operation with no
+searchable term records `null` rather than `0`, because "nothing calls this"
+is a claim and "no question was asked" is not, and writing the first when you
+mean the second is how something gets pruned for the wrong reason.

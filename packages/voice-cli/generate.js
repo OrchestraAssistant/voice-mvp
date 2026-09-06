@@ -18,6 +18,7 @@ import { runDetectors, activeExcludes } from "./core/run.js";
 import { merge } from "./core/merge.js";
 import { OVERLAY_FILE, applyOverlay } from "./core/overlay.js";
 import { excludeInfrastructure } from "./core/exclude.js";
+import { countCallSites } from "./core/callsites.js";
 
 const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
 
@@ -86,6 +87,19 @@ function main() {
   // infrastructure, so a React app is never filtered by Next.js conventions.
   const excluded = excludeInfrastructure(manifest, activeExcludes(DETECTORS, results), overlaid.named);
 
+  // How often the app's own code calls each operation. Recorded rather than
+  // acted on: zero is a strong signal and still only a signal, since an
+  // endpoint added last week for a page shipping next week counts zero and is
+  // perfectly real. Whoever writes the include list should see it.
+  const counts = countCallSites([...manifest.queries, ...manifest.actions], [SRC_DIR, ROOT]);
+  const uncalled = [];
+  for (const op of [...manifest.queries, ...manifest.actions]) {
+    const count = counts.get(op.name);
+    if (count === null || count === undefined) continue;
+    op.callSites = count;
+    if (count === 0) uncalled.push(op.name);
+  }
+
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const outFile = path.join(OUT_DIR, "manifest.json");
   fs.writeFileSync(outFile, JSON.stringify({ generatedAt: "static-analysis", ...manifest }, null, 2));
@@ -126,6 +140,13 @@ function main() {
   if (bodyless.length) {
     console.warn(`\n${bodyless.length} write action(s) have no body fields: ${bodyless.map((a) => a.name).join(", ")}`);
     console.warn("  They can be called but cannot change anything. Add a schema, or fill in bodyFields by hand.");
+  }
+
+  if (uncalled.length) {
+    console.log(`\n${uncalled.length} operation(s) the app's own code never calls:`);
+    console.log(`  ${uncalled.slice(0, 12).join(", ")}${uncalled.length > 12 ? `, and ${uncalled.length - 12} more` : ""}`);
+    console.log(`  Schedulers, webhooks, public API endpoints and dead code look like this.`);
+    console.log(`  A strong hint about what to leave out of "include", not a verdict.`);
   }
 
   const toolCount = manifest.queries.length + manifest.actions.length;

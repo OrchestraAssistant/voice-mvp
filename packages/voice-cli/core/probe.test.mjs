@@ -116,3 +116,68 @@ describe("which fields the server actually requires", () => {
     assert.match(readOmission("title", 500).note, /nothing learned/);
   });
 });
+
+import { describePages, harvestPage } from "./probe.js";
+
+describe("harvesting what a page says about itself", () => {
+  const page = (html) => harvestPage(html);
+
+  test("a heading and the line under it beat anything we could invent", () => {
+    // cal.diy's own words, written by someone who knew what the page was for.
+    const html = `<html><head><title>Event Types | Cal.diy</title></head>
+      <body><h1>Event types</h1><p class="text-subtle">Configure different events for people to book on your calendar.</p></body></html>`;
+    const [described] = describePages([{ path: "/event-types", ...page(html) }]);
+    assert.equal(described.description, "Event types. Configure different events for people to book on your calendar.");
+  });
+
+  test("the product name is found by what repeats, not by length", () => {
+    // "Error | Cal.diy": picking the longer half chose "Cal.diy" over "Error",
+    // so every page was described as the product. Only counting across pages
+    // can tell which half is the name of the app.
+    const pages = [
+      { path: "/apps", ...page("<title>App store | Cal.diy</title>") },
+      { path: "/settings/profile", ...page("<title>Your account | Cal.diy</title>") },
+      { path: "/teams", ...page("<title>Teams | Cal.diy</title>") },
+    ];
+    const described = describePages(pages);
+    assert.equal(described.find((d) => d.path === "/apps").description, "App store");
+    assert.equal(described.find((d) => d.path === "/settings/profile").description, "Your account");
+    // And "Teams" for /teams is dropped, because it restates the path.
+    assert.ok(!described.some((d) => d.path === "/teams"));
+  });
+
+  test("a description that restates the path is dropped", () => {
+    // "/availability" described as "Availability" costs tokens and says
+    // nothing the model could not read off the route.
+    const described = describePages([
+      { path: "/availability", ...page("<title>Availability | Cal.diy</title>") },
+      { path: "/apps", ...page("<title>App store | Cal.diy</title>") },
+      { path: "/x", ...page("<title>Something | Cal.diy</title>") },
+    ]);
+    assert.ok(!described.some((d) => d.path === "/availability"));
+    assert.ok(described.some((d) => d.path === "/apps"));
+  });
+
+  test("a title that is only the product name is dropped", () => {
+    const described = describePages([
+      { path: "/a", ...page("<title>Cal.diy</title>") },
+      { path: "/b", ...page("<title>Teams | Cal.diy</title>") },
+      { path: "/c", ...page("<title>Apps | Cal.diy</title>") },
+    ]);
+    assert.ok(!described.some((d) => d.path === "/a"));
+  });
+
+  test("markup and entities do not reach the prompt", () => {
+    const [described] = describePages([
+      { path: "/x", ...page(`<h1><span>Bookings</span></h1><p>Your <b>upcoming</b> &amp; past meetings.</p>`) },
+    ]);
+    assert.equal(described.description, "Bookings. Your upcoming & past meetings.");
+  });
+
+  test("a page with nothing to say is left alone", () => {
+    // A client-rendered page serves a shell: the heading exists only after
+    // hydration. Inventing something would be worse than saying nothing.
+    assert.deepEqual(describePages([{ path: "/x", ...page("<html><body><div id=root></div></body></html>") }]), []);
+    assert.equal(harvestPage(null), null);
+  });
+});

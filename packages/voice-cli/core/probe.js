@@ -132,3 +132,94 @@ export function readOmission(field, status) {
   if (status >= 500) return { field, required: null, note: "the server errored; nothing learned" };
   return { field, required: false, note: "accepted without it" };
 }
+
+/**
+ * What the app calls a page, in its own words.
+ *
+ * The most useful description of a page is usually already rendered on it.
+ * cal.diy's event-types page says "Event types / Configure different events
+ * for people to book on your calendar" -- written by someone who knew what it
+ * was for, and better than anything a model would invent from a filename.
+ *
+ * Reads the served HTML rather than a rendered DOM: heading, the line beneath
+ * it, and the document title. That is enough for a server-rendered page and
+ * costs nothing beyond the request the probe already makes.
+ */
+export function harvestPage(html) {
+  if (!html || typeof html !== "string") return null;
+  const title = clean(first(html, /<title[^>]*>([\s\S]*?)<\/title>/i));
+  const heading = clean(first(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i));
+  // The line after the heading is where apps put the one-sentence explanation.
+  const subtitle = clean(first(html, /<h1[^>]*>[\s\S]*?<\/h1>\s*<(?:p|div|span)[^>]*>([\s\S]*?)<\/(?:p|div|span)>/i));
+  return { title, heading, subtitle };
+}
+
+/**
+ * Turns what every page said into a description for each.
+ *
+ * Cross-page on purpose. The product name is whichever title segment repeats
+ * everywhere -- "Error | Cal.diy", "Availability | Cal.diy" -- and no single
+ * page can tell which half that is. Picking the longer half chose "Cal.diy"
+ * over "Error"; counting across pages cannot make that mistake.
+ */
+export function describePages(harvests) {
+  const siteName = commonTitleSegment(harvests.map((h) => h.title));
+  const out = [];
+  for (const { path, title, heading, subtitle } of harvests) {
+    const parts = [heading, subtitle].filter(Boolean).filter((p) => p.length > 1 && p.length < 160);
+    const description = parts.length
+      ? parts.map((p) => p.replace(/\.?$/, ".")).join(" ")
+      : segmentsOf(title).filter((seg) => seg !== siteName).join(" ");
+    const kept = worthSaying(description, path, siteName);
+    if (kept) out.push({ path, description: kept });
+  }
+  return out;
+}
+
+const segmentsOf = (title) =>
+  title ? title.split(/\s+[|\u2013\u2014-]\s+/).map((s) => s.trim()).filter(Boolean) : [];
+
+/** The title segment that appears on most pages: the product name. */
+function commonTitleSegment(titles) {
+  const counts = new Map();
+  for (const title of titles) {
+    for (const segment of new Set(segmentsOf(title))) counts.set(segment, (counts.get(segment) ?? 0) + 1);
+  }
+  const present = titles.filter(Boolean).length;
+  const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  // Only if it is on most of them; a two-page app has no repeating name.
+  return best && best[1] > present / 2 ? best[0] : null;
+}
+
+/**
+ * Rejects a description that only restates the path, or names the product.
+ *
+ * "/availability" described as "Availability" costs tokens and tells the model
+ * nothing it could not read off the route itself.
+ */
+function worthSaying(description, path, siteName) {
+  if (!description || description.length < 2) return null;
+  const normalise = (value) => value.toLowerCase().replace(/[^a-z]/g, "");
+  if (siteName && normalise(description) === normalise(siteName)) return null;
+  const lastSegment = path.split("/").filter(Boolean).pop() ?? "";
+  if (normalise(description) === normalise(lastSegment)) return null;
+  return description;
+}
+
+const first = (text, re) => text.match(re)?.[1] ?? null;
+
+/** Tags out, entities decoded, whitespace collapsed. */
+function clean(value) {
+  if (!value) return null;
+  const text = value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || null;
+}
