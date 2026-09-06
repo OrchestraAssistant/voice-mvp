@@ -22,11 +22,6 @@ const MOUNT = params.get("mount") === "inline" ? "inline" : "shadow";
 export default function App() {
   return (
     <div className="app">
-      {/* The whole interface, top tier. It derives the rim's state from the
-          session itself, which is the wiring this app used to do by hand --
-          and the wiring a real host forgot, ending up with no rim and no
-          indication anything was missing. */}
-      <Interpreter mount={MOUNT} />
       <nav className="sidebar">
         <h2>Tasker</h2>
         <Link to="/">Dashboard</Link>
@@ -40,7 +35,10 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
-      <InterpreterBubble mount={MOUNT} />
+      {/* The whole interface, top tier: bubble and rim, with the rim's state
+          derived from the session. This app used to wire that by hand, and a
+          real host forgot to, ending up with no rim and nothing saying so. */}
+      <Interpreter mount={MOUNT} />
     </div>
   );
 }

@@ -1,5 +1,8 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { clickTab, launchBrowser, preparePage, recordTransition, startHarness } from "./harness.mjs";
 
 /**
@@ -346,5 +349,45 @@ describe("<Interpreter/> renders the whole interface", { concurrency: false }, (
     assert.ok(on.panel, "the bubble did not mount");
     assert.equal(on.rim, false, "something mounted a rim nobody asked for");
     await page.close();
+  });
+});
+
+/**
+ * The demo app is the only integration written the way a host would write one,
+ * and nothing rendered it. Moving it to <Interpreter/> replaced the block that
+ * held the rim and left the original <InterpreterBubble/> behind, so the app
+ * referenced a component it no longer imported and served a white screen. The
+ * whole suite passed.
+ */
+describe("the demo app renders what it imports", () => {
+  const source = (file) =>
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../demo-app/src", file), "utf8");
+
+  test("every widget component it uses is imported", () => {
+    // A cheap stand-in for rendering it: JSX resolves identifiers at runtime,
+    // so a stale <Component/> is a ReferenceError nothing catches until a
+    // person opens the page.
+    for (const file of ["App.jsx", "main.jsx"]) {
+      const text = source(file);
+      const imported = new Set(
+        [...text.matchAll(/import\s+\{([^}]+)\}\s+from\s+"@yourco\/voice"/g)]
+          .flatMap((m) => m[1].split(",").map((s) => s.trim())),
+      );
+      const used = new Set(
+        [...text.matchAll(/<(Interpreter[A-Za-z]*|ListeningGlow|VoiceProvider)\b/g)].map((m) => m[1]),
+      );
+      for (const component of used) {
+        assert.ok(imported.has(component), `${file} renders <${component}/> without importing it`);
+      }
+    }
+  });
+
+  test("it mounts the assembled component, not the pieces", () => {
+    // If it drifts back to wiring the bubble and rim by hand, the thing the
+    // top tier exists to prevent is being demonstrated by the reference
+    // integration itself.
+    const text = source("App.jsx");
+    assert.match(text, /<Interpreter\b/);
+    assert.doesNotMatch(text, /<InterpreterBubble\b/);
   });
 });
