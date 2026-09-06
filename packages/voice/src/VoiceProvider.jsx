@@ -3,19 +3,20 @@ import { connectRealtimeSession, isUsable, mintSession } from "./realtimeClient.
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
 import { resolveRoutePath } from "./routes.js";
+import { transportFor } from "./transports.js";
 import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
 
 const InterpreterContext = createContext(null);
 
-function buildUrl(template, args) {
-  let url = template;
-  for (const [key, value] of Object.entries(args)) {
-    url = url.replace(`{${key}}`, encodeURIComponent(value));
-  }
-  return url;
-}
-
+/**
+ * Performs the request and hands the whole outcome back, status included.
+ *
+ * Deliberately does NOT throw on a non-2xx. tRPC answers errors with a
+ * structured body and an HTTP status, and the useful half is the body: failing
+ * here reported "Request failed: 401" and discarded the message that said why.
+ * Which reply counts as a failure is the transport's question.
+ */
 async function apiFetch(method, url, body) {
   const res = await fetch(url, {
     method,
@@ -23,9 +24,14 @@ async function apiFetch(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error(data?.error || `Request failed: ${res.status}`);
-  return data;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // An HTML error page, most often. The status is what carries meaning then.
+    data = null;
+  }
+  return { ok: res.ok, status: res.status, data };
 }
 
 /**
@@ -219,18 +225,25 @@ export function VoiceProvider({
   const findQuery = (name) => manifest.queries.find((q) => q.name === name);
   const findAction = (name) => manifest.actions.find((a) => a.name === name);
 
-  const runQuery = async (query, args) => {
-    const url = buildUrl(query.endpoint, args);
-    const qsParams = query.params.filter((p) => p.source === "query-string" && args[p.name] != null);
-    const qs = new URLSearchParams(qsParams.map((p) => [p.name, args[p.name]])).toString();
-    return apiFetch("GET", qs ? `${url}?${qs}` : url);
+  /**
+   * One path for every operation, whatever wire shape it uses.
+   *
+   * The manifest says which transport an operation speaks, and how a request
+   * is built and a reply read lives in transports.js. Sending a tRPC procedure
+   * a plain REST body gets a 400 that explains nothing, so this is not a
+   * detail the caller can be left to get right.
+   */
+  const perform = async (operation, args) => {
+    const transport = transportFor(operation);
+    const { method, url, body } = transport.request({ operation, args });
+    const response = await apiFetch(method, url, body);
+    return transport.read(response.data, response);
   };
 
+  const runQuery = (query, args) => perform(query, args);
+
   const runAction = async (action, args) => {
-    const url = buildUrl(action.endpoint, args);
-    const bodyKeys = action.bodyFields.map((f) => f.name);
-    const body = Object.fromEntries(bodyKeys.filter((k) => args[k] !== undefined).map((k) => [k, args[k]]));
-    const result = await apiFetch(action.method, url, Object.keys(body).length ? body : undefined);
+    const result = await perform(action, args);
     // Let the host refresh whatever cache it keeps; it knows, we don't.
     callbacksRef.current.onAfterAction?.();
     return result;

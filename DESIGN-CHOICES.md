@@ -1051,3 +1051,60 @@ pushed-to-a-server manifest can always do, the moment an app is rolled back.
 Sessions now record the shape of the manifest they were built from, since the
 relay no longer knows and a log otherwise could not say which app a session
 was for. That is exactly what nothing recorded when this went wrong.
+
+---
+
+## 22. The analyser is a core plus detectors, and the widget speaks more than REST
+
+**Chosen:** `core/` holds the contract, runner, merge, overlay and exclusion
+engine; `frameworks/` and `schema/` hold detectors; `registry.js` is the one
+file edited to add coverage. On the widget side, `transports.js` turns a
+manifest operation into a request, with REST and tRPC as the two shapes.
+
+**Why it had to stop being one file.** The original analyser was three
+hardcoded readings of three hardcoded filenames. It worked for the app it was
+written against and produced literally nothing for the first real app it met.
+Growing it meant either one file that knew about every framework, or a plug
+point. The plug point is a documented contract, validated at load: a name, a
+`describe` that is shown when the detector finds nothing, a `role` deciding
+whether it runs before or after the producers, an optional `applies`, and
+optional `excludes`.
+
+Three details each paid for themselves within a day of existing.
+
+`role` exists because enrichers mutate what producers found and used to be
+ordered by their position in an array. Reordering that array was enough to
+make every schema reader silently do nothing -- no error, no missing output,
+just actions that quietly had no body.
+
+`applies` exists because "does not apply" and "found nothing" are different
+answers. The Pages Router detector claimed four routes from a plain React
+app's `src/pages/` components folder, a coincidence of naming that produced
+results indistinguishable from real ones.
+
+`excludes` belongs to the detector rather than a global list because a plain
+React app must never be filtered by Next.js conventions, and because the rules
+change as coverage grows: `/api/trpc` was infrastructure until the tRPC
+detector could read the procedures behind it, at which point a blanket rule
+was filtering all 172 of them away.
+
+**What discovery turned out not to solve.** Reading cal.diy went from zero
+operations to 177. That is 11,700 tokens of prompt prefix, paid on the first
+response of every session, and 177 choices for the model on every turn. The
+overlay takes an `include` list and the CLI warns above 40 tools with the cost;
+22 chosen operations bring cal to 30 tools and ~3,900 tokens. Selecting is now
+the harder half, and it belongs to whoever knows which twenty matter.
+
+**Why transports had to be pluggable too.** tRPC is not REST. Procedures are
+addressed by path, input is superjson-wrapped as `{ json: ... }`, and it
+travels in a query string for a query and in the body for a mutation, with the
+reply nested at `result.data.json`. A manifest entry declares `transport` and
+the widget builds the request accordingly; an entry without one is REST, which
+is what every manifest written before this relies on.
+
+One seam moved as a result. `apiFetch` used to throw on any non-2xx, which
+reported "Request failed: 401" and discarded the body. tRPC puts the reason in
+that body, so which reply counts as a failure is now the transport's question.
+
+Verified against a running cal.diy with real authentication: `availability.list`
+returns a schedule, `me.get` returns the signed-in user.
