@@ -150,18 +150,17 @@ function main() {
     const label = `  ${role.padEnd(9)} ${detector.padEnd(21)}`;
     if (failed) console.log(`${label} failed: ${failed}`);
     else if (skipped) console.log(`${label} does not apply to this app`);
+    // Counts here, words below. A stage that found nothing countable but has
+    // something to say gets its line from the notes loop, not from both.
     else if (total) console.log(`${label} ${counts[0]} routes, ${counts[1]} queries, ${counts[2]} actions`);
-    else if ((found.notes ?? []).length) console.log(`${label} ${found.notes[0]}`);
-    else console.log(`${label} nothing -- looked for ${which.describe}`);
+    else if (!(found.notes ?? []).length) console.log(`${label} nothing -- looked for ${which.describe}`);
   }
   // Every stage says what it did in its own words, so the report needs no
-  // knowledge of which stages exist. `notes` from the merge carries only what
-  // merging itself observed; a stage's own notes are already on its line
-  // above, so printing both said everything twice.
+  // knowledge of which stages exist. Only here: merge used to collect these
+  // too, and the two loops printed everything twice.
   for (const note of notes) console.log(`  ${note}`);
-  for (const { detector, found, role } of results) {
-    if (role === "producer") continue; // its counts are its line
-    for (const note of (found.notes ?? []).slice(1)) console.log(`  ${detector}: ${note}`);
+  for (const { detector, found } of results) {
+    for (const note of found.notes ?? []) console.log(`  ${detector}: ${note}`);
   }
 
   const uncalled = context.uncalled ?? [];

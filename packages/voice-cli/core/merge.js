@@ -18,7 +18,6 @@ export function merge(results) {
   const sources = {};
 
   for (const { detector, found } of results) {
-    for (const note of found.notes ?? []) notes.push(`${detector}: ${note}`);
     for (const kind of ["routes", "queries", "actions"]) {
       for (const item of found[kind] ?? []) {
         const key = kind === "routes" ? item.path : item.name;
