@@ -51,6 +51,17 @@ export function validateManifest(manifest) {
   return { manifest: normalised, empty: !normalised.routes.length && !normalised.queries.length && !normalised.actions.length };
 }
 
+/** " Returns a list of items with: id, title, done." -- or nothing at all. */
+function describeReturns(returns) {
+  if (!returns) return "";
+  if (returns.kind === "array") {
+    const fields = Array.isArray(returns.of) ? returns.of : null;
+    return fields?.length ? ` Returns a list; each item has: ${fields.join(", ")}.` : " Returns a list.";
+  }
+  if (returns.kind === "object" && returns.fields?.length) return ` Returns an object with: ${returns.fields.join(", ")}.`;
+  return "";
+}
+
 export function buildTools(manifest) {
   const tools = [];
 
@@ -65,6 +76,11 @@ export function buildTools(manifest) {
       name: `query_${q.name}`,
       description:
         q.description.replace(/\s*$/, "").replace(/\.?$/, ".") +
+        // What comes back, when something has been able to find out. Static
+        // analysis cannot say this at all, so the model was inferring the
+        // shape from the tool's name and whatever arrived at runtime. A dozen
+        // tokens removes the guess.
+        describeReturns(q.returns) +
         " When you need several things, call this ONCE with no filter and pick from the result" +
         " -- never one query per thing.",
       parameters: paramsToJsonSchema(q.params),

@@ -3,7 +3,17 @@
   "queries": [
     {
       "name": "tasks",
-      "description": "List tasks, optionally filtered by a search string"
+      "description": "List tasks, optionally filtered by a search string",
+      "returns": {
+        "kind": "array",
+        "of": [
+          "id",
+          "title",
+          "done",
+          "dueDate",
+          "notes"
+        ]
+      }
     },
     {
       "name": "task",
@@ -11,7 +21,15 @@
     },
     {
       "name": "settings",
-      "description": "Read the user's settings: display name, email, theme"
+      "description": "Read the user's settings: display name, email, theme",
+      "returns": {
+        "kind": "object",
+        "fields": [
+          "name",
+          "email",
+          "theme"
+        ]
+      }
     }
   ],
   "actions": [
@@ -23,8 +41,16 @@
       "name": "updateTask",
       "description": "Update fields on an existing task, such as marking it done/not done or changing its title",
       "bodyFields": [
-        { "name": "done", "required": false, "type": "boolean" },
-        { "name": "title", "required": false, "type": "string" }
+        {
+          "name": "done",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        }
       ]
     },
     {

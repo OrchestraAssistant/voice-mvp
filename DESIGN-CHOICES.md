@@ -1108,3 +1108,56 @@ that body, so which reply counts as a failure is now the transport's question.
 
 Verified against a running cal.diy with real authentication: `availability.list`
 returns a schedule, `me.get` returns the signed-in user.
+
+---
+
+## 23. The manifest is checked against the running app, not just derived from it
+
+**Chosen:** `voice-cli probe <manifest> <baseUrl>` asks the app whether the
+manifest is true, and writes what it learns into the overlay. Read-only by
+default; `--writes` is an explicit flag because probing a write means
+performing one.
+
+**Why static analysis cannot be the end of it.** It reads structure, and
+structure is not behaviour. It can see that a route file exists and that a
+schema marks a field optional. It cannot see that the route was moved, that
+the endpoint redirects, or that the server accepts a request without a field
+the schema calls required. Only asking settles those.
+
+**The first real run found exactly that.** The demo app's `updateSettings`
+declares `name`, `email` and `theme` all required, because that is what the
+Zod schema says. The server accepts `{"theme":"dark"}` on its own, verified by
+hand. So the manifest was telling the model it must supply all three to change
+one -- which means "make it dark" makes the model invent a name and an email,
+and an agent overwrites two fields nobody asked it to touch. A wrong
+`required` flag is not a cosmetic error; it manufactures data.
+
+**Probing also discovers what the manifest cannot express.** There is no way
+to say what a query returns, so the model infers the shape from the tool name
+and whatever arrives at runtime. One call answers it:
+
+```
+tasks    → a list; each item has id, title, done, dueDate, notes
+settings → an object with name, email, theme
+```
+
+That reaches the model as a sentence in the tool description and costs about a
+dozen tokens. Deliberately shallow: a full JSON Schema of a booking would cost
+more than every other entry in the manifest combined.
+
+**What it refuses to do.** A route with a parameter is skipped rather than
+visited with an invented id, because a 404 from a made-up id says nothing
+about the manifest. A 401 or a redirect is not a failure -- plenty of real
+routes bounce to a login page, and following that would only prove the app has
+authentication. A 500 during an omission probe records "nothing learned"
+rather than a guess, since it might be the missing field or the app having a
+bad day.
+
+**Findings land in the overlay, never the generated file.** They are
+corrections, they survive regeneration, and a human reads the diff. That
+matters more here than elsewhere, because a probe writes into the prompt every
+future session will carry.
+
+**One practical note.** Probing every route against a development server
+forces a compile of every route, which is a real memory spike on a large app.
+Probe a production build, or pace the requests.

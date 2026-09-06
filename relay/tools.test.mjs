@@ -235,3 +235,33 @@ describe("the manifest comes from the app", () => {
     assert.ok(names.includes("navigate"), "the generic fallbacks do not depend on the manifest");
   });
 });
+
+describe("what a query returns", () => {
+  test("reaches the model when something has found it out", () => {
+    // Static analysis cannot say this at all, so the model was inferring the
+    // shape from the tool's name and whatever arrived at runtime. Probing the
+    // running app answers it in one call, and a dozen tokens removes a guess.
+    const probed = JSON.parse(JSON.stringify(manifest));
+    probed.queries.find((q) => q.name === "tasks").returns = { kind: "array", of: ["id", "title", "done"] };
+    const tool = buildTools(probed).find((t) => t.name === "query_tasks");
+    assert.match(tool.description, /Returns a list; each item has: id, title, done\./);
+  });
+
+  test("an object shape reads differently from a list", () => {
+    const probed = JSON.parse(JSON.stringify(manifest));
+    probed.queries.find((q) => q.name === "settings").returns = { kind: "object", fields: ["name", "theme"] };
+    assert.match(buildTools(probed).find((t) => t.name === "query_settings").description, /Returns an object with: name, theme\./);
+  });
+
+  test("a manifest that has never been probed reads exactly as before", () => {
+    // Most manifests will not have this. It has to be additive.
+    const tool = buildTools(manifest).find((t) => t.name === "query_tasks");
+    assert.doesNotMatch(tool.description, /Returns/);
+  });
+
+  test("a shape with no fields adds nothing rather than an empty sentence", () => {
+    const probed = JSON.parse(JSON.stringify(manifest));
+    probed.queries.find((q) => q.name === "tasks").returns = { kind: "object", fields: [] };
+    assert.doesNotMatch(buildTools(probed).find((t) => t.name === "query_tasks").description, /Returns/);
+  });
+});
