@@ -18,9 +18,34 @@ export const handCorrections = {
   describe: `${OVERLAY_FILE}: descriptions, fixes, and an include list`,
 
   run({ outDir, manifest }) {
+    // What every stage produced, so an overlay entry that REPLACES a value
+    // rather than filling a gap can be reported. Silently overwriting is how
+    // a stale hand correction outlives the thing it was correcting.
+    const before = new Map();
+    for (const kind of ["routes", "queries", "actions"]) {
+      for (const item of manifest[kind] ?? []) before.set(`${kind}:${item.path ?? item.name}`, { ...item });
+    }
+
     const result = applyOverlay(manifest, path.join(outDir, OVERLAY_FILE));
     const notes = [];
     if (result.applied.length) notes.push(`${result.applied.length} correction(s) from ${OVERLAY_FILE}`);
+
+    const overridden = [];
+    for (const kind of ["routes", "queries", "actions"]) {
+      for (const item of manifest[kind] ?? []) {
+        const was = before.get(`${kind}:${item.path ?? item.name}`);
+        if (!was) continue;
+        for (const [field, value] of Object.entries(item)) {
+          if (was[field] === undefined || field.startsWith("_")) continue;
+          if (JSON.stringify(was[field]) !== JSON.stringify(value)) {
+            overridden.push(`${item.path ?? item.name}.${field}`);
+          }
+        }
+      }
+    }
+    if (overridden.length) {
+      notes.push(`overrides what a stage found: ${overridden.slice(0, 6).join(", ")}${overridden.length > 6 ? ", ..." : ""}`);
+    }
     for (const miss of result.unmatched) notes.push(`${OVERLAY_FILE} describes ${miss}, which no detector found`);
     return { notes, named: result.named, include: result.include };
   },

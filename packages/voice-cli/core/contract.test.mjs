@@ -199,3 +199,37 @@ describe("probe stages", () => {
     assert.equal(corrections.routes.length, 1);
   });
 });
+
+describe("when two stages know the same thing", () => {
+  test("the overlay is applied last, so it outranks every stage", async () => {
+    // Correct for a person's correction. The danger is that --fix writes
+    // machine findings into the same file, where they would inherit that
+    // authority without anyone deciding.
+    const { handCorrections } = await import("../stages/handCorrections.js");
+    assert.equal(handCorrections.role, "policy");
+    assert.ok(STATIC_ROLES.indexOf("policy") > STATIC_ROLES.indexOf("enricher"));
+  });
+
+  test("an override of what a stage found is reported, not silent", async () => {
+    // Silently overwriting is how a stale hand correction outlives the thing
+    // it was correcting.
+    const { handCorrections } = await import("../stages/handCorrections.js");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const outDir = mkdtempSync(join(tmpdir(), "overlay-"));
+    writeFileSync(
+      join(outDir, "manifest.overlay.json"),
+      JSON.stringify({ routes: [{ path: "/settings", description: "From the overlay." }] }),
+    );
+    const manifest = { routes: [{ path: "/settings", description: "From the source." }], queries: [], actions: [] };
+    const found = handCorrections.run({ outDir, manifest });
+
+    assert.equal(manifest.routes[0].description, "From the overlay.", "the overlay must still win");
+    assert.ok(
+      found.notes.some((n) => n.includes("/settings.description")),
+      `the override went unmentioned: ${JSON.stringify(found.notes)}`,
+    );
+  });
+});

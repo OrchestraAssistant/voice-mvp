@@ -109,11 +109,15 @@ function main() {
     onPhase(role, ctx, soFar) {
       if (role !== "policy") return null;
       merged = merge(soFar);
-      merged.manifest.actions.forEach((a) => {
-        delete a._hookName;
-        delete a._inputSchema;
-      });
-      merged.manifest.routes.forEach((r) => delete r._file);
+      // Internal, carried between stages and never shipped. Stripped from
+      // every section rather than the ones that happened to be checked:
+      // `_inputSchema` was removed from actions only, and leaked into 15 of
+      // cal.diy's queries -- a field the model reads and cannot use.
+      for (const kind of ["routes", "queries", "actions"]) {
+        for (const item of merged.manifest[kind]) {
+          for (const field of Object.keys(item)) if (field.startsWith("_")) delete item[field];
+        }
+      }
       return { manifest: merged.manifest, results: soFar };
     },
   });
@@ -150,11 +154,14 @@ function main() {
     else if ((found.notes ?? []).length) console.log(`${label} ${found.notes[0]}`);
     else console.log(`${label} nothing -- looked for ${which.describe}`);
   }
-  for (const note of notes) console.log(`  ${note}`);
   // Every stage says what it did in its own words, so the report needs no
-  // knowledge of which stages exist.
-  for (const { detector, found } of results) {
-    for (const note of found.notes ?? []) console.log(`  ${detector}: ${note}`);
+  // knowledge of which stages exist. `notes` from the merge carries only what
+  // merging itself observed; a stage's own notes are already on its line
+  // above, so printing both said everything twice.
+  for (const note of notes) console.log(`  ${note}`);
+  for (const { detector, found, role } of results) {
+    if (role === "producer") continue; // its counts are its line
+    for (const note of (found.notes ?? []).slice(1)) console.log(`  ${detector}: ${note}`);
   }
 
   const uncalled = context.uncalled ?? [];

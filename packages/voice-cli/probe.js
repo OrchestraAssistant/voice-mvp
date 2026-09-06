@@ -190,8 +190,31 @@ async function main() {
     // to know what any of them mean. Into the OVERLAY, never the generated
     // file: what a probe learned is a correction, it survives regeneration,
     // and a person reads the diff before it becomes prompt content.
+    //
+    // A probe never overwrites something the analyser already knows. The
+    // overlay is applied last, so anything written here outranks every stage
+    // -- which is right for a person's correction and wrong for a machine's.
+    // Reading the source describes 53 of cal.diy's routes and reading the
+    // served HTML describes 20, so letting the probe win by ordering would
+    // have quietly replaced the better answer with the worse one.
+    const deferred = [];
     for (const [kind, key] of [["routes", "path"], ["queries", "name"], ["actions", "name"]]) {
-      for (const patch of learned[kind]) merged[kind] = upsertBy(merged[kind] ?? [], key, patch);
+      for (const patch of learned[kind]) {
+        const existing = (manifest[kind] ?? []).find((item) => item[key] === patch[key]);
+        const clashes = Object.keys(patch).filter(
+          (field) => field !== key && existing?.[field] !== undefined && existing[field] !== patch[field],
+        );
+        if (clashes.length) {
+          deferred.push(`${kind} ${patch[key]}: ${clashes.join(", ")} already known, leaving it alone`);
+          continue;
+        }
+        merged[kind] = upsertBy(merged[kind] ?? [], key, patch);
+      }
+    }
+    if (deferred.length) {
+      console.log(`\n${deferred.length} finding(s) the analyser already had:`);
+      for (const line of deferred) console.log(`  ${line}`);
+      console.log(`  Edit ${OVERLAY_FILE} by hand to override one deliberately.`);
     }
 
     fs.writeFileSync(overlayPath, JSON.stringify(merged, null, 2));
