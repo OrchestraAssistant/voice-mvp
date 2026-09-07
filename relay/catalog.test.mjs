@@ -10,7 +10,7 @@ const m = {
   ],
   actions: [
     {
-      name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true,
+      name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true, confidence: "review",
       bodyFields: [
         { name: "scheduleId", required: true, type: "number" },
         { name: "schedule", required: false, type: "array", shape: "Array<Array<{ start, end }>>", dates: [["start"], ["end"]], review: { kind: "opaque", reason: "nested array" } },
@@ -75,6 +75,19 @@ describe("the tool tree", () => {
   test("a destructive query never happens; a destructive action is flagged in its line", () => {
     assert.match(opLine({ kind: "action", name: "x", requiresConfirmation: true }), /\[destructive\]/);
     assert.doesNotMatch(opLine({ kind: "query", name: "y" }), /destructive/);
+  });
+
+  test("confidence becomes a path marker on the line, and known carries none", () => {
+    assert.match(opLine({ kind: "action", name: "a", confidence: "review" }), /\[screen first\]/);
+    assert.match(opLine({ kind: "action", name: "a", confidence: "unknown" }), /\[screen only\]/);
+    assert.doesNotMatch(opLine({ kind: "action", name: "a" }), /\[screen/);
+    // A real screen flow is already the screen; it gets no path marker.
+    assert.doesNotMatch(opLine({ kind: "action", name: "a", transport: "dom", confidence: "review" }), /\[screen first\]/);
+  });
+
+  test("expand carries the confidence directive on the tool", () => {
+    const tool = expand(m, "availability/schedule").tools.find((t) => t.name === "scheduleUpdate");
+    assert.equal(tool.confidence, "review");
   });
 });
 

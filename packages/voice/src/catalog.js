@@ -52,6 +52,9 @@ export function expandTopic(manifest, topic) {
       params: op.params ?? [],
       ...(op.bodyFields ? { bodyFields: op.bodyFields.map(forSession) } : {}),
       ...(op.requiresConfirmation ? { requiresConfirmation: true } : {}),
+      // The path directive (known omitted): a model-facing steer, kept when the
+      // hidden tags are stripped.
+      ...(op.confidence ? { confidence: op.confidence } : {}),
     })),
     subtopics: [...children.entries()].map(([seg, count]) => ({
       topic: [...at, seg].join("/"),

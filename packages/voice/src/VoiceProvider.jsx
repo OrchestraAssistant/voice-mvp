@@ -8,6 +8,7 @@ import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
 import { expandTopic } from "./catalog.js";
 import { classifyError } from "./errors.js";
+import { retryBudget, screenSteer } from "./policy.js";
 
 const InterpreterContext = createContext(null);
 
@@ -310,13 +311,19 @@ export function VoiceProvider({
     // on the FIRST failure -- retrying the identical arguments cannot help, and
     // each retry re-sends the whole conversation and pushes the rate limit
     // deeper. A transient error (a rate limit) gets the benefit of the doubt: it
-    // is only cut off if it repeats, since a wait genuinely fixes it.
-    const limit = retryable ? 3 : 1;
+    // is only cut off if it repeats, since a wait genuinely fixes it. The budget
+    // also tightens for a low-confidence action: an unknown shape is a guess a
+    // retry only re-sends.
+    const limit = retryBudget(action, { retryable });
     if (rf.count >= limit) {
       repeatFailRef.current = { key: null, count: 0 };
-      const advice = retryable
-        ? `This call has failed ${rf.count} times the same way. Stop and tell the user what failed.`
-        : `The arguments are wrong and this exact call will keep failing. Do NOT retry it. Either send a substantially different shape, or use the DOM tools (dom_snapshot then dom_click/dom_type) to do it on the page. If neither is possible, tell the user what failed.`;
+      // For an operation whose API path we do not trust, the advice IS the
+      // steer to the screen. Otherwise the older advice stands.
+      const advice =
+        screenSteer(action) ??
+        (retryable
+          ? `This call has failed ${rf.count} times the same way. Stop and tell the user what failed.`
+          : `The arguments are wrong and this exact call will keep failing. Do NOT retry it. Either send a substantially different shape, or use the DOM tools (dom_snapshot then dom_click/dom_type) to do it on the page. If neither is possible, tell the user what failed.`);
       return { error: `${failure}`, stop: advice };
     }
     return result;

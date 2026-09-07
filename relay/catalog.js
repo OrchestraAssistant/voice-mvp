@@ -114,7 +114,12 @@ export function opLine(op) {
   const destructive = op.requiresConfirmation ? " [destructive]" : "";
   // A flow runs in the page and can stop partway; the STEPS are never shown.
   const onScreen = op.transport === "dom" ? " [on screen, can stop partway]" : "";
-  return `${op.name}${destructive}${onScreen}${args ? ` -- takes: ${args}` : ""}${desc ? ` -- ${desc}` : ""}${returns}`;
+  // The path directive, from confidence -- but never on an operation that is
+  // ALREADY a screen flow (it is the screen). "screen first": the API call may
+  // be subtly wrong. "screen only": we could not read its inputs at all.
+  const path =
+    op.transport === "dom" ? "" : op.confidence === "unknown" ? " [screen only]" : op.confidence === "review" ? " [screen first]" : "";
+  return `${op.name}${destructive}${onScreen}${path}${args ? ` -- takes: ${args}` : ""}${desc ? ` -- ${desc}` : ""}${returns}`;
 }
 
 /**
@@ -167,6 +172,10 @@ export function expand(manifest, topic) {
       params: op.params ?? [],
       ...(op.bodyFields ? { bodyFields: op.bodyFields.map(forSession) } : {}),
       ...(op.requiresConfirmation ? { requiresConfirmation: true } : {}),
+      // The path directive travels with an expanded tool too, so a deep
+      // operation carries the same steer as a root one. A model-facing verdict,
+      // unlike the review flags forSession strips.
+      ...(op.confidence ? { confidence: op.confidence } : {}),
     })),
     subtopics: topics.map((t) => ({ topic: pathKey(t.path), description: t.description, count: t.count })),
   };

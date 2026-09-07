@@ -52,9 +52,11 @@ describe("errors are split by whether a retry could help", () => {
     assert.equal(classifyError("something odd happened").retryable, true);
   });
 
-  test("a non-retryable failure is cut off on the first strike, and points at the DOM route", () => {
+  test("a non-retryable failure is cut off early, and points at the DOM route", () => {
     const p = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
-    assert.match(p, /const limit = retryable \? 3 : 1/);
+    // The budget now comes from confidence (retryBudget), not a bare literal,
+    // but a known action still keeps the 3-transient / 1-hard behaviour.
+    assert.match(p, /const limit = retryBudget\(action, \{ retryable \}\)/);
     assert.match(p, /use the DOM tools/);
   });
 });

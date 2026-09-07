@@ -6,7 +6,7 @@ const m = {
   queries: [{ name: "scheduleGet", description: "one schedule", group: ["availability", "schedule"] }],
   actions: [
     {
-      name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true,
+      name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true, confidence: "review",
       bodyFields: [{ name: "schedule", type: "array", shape: "Array<Array<{ start, end }>>", dates: [["start"], ["end"]], review: { kind: "opaque", reason: "nested array" } }],
     },
     { name: "createTask", description: "new task" }, // root
@@ -33,12 +33,13 @@ describe("the widget answers expand from the manifest", () => {
   });
 
   test("a field's build-time tags (dates, review) never reach the model", () => {
-    const field = expandTopic(m, "availability/schedule").tools
-      .find((t) => t.name === "scheduleUpdate").bodyFields
-      .find((f) => f.name === "schedule");
+    const tool = expandTopic(m, "availability/schedule").tools.find((t) => t.name === "scheduleUpdate");
+    const field = tool.bodyFields.find((f) => f.name === "schedule");
     assert.equal(field.shape, "Array<Array<{ start, end }>>"); // the model keeps this
     assert.equal("dates" in field, false);
     assert.equal("review" in field, false);
+    // ...but the confidence directive DOES travel, so the steer reaches a deep op.
+    assert.equal(tool.confidence, "review");
   });
 
   test("root is reachable as the empty path", () => {
