@@ -2,6 +2,8 @@
 // tool definitions, plus a fixed set of generic DOM/navigation primitives
 // that act as the runtime fallback for anything the manifest doesn't cover.
 
+import { rootCatalog } from "./catalog.js";
+
 function jsonType(manifestType) {
   if (manifestType === "boolean") return "boolean";
   if (manifestType === "number") return "number";
@@ -65,82 +67,82 @@ function describeReturns(returns) {
 export function buildTools(manifest) {
   const tools = [];
 
-  // Queries stay a plain schema, deliberately unlike actions below. Wrapping
-  // them would make the commonest call -- "list everything" -- into
-  // {"items":[{}]}, an array holding one empty object, which reads like a bug.
-  // The model ignored the batch form for queries anyway; what it needs here is
-  // not a batch but the advice to stop filtering one thing at a time.
-  for (const q of manifest.queries) {
-    tools.push({
+  /**
+   * A DISPATCHER, not one typed function per operation.
+   *
+   * cal.diy has 177 operations. As typed tools that is ~15k tokens of prompt
+   * prefix on every single response, and it walked a live session into a
+   * per-minute rate limit -- half the turns failed. The tools cannot be
+   * trimmed mid-session either (they are fixed at creation for prompt caching),
+   * so a "reveal more tools" step cannot add typed functions later.
+   *
+   * So the operations become DATA, reached through three small tools that never
+   * change. `run_query` and `run_action` call an operation by name; `expand`
+   * reveals a topic's operations (see catalog.js). The base prompt carries only
+   * the root operations and the topic names -- everything else is one expand
+   * away, and the tool surface stays a handful of entries whatever the app's
+   * size.
+   *
+   * The names come from the catalog in the instructions and from expand's
+   * results. A name the manifest does not know is answered with an error, not a
+   * guess.
+   */
+  tools.push(
+    {
       type: "function",
-      name: `query_${q.name}`,
+      name: "run_query",
       description:
-        q.description.replace(/\s*$/, "").replace(/\.?$/, ".") +
-        // What comes back, when something has been able to find out. Static
-        // analysis cannot say this at all, so the model was inferring the
-        // shape from the tool's name and whatever arrived at runtime. A dozen
-        // tokens removes the guess.
-        describeReturns(q.returns) +
-        " When you need several things, call this ONCE with no filter and pick from the result" +
-        " -- never one query per thing.",
-      parameters: paramsToJsonSchema(q.params),
-    });
-  }
-
-  for (const a of manifest.actions) {
-    // Every action takes a batch as well as a single item. Measured: "create
-    // one task per month" produced four tool calls and then stopped, and it
-    // took eight more prompts to get the other eight; "delete the seven
-    // weekdays" became seven separate stage-and-confirm rounds and forty
-    // seconds of the user saying "yep". One call with a list is fewer
-    // round trips, fewer tokens, and -- for destructive actions -- one
-    // question instead of seven.
-    // ONE shape, always a list -- a single change is a list of one.
-    //
-    // The first attempt offered `items` ALONGSIDE the plain fields, which
-    // meant the schema had to say "either these or that", and that is exactly
-    // what it cannot say: anyOf/oneOf/allOf/not are rejected at the root of a
-    // tool's parameters (they are fine anywhere nested). So the root `required`
-    // had to be dropped and `action_createTask({})` became schema-valid
-    // nonsense.
-    //
-    // Making the list the only form removes the either/or, and with it the
-    // need to compose anything. `required: ["items"]` comes back at the root,
-    // `required` still applies inside each entry, and minItems stops an empty
-    // batch -- stricter than before batching existed, and a third smaller than
-    // carrying both forms.
-    tools.push({
-      type: "function",
-      name: `action_${a.name}`,
-      description:
-        a.description.replace(/\s*$/, "").replace(/\.?$/, ".") +
-        " Takes a LIST: one entry per thing to change, and a single change is a list of one." +
-        " Never call this repeatedly for a set -- put them all in one call." +
-        // A flow runs in the page, so the user watches it happen and a step
-        // can fail partway. Worth saying, because "it stopped at step 3"
-        // means something different from a failed HTTP call.
-        (a.transport === "dom"
-          ? " This happens on screen, one step at a time, and can stop partway if the page is not where it expected."
-          : "") +
-        (a.requiresConfirmation
-          ? " (destructive: requires user confirmation before executing. A list is confirmed once, for the whole set.)"
-          : ""),
+        "Read data from the app by calling one of its queries by name. Names come from the catalog " +
+        "in your instructions and from expand() results. For a lookup, call ONCE with no filter and " +
+        "pick from the result -- never one query per thing.",
       parameters: {
         type: "object",
         properties: {
+          name: { type: "string", description: "The query's name, exactly as the catalog gives it." },
+          args: { type: "object", description: "Arguments for the query, or {} for none." },
+        },
+        required: ["name"],
+      },
+    },
+    {
+      type: "function",
+      name: "run_action",
+      description:
+        "Change something in the app by calling one of its actions by name. `items` is a LIST: one " +
+        "entry per thing to change, a single change being a list of one. Put a whole set in ONE call " +
+        "-- never call the same action repeatedly. A destructive action stages first and asks for " +
+        "confirmation; a list is confirmed once for the whole set.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The action's name, exactly as the catalog gives it." },
           items: {
             type: "array",
             minItems: 1,
             description: "One entry per thing to change. For a single change, pass a list of one.",
-            items: paramsToJsonSchema(a.params, a.bodyFields),
+            items: { type: "object" },
           },
         },
-        required: ["items"],
+        required: ["name", "items"],
       },
-    });
-  }
+    },
+    {
+      type: "function",
+      name: "expand",
+      description:
+        "Reveal the tools grouped under a topic, when the catalog shows a topic name but not its " +
+        "tools. Pass the topic exactly as listed (e.g. availability or availability/schedule). " +
+        "Returns that topic's tools and any sub-topics you can expand further. Expand toward what the " +
+        "user asked for; do not expand everything.",
+      parameters: {
+        type: "object",
+        properties: { topic: { type: "string", description: "The topic path from the catalog." } },
+        required: ["topic"],
+      },
+    },
+  );
 
-  // Generic runtime fallback primitives -- used when the manifest doesn't
+    // Generic runtime fallback primitives -- used when the manifest doesn't
   // cover what's needed (an element with no corresponding manifest action,
   // or a page state the static analysis couldn't see).
   tools.push(
@@ -336,15 +338,18 @@ export function buildInstructions(manifest, language = null) {
 Known pages in this app:
 ${routeList}
 
+The app's tools, by name. Call them with run_query and run_action:
+${rootCatalog(manifest)}
+
 Rules:
-1. Prefer the query_* and action_* tools -- they are reliable, direct calls into the app's own data. Only fall back to dom_snapshot/dom_click/dom_type when there's no query/action tool that does what's needed.
-2. Destructive tools (marked "(destructive: ...)"; currently: ${confirmActions.join(", ") || "none"}) take two steps, in this order. CALL THE TOOL FIRST: it does not execute anything, it stages the change and tells you to confirm. THEN ask the user, in plain language, naming what will change. Do not ask before calling it -- if you ask first you will ask again after staging, and the user has to say yes twice. If they agree, call confirm_pending_action (no arguments); that is what executes it. If they decline, call cancel_pending_action. Never call the destructive tool a second time to retry.
+1. Prefer run_query and run_action -- they are reliable, direct calls into the app's own data. The catalog above lists what you can call now and the topics you can expand; if the tool you need is not there, expand the topic it belongs to before falling back. Only use dom_snapshot/dom_click/dom_type when no query or action fits at all.
+2. Destructive actions (a tool marked destructive in the catalog or an expand result; currently: ${confirmActions.join(", ") || "none"}) take two steps, in this order. CALL THE TOOL FIRST: it does not execute anything, it stages the change and tells you to confirm. THEN ask the user, in plain language, naming what will change. Do not ask before calling it -- if you ask first you will ask again after staging, and the user has to say yes twice. If they agree, call confirm_pending_action (no arguments); that is what executes it. If they decline, call cancel_pending_action. Never call the destructive tool a second time to retry.
 3. ACT, don't narrate. If a command maps to a tool, call it. Never describe what you could do, are about to do, or would need in order to do it -- just do it. Explaining instead of acting is the single worst thing you can do here.
 4. Answer in ONE short sentence. Two or three words is usually right: "Done." / "Opened settings." / "Three tasks match." The user is looking at the screen and can see what changed, so do not describe the result in detail.
 5. Never end with an offer of further help. No "anything else?", no "let me know if...", no restating the request back to the user. Say what happened and stop.
 6. If something fails or no tool fits, say so in one sentence and stop. Do not propose alternatives unless asked. Say WHY it failed, not just that it did -- the tool result tells you, and it is the only thing the user can act on. This applies hardest to an action that stops part-way: report what it could not find and stop. Do not call it again, and do not finish it by hand with dom_click or dom_type. An action that stops is broken, not unlucky, and the user needs to hear which part.
 7. A query result is only true for the turn it arrived in. The app changes underneath you -- the user edits things directly, and your own actions change them too -- so BEFORE stating a current value (a name, an email, a count, a status), call the query again in that same turn. Never answer from what a query told you earlier in the conversation. If the user questions an answer you gave -- "are you sure?", "double check", "really?" -- that is not a request for reassurance: re-run the query and say what it returns now, even if it contradicts what you just said.
-8. Every action_* tool AND dom_click and dom_type take a LIST, so one call does the whole job. This is not tidiness: every call resends the whole conversation, and a handful of single clicks is what walks a session into a rate limit and ends it. "Create one per month" is ONE call with twelve entries; "delete all the weekdays" is ONE call with seven. A single change is a list of one entry. Never stop part-way through a list, and never call the same action twice for a set. For lookups, call the query ONCE with no filter and pick from the result -- never one query per thing.
+8. run_action AND dom_click and dom_type take a LIST, so one call does the whole job. This is not tidiness: every call resends the whole conversation, and a handful of single clicks is what walks a session into a rate limit and ends it. "Create one per month" is ONE call with twelve entries; "delete all the weekdays" is ONE call with seven. A single change is a list of one entry. Never stop part-way through a list, and never call the same action twice for a set. For lookups, call the query ONCE with no filter and pick from the result -- never one query per thing.
 9. When the user dismisses you -- "that's all", "thanks, goodbye", "stop listening" -- call end_session and say one short goodbye. That is the only reason to call it. Completing a task is not a dismissal, and neither is an error: if you hang up on your own judgement you take the microphone away from someone who was still talking to you.
 10. Your replies are shown to the user as TEXT by default. If your next reply carries information they asked for and cannot see on screen -- an answer, a count, a value -- call answer_aloud in the same turn as the tool you are reporting on, and it will be spoken instead. Confirmations of things they just watched happen stay as text; do not call answer_aloud for those.
 

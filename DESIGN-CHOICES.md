@@ -1831,3 +1831,57 @@ compared first samples, so cal's dev overlay -- which mounts late on every page
 -- was proposed as the signal for 20 of 23 routes. And the redirect check ran
 only before sampling, so 34 routes that bounce to login after DOMContentLoaded
 were measured as themselves. Neither would have shown up against a fake.
+
+## 37. A dispatcher and a tool tree, not one typed tool per operation
+
+**Chosen:** operations are reached through `run_query`, `run_action` and
+`expand`, called by name, with the catalog of what-can-be-called living in the
+prompt as text and grouped into an expandable tree. The old typed
+`query_*`/`action_*` functions are gone.
+
+**Alternative:** keep one typed function per operation, and lean on a
+human-written `include` list to keep the count down.
+
+### Why
+
+cal.diy yields 177 operations. As typed tools that was ~22k tokens of prompt
+prefix on **every response**, and a live session showed the cost directly: 13
+of 26 responses failed on the per-minute rate limit, one assistant reply in
+five and a half minutes. The tools also cannot be trimmed mid-session -- they
+are fixed at creation for prompt caching -- so a "reveal more tools when needed"
+step cannot add typed functions later. Both problems have the same root: the
+whole tool surface rides in the prefix, sized by the app.
+
+Making the operations DATA fixes both. The tool surface is a handful of
+dispatchers whatever the app's size, and what an operation costs is one catalog
+line, not a full JSON schema. Measured on the same all-root cal manifest:
+**~22k tokens down to ~7.5k**, a 3x cut before any grouping at all.
+
+Grouping is the rest of the win. Each operation carries an optional `group`
+path; no group means the root, and root operations ship in the base prompt.
+Everything else is an `expand(topic)` away, and expand is answered from the
+manifest the widget already holds -- no round trip. A deep app is a deep tree,
+so niche tools take a few expands to reach, which is the point: context fills
+with one topic's tools when asked, never with all of them.
+
+### What it costs
+
+- **Calling by name is looser than a typed function.** A typed tool's
+  arguments are schema-checked by the model's own tool-calling; `run_query({name,
+  args})` puts the operation name in a string, so a wrong name is caught at
+  dispatch and returned as an error rather than being impossible. Worth it for
+  the token saving, and the error is actionable.
+- **The tree is only as good as the grouping**, and nothing groups yet.
+  Generate and probe leave every operation at the root -- valid, works on the
+  first try, and back to the heavy end of the range until a classifier (human
+  or agent, per DESIGN-PHILOSOPHY §3) moves operations into topics. The
+  dispatcher is the mechanism; the classifier is the payoff, and it is the next
+  piece.
+- **The grouping logic exists twice**, once in the relay (renders the root) and
+  once in the widget (answers expand). Same data model, two views; a shared
+  spec comment in each. Acceptable while it is ~30 lines, worth unifying if it
+  grows.
+
+Everything a manifest carried before still works: the `describeReturns` hint, a
+DOM flow's "happens on screen" note, and the destructive marking all moved into
+the catalog line rather than the typed description.

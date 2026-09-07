@@ -149,11 +149,12 @@ describe("batch execution", () => {
   const source = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
 
-  test("a list is the only shape, with a fallback for a model that ignores it", () => {
-    // The schema now says required: ["items"], so there is nothing to
-    // normalise -- but a model that sent {"/":"dashboard"} against a valid
-    // `path` declaration is not one to trust with a schema.
-    assert.match(source, /Array\.isArray\(args\.items\) && args\.items\.length > 0 \? args\.items : \[args\]/);
+  test("run_action takes items, with a fallback for a model that puts fields at the top level", () => {
+    // The dispatcher passes {name, items}. If a model ignores the schema and
+    // puts the change fields alongside name instead, treat everything-but-name
+    // as a single-item list rather than dropping the call.
+    assert.match(source, /Array\.isArray\(args\.items\) && args\.items\.length > 0/);
+    assert.match(source, /const \{ name: _n, items: _i, \.\.\.rest \} = args/);
   });
 
   test("a destructive batch stages the whole set and is confirmed once", () => {

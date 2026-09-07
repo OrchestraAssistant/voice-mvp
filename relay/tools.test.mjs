@@ -68,44 +68,44 @@ describe("answer_aloud", () => {
   });
 });
 
-describe("batching", () => {
+describe("the dispatcher and its catalog", () => {
   const tools = buildTools(manifest);
-  const create = tools.find((t) => t.name === "action_createTask");
-  const del = tools.find((t) => t.name === "action_deleteTask");
+  const names = tools.map((t) => t.name);
+  const catalog = buildInstructions(manifest);
 
-  test("queries stay a plain schema, and are told to fetch once", () => {
-    // Wrapping them would make "list everything" into {"items":[{}]}, an array
-    // holding one empty object. The model ignored the query batch form anyway.
-    for (const t of tools.filter((x) => x.name.startsWith("query_"))) {
-      assert.equal(t.parameters.properties.items, undefined, `${t.name} should not take a list`);
-      assert.match(t.description, /call this ONCE with no filter/i);
-    }
+  test("operations are reached by name, not as one typed tool each", () => {
+    // 177 typed tools was ~15k tokens of prefix on every turn and rate-limited
+    // a live session. The surface is now a handful of dispatchers whatever the
+    // app's size.
+    assert.ok(names.includes("run_query"));
+    assert.ok(names.includes("run_action"));
+    assert.ok(names.includes("expand"));
+    assert.equal(names.filter((n) => n.startsWith("query_") || n.startsWith("action_")).length, 0);
+    assert.ok(tools.length < 15, `tool surface is ${tools.length}, not a handful`);
   });
 
-  test("actions take a list, and the schema can say so strictly again", () => {
-    // Offering items ALONGSIDE the plain fields meant the schema had to say
-    // "either these or that", which is the one thing it cannot say: anyOf and
-    // friends are rejected at the ROOT of a tool's parameters. One shape
-    // removes the either/or, and required comes back at both levels.
-    for (const t of tools.filter((x) => x.name.startsWith("action_"))) {
-      assert.deepEqual(t.parameters.required, ["items"], `${t.name} root required`);
-      assert.equal(t.parameters.properties.items.minItems, 1, `${t.name} allows an empty batch`);
-      assert.ok(t.parameters.properties.items.items.properties, `${t.name} entries are unconstrained`);
-    }
-    assert.deepEqual(create.parameters.properties.items.items.required, ["title"]);
+  test("run_action takes a list; run_query does not", () => {
+    const run = tools.find((t) => t.name === "run_action");
+    assert.deepEqual(run.parameters.required, ["name", "items"]);
+    assert.equal(run.parameters.properties.items.minItems, 1);
+    const q = tools.find((t) => t.name === "run_query");
+    assert.equal(q.parameters.properties.items, undefined, "a query is not a batch");
   });
 
-  test("a destructive batch says it is confirmed once", () => {
-    // Seven weekdays became seven separate stage-and-confirm rounds and forty
-    // seconds of the user saying "yep".
-    assert.match(del.description, /confirmed once, for the whole set/i);
-    assert.match(create.description, /Never call this repeatedly for a set/i);
+  test("the catalog lists an operation's name, params and description", () => {
+    // What was a typed schema per tool is now one line per tool in the prompt.
+    assert.match(catalog, /action createTask\(title/);
+    assert.match(catalog, /query tasks/);
   });
 
-  test("the instructions forbid stopping part-way through a list", () => {
-    const rules = buildInstructions(manifest);
-    assert.match(rules, /takes a LIST of changes/);
-    assert.match(rules, /Never stop part-way/i);
+  test("a destructive action is marked in the catalog", () => {
+    assert.match(catalog, /action deleteTask.*\(destructive\)/);
+  });
+
+  test("the rules point at run_query/run_action and expand, not the old tools", () => {
+    assert.match(catalog, /Prefer run_query and run_action/);
+    assert.match(catalog, /run_action AND dom_click and dom_type take a LIST/);
+    assert.doesNotMatch(catalog, /query_\* and action_\*/);
   });
 });
 
@@ -231,8 +231,10 @@ describe("the manifest comes from the app", () => {
   test("tools are still built from whatever arrives", () => {
     const checked = validateManifest(JSON.parse(JSON.stringify(manifest)));
     const names = buildTools(checked.manifest).map((t) => t.name);
-    assert.ok(names.includes("query_tasks"));
+    assert.ok(names.includes("run_query"), "the dispatcher is always present");
     assert.ok(names.includes("navigate"), "the generic fallbacks do not depend on the manifest");
+    // The operations themselves live in the catalog now, not as typed tools.
+    assert.match(buildInstructions(checked.manifest), /query tasks/);
   });
 });
 
@@ -243,14 +245,13 @@ describe("what a query returns", () => {
     // running app answers it in one call, and a dozen tokens removes a guess.
     const probed = JSON.parse(JSON.stringify(manifest));
     probed.queries.find((q) => q.name === "tasks").returns = { kind: "array", of: ["id", "title", "done"] };
-    const tool = buildTools(probed).find((t) => t.name === "query_tasks");
-    assert.match(tool.description, /Returns a list; each item has: id, title, done\./);
+    assert.match(buildInstructions(probed), /query tasks.*Returns a list; each item has: id, title, done\./);
   });
 
   test("an object shape reads differently from a list", () => {
     const probed = JSON.parse(JSON.stringify(manifest));
     probed.queries.find((q) => q.name === "settings").returns = { kind: "object", fields: ["name", "theme"] };
-    assert.match(buildTools(probed).find((t) => t.name === "query_settings").description, /Returns an object with: name, theme\./);
+    assert.match(buildInstructions(probed), /query settings.*Returns an object with: name, theme\./);
   });
 
   test("a manifest that has never been probed reads exactly as before", () => {
@@ -259,18 +260,18 @@ describe("what a query returns", () => {
     // which has since been probed and legitimately carries one.
     const unprobed = JSON.parse(JSON.stringify(manifest));
     unprobed.queries.forEach((q) => delete q.returns);
-    const tool = buildTools(unprobed).find((t) => t.name === "query_tasks");
-    assert.doesNotMatch(tool.description, /Returns/);
+    assert.doesNotMatch(buildInstructions(unprobed), /Returns/);
   });
 
   test("a shape with no fields adds nothing rather than an empty sentence", () => {
     const probed = JSON.parse(JSON.stringify(manifest));
     probed.queries.find((q) => q.name === "tasks").returns = { kind: "object", fields: [] };
-    assert.doesNotMatch(buildTools(probed).find((t) => t.name === "query_tasks").description, /Returns/);
+    const line = buildInstructions(probed).split("\n").find((l) => /query tasks\(/.test(l));
+    assert.doesNotMatch(line, /Returns/);
   });
 });
 
-describe("a flow is an action that runs in the page", () => {
+describe("a flow is an action, reached through the dispatcher", () => {
   const withFlow = () => {
     const m = JSON.parse(JSON.stringify(manifest));
     m.actions.push({
@@ -284,37 +285,31 @@ describe("a flow is an action that runs in the page", () => {
     });
     return m;
   };
+  const lineFor = (m, name) => buildInstructions(m).split("\n").find((l) => l.includes(`action ${name}`));
 
-  test("it becomes an ordinary action tool", () => {
-    // The whole point of modelling it this way: the model calls
-    // action_createEventType with named fields and never learns a dialog is
-    // involved. Nothing in the tool list is new.
-    const tool = buildTools(withFlow()).find((t) => t.name === "action_createEventType");
-    assert.ok(tool);
-    const entry = tool.parameters.properties.items.items;
-    assert.deepEqual(Object.keys(entry.properties), ["title", "duration"]);
-    assert.deepEqual(entry.required, ["title"]);
+  test("it appears as an ordinary action with its named fields", () => {
+    // The model calls run_action({name:"createEventType", items:[{title}]}) and
+    // never learns a dialog is involved. Its fields are in the catalog line.
+    const line = lineFor(withFlow(), "createEventType");
+    assert.match(line, /createEventType\(title, duration\?\)/);
   });
 
-  test("but the description says it happens on screen", () => {
-    // "It stopped at step 3" means something different from a failed HTTP
-    // call, and the model has to know that is possible.
-    const tool = buildTools(withFlow()).find((t) => t.name === "action_createEventType");
-    assert.match(tool.description, /on screen, one step at a time/);
-    assert.match(tool.description, /stop partway/);
+  test("but the line says it happens on screen", () => {
+    assert.match(lineFor(withFlow(), "createEventType"), /on screen, one step at a time/);
+    assert.match(lineFor(withFlow(), "createEventType"), /stop partway/);
   });
 
   test("an HTTP action says nothing of the kind", () => {
-    const tool = buildTools(manifest).find((t) => t.name === "action_createTask");
-    assert.doesNotMatch(tool.description, /on screen/);
+    assert.doesNotMatch(lineFor(manifest, "createTask"), /on screen/);
   });
 
-  test("steps are not exposed to the model", () => {
-    // They are execution detail. Putting them in the prompt would cost tokens
-    // and invite the model to reason about clicking, which is the thing this
-    // exists to stop it doing.
-    const tool = buildTools(withFlow()).find((t) => t.name === "action_createEventType");
-    assert.doesNotMatch(JSON.stringify(tool), /steps|dom_snapshot|click/i);
+  test("steps are never shown to the model", () => {
+    // They are execution detail; exposing them invites reasoning about clicks.
+    // The flow's own steps must not surface. dom_snapshot legitimately appears
+    // in the rules (the pointing rule), so check for the STEP content, not the
+    // primitive's name.
+    assert.doesNotMatch(buildInstructions(withFlow()), /"steps"|"click":|from: *"title"/);
+    assert.doesNotMatch(lineFor(withFlow(), "createEventType"), /click|New/);
   });
 });
 

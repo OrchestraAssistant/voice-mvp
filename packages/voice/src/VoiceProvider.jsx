@@ -6,6 +6,7 @@ import { resolveRoutePath } from "./routes.js";
 import { transportFor } from "./transports.js";
 import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
+import { expandTopic } from "./catalog.js";
 
 const InterpreterContext = createContext(null);
 
@@ -394,22 +395,32 @@ export function VoiceProvider({
         return { status: "cancelled" };
       }
 
-      if (name.startsWith("query_")) {
-        const query = findQuery(name.slice("query_".length));
-        if (!query) return { error: `Unknown query: ${name}` };
-
-        return await runQuery(query, args);
+      // The dispatcher. Operations are called by NAME rather than each being
+      // its own typed tool, so the tool surface stays small enough to fit the
+      // prompt whatever the app's size. See catalog.js and the relay's.
+      if (name === "expand") {
+        const found = expandTopic(manifest, args.topic);
+        return found ?? { error: `No topic "${args.topic}". Expand one from the catalog or an expand result.` };
       }
+      if (name === "run_query") {
+        const query = findQuery(args.name);
+        if (!query) return { error: `Unknown query "${args.name}". Names come from the catalog or expand().` };
+        return await runQuery(query, args.args ?? {});
+      }
+      if (name === "run_action") {
+        const action = findAction(args.name);
+        if (!action) return { error: `Unknown action "${args.name}". Names come from the catalog or expand().` };
 
-      if (name.startsWith("action_")) {
-        const action = findAction(name.slice("action_".length));
-        if (!action) return { error: `Unknown action: ${name}` };
-
-        // Always a list -- that is the only shape the schema allows, so there
-        // is nothing to normalise. The fallback is for a model that ignores
-        // the schema, which is not hypothetical: one sent {"/":"dashboard"} to
-        // navigate against a perfectly good `path` declaration.
-        const batch = Array.isArray(args.items) && args.items.length > 0 ? args.items : [args];
+        // `items` is the list of changes. If the model put the fields at the
+        // top level instead (everything except `name`), treat that as a list of
+        // one -- a model that ignores the schema this way is not hypothetical.
+        const batch = Array.isArray(args.items) && args.items.length > 0
+          ? args.items
+          : (() => {
+              const { name: _n, items: _i, ...rest } = args;
+              return Object.keys(rest).length ? [rest] : [];
+            })();
+        if (!batch.length) return { error: `run_action "${args.name}" needs items: a list of the changes to make.` };
 
         if (action.requiresConfirmation) {
           setPendingAction({ action, batch });
