@@ -382,7 +382,16 @@ export const zodBodies = {
       const fieldFlags = (action.bodyFields ?? []).filter((f) => f.review).map((f) => ({ field: f.name, ...f.review }));
       const writes = ["POST", "PUT", "PATCH"].includes((action.method ?? "").toUpperCase());
       if (writes && !(action.bodyFields ?? []).length) {
-        fieldFlags.push({ field: null, kind: "unknown", reason: "no input shape could be resolved" });
+        // Say WHY the body is empty, so a reviewer knows where to start. The
+        // three cases point at different places: a declared schema that would
+        // not resolve is a symbol to chase; a hook with no schema beside it is a
+        // form to read; no parser at all is the handler itself.
+        const reason = action._inputSchema
+          ? `input schema \`${action._inputSchema}\` did not resolve to a z.object({...}) -- look where it is defined (it may be a union, a runtime schema, or re-exported)`
+          : action._hookName
+            ? `no schema found beside the write hook \`${action._hookName}\` -- read the form that calls it`
+            : "no input parser is declared -- the shape lives only in the handler";
+        fieldFlags.push({ field: null, kind: "unknown", reason });
       }
       if (fieldFlags.length) {
         action.review = fieldFlags;

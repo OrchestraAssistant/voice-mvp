@@ -2,7 +2,11 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "@babel/parser";
 
-import { fieldsOf } from "../../schema/zod.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { fieldsOf, zodBodies } from "../../schema/zod.js";
 
 /** Parse a `z.object({...})` snippet and read its fields the way the enricher does. */
 function fields(src) {
@@ -86,6 +90,43 @@ describe("render truncation (case 4)", () => {
     const f = field("const S = z.object({ user: z.object({ name: z.string(), email: z.string() }) })", "user");
     assert.equal(f.review, undefined);
     assert.equal(f.shape, "{ name, email }");
+  });
+});
+
+describe("an empty-body write is flagged unknown, with a reason that points somewhere", () => {
+  // Run the enricher over an empty source tree so only the roll-up fires.
+  // Nested, because the name-correlation fallback also walks root/../.. and a
+  // bare /tmp dir would send it into the system (EACCES on /etc/ssl/private).
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "zod-empty-"));
+  const emptyDir = path.join(base, "app", "src");
+  fs.mkdirSync(emptyDir, { recursive: true });
+  const rollup = (action) => {
+    zodBodies.run({ srcDir: emptyDir, root: emptyDir, actions: [action] });
+    return action.review;
+  };
+
+  test("a declared-but-unresolved schema names the symbol to chase", () => {
+    const r = rollup({ name: "webhookCreate", method: "POST", bodyFields: [], _inputSchema: "ZCreateInputSchema" });
+    assert.equal(r[0].kind, "unknown");
+    assert.match(r[0].reason, /ZCreateInputSchema/);
+    assert.match(r[0].reason, /where it is defined/);
+  });
+
+  test("a hook with no schema points at the form", () => {
+    const r = rollup({ name: "usersUpdate", method: "PUT", bodyFields: [], _hookName: "useUsersUpdate" });
+    assert.match(r[0].reason, /useUsersUpdate/);
+    assert.match(r[0].reason, /form/);
+  });
+
+  test("nothing declared points at the handler", () => {
+    const r = rollup({ name: "createCancel", method: "POST", bodyFields: [] });
+    assert.match(r[0].reason, /handler/);
+  });
+
+  test("a GET with no body is not flagged -- it takes no input to specify", () => {
+    const action = { name: "list", method: "GET", bodyFields: [] };
+    zodBodies.run({ srcDir: emptyDir, root: emptyDir, actions: [action] });
+    assert.equal(action.review, undefined);
   });
 });
 
