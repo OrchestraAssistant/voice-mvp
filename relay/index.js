@@ -7,7 +7,7 @@ import { summaryEvent, tallySession } from "./usage.js";
 import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
 import { buildTools, buildInstructions, resolveModel, resolveLanguage, validateManifest, MODELS, LANGUAGES } from "./tools.js";
-import { listSessions, readSession } from "./observer.js";
+import { listSessions, readSession, priceEvents } from "./observer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -126,7 +126,8 @@ if (LOGGING) {
   app.get("/voice/observer/session/:id", (req, res) => {
     const events = readSession(LOG_DIR, req.params.id);
     if (!events) return res.status(404).json({ error: "no such session" });
-    res.json(events);
+    // Events with a per-message cost attached, plus the session total.
+    res.json(priceEvents(events));
   });
 }
 

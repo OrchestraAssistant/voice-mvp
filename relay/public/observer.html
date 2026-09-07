@@ -21,6 +21,8 @@
   .badge { font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:10px; padding:0 7px; margin-left:6px }
   .hint { color:var(--dim); padding:40px; text-align:center }
   code { background:#20242f; padding:1px 5px; border-radius:4px }
+  .total { font-size:13px; color:var(--dim); margin:0 0 12px; padding-bottom:10px; border-bottom:1px solid var(--line) } .total b { color:#9be89b }
+  .cost { color:#e0c98a; font-size:11px; border:1px solid #3a3524; border-radius:10px; padding:0 6px; margin-left:6px }
 </style></head>
 <body>
   <aside><h1>Sessions</h1><div id="list"></div></aside>
@@ -50,16 +52,27 @@ async function open(id, el) {
   el?.classList.add("active");
   active = id;
   const r = await fetch(rel + "/voice/observer/session/" + encodeURIComponent(id));
-  const ev = await r.json();
-  render(ev);
+  const { events, cost } = await r.json();
+  render(events, cost);
 }
 
-function render(ev) {
+function render(ev, cost) {
   if (!ev.length) { viewEl.innerHTML = "<div class='hint'>Empty session.</div>"; return; }
   const t0 = Date.parse(ev[0].at);
   let prev = null;
   const rows = [];
+  const header = cost && cost.total != null
+    ? `<div class="total">session cost: <b>$${cost.total.toFixed(4)}</b> <span style="color:#5a6274">· ${esc(cost.model||"")}</span></div>`
+    : (cost && !cost.priced ? `<div class="total" style="color:#8b93a7">unpriced model${cost.model?" ("+esc(cost.model)+")":""}</div>` : "");
   for (const e of ev) {
+    // A usage event carries the cost of the response just before it; fold it
+    // onto that row as a badge rather than printing a line of its own.
+    if (e.type === "usage") {
+      if (e.costUSD != null && rows.length) {
+        rows[rows.length - 1] = rows[rows.length - 1].replace("</div></div>", ` <span class="cost">$${e.costUSD.toFixed(5)}</span></div></div>`);
+      }
+      continue;
+    }
     const t = (Date.parse(e.at) - t0) / 1000;
     const gap = prev === null ? "" : "+" + (t - prev).toFixed(1) + "s";
     prev = t;
@@ -75,13 +88,13 @@ function render(ev) {
       v = `<span style="color:#8b93a7">${esc(args.slice(0,140))}</span>\n<span class="${ok==='err'?'err':''}">→ ${esc(String(out).slice(0,300))}</span>`;
     }
     else if (e.type === "response_failed") { kind="fail"; who="✗ " + (e.code||"failed"); v = esc(e.message||"") + (e.retrying?' <span class="badge">retrying</span>':''); }
-    else continue; // skip usage/activity/etc in the main flow
+    else continue; // activity and the like are not part of the flow
     rows.push(`<div class="row"><div class="t">${t.toFixed(1)}s</div><div class="gap">${gap}</div><div class="k ${kind}">${esc(who)}</div><div class="v">${v}</div></div>`);
   }
-  viewEl.innerHTML = rows.join("");
+  viewEl.innerHTML = header + rows.join("");
 }
 
 loadList();
-setInterval(() => { loadList(); if (active) fetch(rel + "/voice/observer/session/" + encodeURIComponent(active)).then(r=>r.json()).then(render); }, 5000);
+setInterval(() => { loadList(); if (active) fetch(rel + "/voice/observer/session/" + encodeURIComponent(active)).then(r=>r.json()).then(d=>render(d.events, d.cost)); }, 5000);
 </script>
 </body></html>

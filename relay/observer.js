@@ -10,6 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { tallySession, priceSession } from "./usage.js";
+
 /** The sessions on disk, newest first, each summarised without being opened fully. */
 export function listSessions(logDir, limit = 50) {
   let files;
@@ -80,4 +82,33 @@ function headBytes(full, n) {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * Attaches a dollar cost to each usage event and totals the session.
+ *
+ * Per MESSAGE: every response's usage event is priced on its own, so a heavy
+ * turn is visible next to the action that caused it. Per SESSION: the whole
+ * run, so the bill for one conversation is one number. Both reuse the same
+ * tally-and-price the summary sweeper uses, so the observer and the logged
+ * summary can never quote different figures.
+ *
+ * The model comes from the session event; a lone usage event does not name it,
+ * and without it nothing can be priced. So each message is tallied together
+ * with a synthetic session event carrying the model the run declared.
+ */
+export function priceEvents(events) {
+  const whole = priceSession(tallySession(events));
+  const model = tallySession(events).model;
+
+  const priced = events.map((e) => {
+    if (e.type !== "usage" || !e.usage) return e;
+    const one = priceSession(tallySession([{ type: "session", model }, e]));
+    return { ...e, costUSD: one.priced ? Number(one.total.toFixed(6)) : null };
+  });
+
+  return {
+    events: priced,
+    cost: { total: whole.priced ? Number(whole.total.toFixed(4)) : null, priced: whole.priced, model },
+  };
 }
