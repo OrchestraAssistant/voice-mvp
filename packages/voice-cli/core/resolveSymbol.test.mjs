@@ -58,3 +58,32 @@ describe("cross-package symbol resolution", () => {
     rmSync(mono, { recursive: true, force: true });
   });
 });
+
+import { zodBodies } from "../schema/zod.js";
+import { mkdtempSync as mkd2, writeFileSync as wf2, mkdirSync as md2, rmSync as rm2 } from "node:fs";
+import { tmpdir as tmp2 } from "node:os";
+import { join as j2 } from "node:path";
+
+describe("nested schema shapes", () => {
+  test("an array-of-arrays-of-objects becomes a readable shape", () => {
+    const dir = mkd2(j2(tmp2(), "zod-"));
+    md2(dir, { recursive: true });
+    wf2(j2(dir, "s.ts"),
+      'import { z } from "zod";\n' +
+      'export const ZUpd = z.object({\n' +
+      '  scheduleId: z.number(),\n' +
+      '  schedule: z.array(z.array(z.object({ start: z.date(), end: z.date() }))).optional(),\n' +
+      '  name: z.string().min(1).optional(),\n' +
+      '});\n');
+    const actions = [{ name: "upd", _inputSchema: "ZUpd", _inputSchemaFile: j2(dir, "s.ts"), bodyFields: [] }];
+    zodBodies.run({ srcDir: dir, root: dir, actions });
+    rm2(dir, { recursive: true, force: true });
+
+    const byName = Object.fromEntries(actions[0].bodyFields.map((f) => [f.name, f]));
+    assert.equal(byName.scheduleId.type, "number");
+    assert.equal(byName.scheduleId.required, true);
+    assert.equal(byName.schedule.shape, "Array<Array<{ start, end }>>");
+    assert.equal(byName.name.type, "string", "a wrapper name must not leak in as the type");
+    assert.equal(byName.name.shape, undefined, "a scalar carries no shape");
+  });
+});

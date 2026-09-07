@@ -26,36 +26,90 @@ function isZodObject(node) {
   );
 }
 
+/**
+ * Strips wrappers (.optional(), .min(), .describe()...) to the base zod call,
+ * reporting whether the field was optional on the way down.
+ *
+ * The subtlety, learned twice: a wrapper's name must never be read as the type.
+ * `.optional()` on a referenced schema (`timeZoneSchema.optional()`) has no
+ * z-type under it, so the descent stops and the caller keeps its default.
+ */
+function unwrap(node) {
+  let required = true;
+  while (node?.type === "CallExpression" && node.callee?.type === "MemberExpression") {
+    const method = node.callee.property?.name;
+    if (method === "optional" || method === "nullish") required = false;
+    if (node.callee.object?.name === "z") return { base: node, required };
+    if (node.callee.object?.type === "CallExpression") {
+      node = node.callee.object;
+      continue;
+    }
+    return { base: null, required }; // a referenced schema, or something unknown
+  }
+  return { base: null, required };
+}
+
+/**
+ * A compact type for a zod node, recursing through arrays and objects.
+ *
+ * `z.array(z.array(z.object({start, end})))` becomes `Array<Array<{start, end}>>`
+ * -- which is exactly the shape a flat "type: array" could not convey, and the
+ * reason a model kept sending the wrong structure for cal.diy's weekday-indexed
+ * schedule. Returns null for a plain scalar (the field's `type` already says
+ * "string"), so only compound shapes are carried.
+ *
+ * Depth-capped: past three levels the type is just "array"/"object". Full depth
+ * would occasionally reproduce a huge nested schema in the prompt we spent the
+ * dispatcher work shrinking, and three levels covers everything a person would
+ * type by hand anyway.
+ */
+function shapeOf(node, depth = 0) {
+  const { base } = unwrap(node);
+  if (!base || base.callee?.object?.name !== "z") return null; // referenced/unknown
+  const method = base.callee.property?.name;
+
+  if (method === "array") {
+    if (depth >= 3) return "array";
+    const inner = shapeOf(base.arguments[0], depth + 1);
+    return `Array<${inner ?? scalarName(base.arguments[0]) ?? "any"}>`;
+  }
+  if (method === "object") {
+    if (depth >= 3) return "object";
+    const fields = (base.arguments[0]?.properties ?? [])
+      .map((p) => p.key?.name ?? p.key?.value)
+      .filter(Boolean);
+    return fields.length ? `{ ${fields.join(", ")} }` : "object";
+  }
+  return null; // a scalar; `type` already carries it
+}
+
+/** The scalar type name of a node, for the leaf of an array. */
+function scalarName(node) {
+  const { base } = unwrap(node);
+  return base?.callee?.object?.name === "z" ? base.callee.property?.name : null;
+}
+
 function fieldsOf(objectExpression) {
   return objectExpression.properties.map((prop) => {
     const name = prop.key.name || prop.key.value;
-    let required = true;
+    const { base, required } = unwrap(prop.value);
     let type = "string";
     let enumValues;
-    let node = prop.value;
-    // Unwrap the chain down to its base zod type. z.string().min(1).optional()
-    // -> string, optional. A wrapper like .optional() only flips `required`; the
-    // TYPE is read from the `z.<type>()` at the bottom, never from a wrapper
-    // (an earlier version read `timeZoneSchema.optional()` as type "optional").
-    // A base that is a referenced schema (`timeZoneSchema`) has no z-type here,
-    // so the default stands rather than a wrapper's name leaking in.
-    while (node?.type === "CallExpression" && node.callee?.type === "MemberExpression") {
-      const method = node.callee.property?.name;
-      if (method === "optional" || method === "nullish") required = false;
-      if (node.callee.object?.name === "z") {
-        type = method || type;
-        if (type === "enum" && node.arguments[0]?.type === "ArrayExpression") {
-          enumValues = node.arguments[0].elements.filter((e) => e?.type === "StringLiteral").map((e) => e.value);
-        }
-        break;
+    if (base?.callee?.object?.name === "z") {
+      type = base.callee.property?.name || type;
+      if (type === "enum" && base.arguments[0]?.type === "ArrayExpression") {
+        enumValues = base.arguments[0].elements.filter((e) => e?.type === "StringLiteral").map((e) => e.value);
       }
-      if (node.callee.object?.type === "CallExpression") {
-        node = node.callee.object;
-        continue;
-      }
-      break;
     }
-    return { name, required, type, ...(enumValues ? { enumValues } : {}) };
+    // The nested shape, only when it adds something a scalar type does not.
+    const shape = shapeOf(prop.value);
+    return {
+      name,
+      required,
+      type,
+      ...(enumValues ? { enumValues } : {}),
+      ...(shape && /[<{]/.test(shape) ? { shape } : {}),
+    };
   });
 }
 

@@ -1927,3 +1927,27 @@ loop that would otherwise burn the session.
 as type "optional" -- a wrapper leaking in where the base is a referenced schema
 rather than a `z.<type>()`. It now descends to the real base or keeps the
 default, so `timeZone` reads `string`, not `optional`.
+
+## 39. A field's nested shape, not just "array"
+
+The write from §38 got its field NAMES but still failed: the model sent
+`schedule: [{days, startTime, endTime}]` where cal.diy wanted
+`Array<Array<{start, end}>>` -- a weekday-indexed array of arrays of time
+ranges. The manifest said only `schedule: array`, so the model copied the flat
+shape it saw in the read result and guessed wrong every time.
+
+The Zod reader now recurses arrays and objects into a compact type, carried on
+the field as `shape` and rendered in the catalog line:
+`schedule?: Array<Array<{ start, end }>>`. A scalar carries no shape -- its
+`type` already says "string" -- so only compound fields cost the extra tokens.
+
+Depth-capped at three levels. Full depth would occasionally reproduce a large
+nested schema in the very prompt the dispatcher work shrank, and three levels
+covers anything a person would hand-type. Past it, the type is just
+`array`/`object` again.
+
+This is the last layer of one onion: reaching a write on cal's schedule needed,
+in turn, the tRPC envelope (§the transport fix), the dispatcher (§37), a legible
+catalog (§37 follow-up), cross-package field names (§38), the rejection reason
+(§38), and now the nested shape. Each is general; the task just happened to
+exercise all of them.

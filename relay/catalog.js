@@ -95,7 +95,10 @@ export function describeReturns(returns) {
  */
 export function opLine(op) {
   const args = [...(op.params ?? []), ...(op.bodyFields ?? [])]
-    .map((p) => (p.required ? p.name : `${p.name}?`))
+    // A nested shape rides with the name -- `schedule: Array<Array<{start, end}>>`
+    // -- because the shape is exactly what a bare name could not convey and a
+    // model kept guessing wrong. A scalar carries no shape and stays a bare name.
+    .map((p) => `${p.name}${p.required ? "" : "?"}${p.shape ? `: ${p.shape}` : ""}`)
     .join(", ");
   const desc = (op.description ?? "").replace(/\s+/g, " ").trim();
   const returns = op.kind === "query" ? describeReturns(op.returns) : "";

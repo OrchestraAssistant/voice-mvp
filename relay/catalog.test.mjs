@@ -59,3 +59,22 @@ describe("the tool tree", () => {
     assert.doesNotMatch(opLine({ kind: "query", name: "y" }), /destructive/);
   });
 });
+
+describe("a nested field shape reaches the catalog line", () => {
+  test("an array-of-objects field shows its shape, a scalar does not", () => {
+    const m = {
+      queries: [],
+      actions: [{
+        name: "updateSchedule",
+        description: "set hours",
+        bodyFields: [
+          { name: "scheduleId", required: true, type: "number" },
+          { name: "schedule", required: false, type: "array", shape: "Array<Array<{ start, end }>>" },
+        ],
+      }],
+    };
+    const line = rootCatalog(m).split("\n").find((l) => /updateSchedule/.test(l));
+    assert.match(line, /scheduleId,/);
+    assert.match(line, /schedule\?: Array<Array<\{ start, end \}>>/);
+  });
+});
