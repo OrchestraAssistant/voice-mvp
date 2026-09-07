@@ -1978,3 +1978,93 @@ the last. It reads the logs and never writes them, and lives on the relay
 because that is where they are written. It immediately earned its keep: it
 showed the model's first schedule attempt was an object keyed by day name, a
 shape the raw log made no faster to see.
+
+## 41. Confidence: how much we trust an operation's API path -- and the seam we left open
+
+A single failing task -- "make the Weekend Warrior weekends only" -- exposed a
+whole spectrum of "we don't know this well enough to just call the API", and
+this section is both what we built for it and, at the end, an explicit note of
+what we deliberately did NOT build, so it is not lost.
+
+**Two kinds of not-knowing.** *Encoding* knowledge is written truthfully in the
+schema and is fully mechanisable: cal.diy's `start`/`end` are `z.date()` over a
+superjson transport, so the request has to carry the ISO string AND the
+`["Date"]` tag superjson revives it from -- send the string alone and `z.date()`
+rejects a perfectly valid date forever. We fixed that in code (the transport
+tags declared date fields; the CLI records their paths, arrays transparent). But
+*semantic* knowledge is written nowhere a parser reaches: that `name` is
+required in practice though the schema marks it optional (the handler does
+`if (!input.name) return`), that `schedule` is a 7-slot array indexed
+0=Sunday..6=Saturday with `[]` for a closed day. That cannot be extracted; it
+can only be judged.
+
+**So we grade, rather than pretend to know.** Four detectors, tuned for recall
+because a false positive costs a reviewer one glance and a miss is a silent
+runtime failure:
+
+- *opaque* -- meaning rides on position or an unlabelled code (a nested array, an
+  array of objects with no identifying field, a fixed-length list of bare
+  values). cal.diy's weekday `schedule` is the reason it exists.
+- *unknown* -- the shape itself is undetermined: `z.any`/`unknown`/`record`, or a
+  write with no readable body at all. Its reason names WHERE to look (an
+  unresolved schema symbol, a hook's form, or the handler).
+- *truncated* -- the prompt render stopped at the depth cap, so the model is shown
+  a partial shape. Fixing this also closed a real hole: date extraction had
+  shared the render's depth cap, so a date below it silently lost its tag.
+  Knowing and showing are now separate jobs -- dates extract to full depth, the
+  render stays shallow.
+
+These flags are build-time metadata for a reviewer and a dispatcher; they never
+reach the model (both expand paths strip them), because raw uncertainty in the
+prompt only saps the model's confidence.
+
+**One word the runtime can act on.** A policy stage collapses the flags -- and
+the read-back probe's verdict, when present -- into `confidence`:
+`known | review | unknown`, `known` left off to save bytes. The probe outranks
+the static guess: a fixture that truly changed state promotes to `known`, a
+2xx-that-changed-nothing demotes. That one word drives three things off one
+signal: the prompt marks the operation (`[screen first]`, `[screen only]`), the
+retry budget tightens (an `unknown` body is a guess a retry only re-sends), and
+on a low-confidence failure the dispatcher steers to the screen itself --
+softly ("try doing it on the screen"), with a way out so it does not loop --
+rather than leaving the model to remember the screen exists.
+
+**The read-back probe.** The piece that makes `review`/`unknown` more than a
+guess. A status says a write was accepted; only reading the state back says it
+did anything. The probe sends a write and reads a chosen value before and after:
+a change is a verified effect, a 2xx that moved nothing is the silent no-op that
+condemns the API path. The payload cannot be synthesised (to know one that works
+is to already know the contract the no-op hides), so it comes from a fixture --
+the natural call a person would make -- and a fixture that turns out to be a
+no-op IS the finding.
+
+**The seam we deliberately left open -- the human/LLM judgement pass.** The
+machinery above runs entirely off the static verdict; it needs no judgement to
+work today. But two things are stubbed rather than built, and both attach to
+fields that already exist:
+
+1. *Resolving a flag into a note.* An `opaque`/`unknown` operation is flagged,
+   not explained. A human or an LLM agent reads the source the reason points at
+   and writes the real contract -- "always send `name`; `schedule` is a 7-slot
+   array, 0=Sunday..6=Saturday, `[]` for closed" -- into the operation's
+   description and (via `verified`) its confidence. The read-back probe then
+   confirms it (a fixture WITH the note passes) and promotes it to `known`. The
+   flag triggers the pass; the probe closes it. What is missing is only the pass
+   itself: a skill an agent runs and a procedure a human follows, writing into
+   the overlay's description/group/confidence fields the manifest already
+   carries.
+
+2. *Recording DOM flows.* "DOM-first" today is satisfied AGENTICALLY -- the steer
+   tells the model to navigate and drive the controls, because cal.diy has no
+   recorded flows. A recorded flow (a manifest operation with `transport: "dom"`
+   and `steps`) is a tool the model can call directly instead, turning
+   `[screen first]` from "figure it out on the page" into "run this". Capturing
+   those flows -- from a person doing the task once, or an agent driving the UI
+   and recording the steps -- is the same judgement pass wearing a different hat,
+   and it plugs into the `dom` transport that already exists and already runs
+   (`perform` executes `steps` today; nothing produces them yet).
+
+Neither is a crutch the machinery is waiting on; both are the third stage of
+DESIGN-PHILOSOPHY 3 -- judgement -- shipped as something an agent or a human
+does, into fields that are already first-class. This section is the marker so we
+pick them up deliberately rather than rediscover the gap.
