@@ -9,7 +9,8 @@
     "voice-probe": "./probe.js"
   },
   "scripts": {
-    "generate": "node generate.js"
+    "generate": "node generate.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

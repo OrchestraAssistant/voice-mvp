@@ -10,6 +10,8 @@
  *   --cookie "<header>"   send a session cookie you already have
  *   --header "K: V"       any other header, repeatable
  *   --writes              also probe write actions by omitting required fields
+ *   --browser [name]      use a real browser for stages that need one (default:
+ *                         chrome, borrowed from whatever you already have)
  *   --fix                 write what was learned into manifest.overlay.json
  *   --only / --without    run a subset of the probe stages, comma-separated
  *
@@ -28,7 +30,11 @@ import { cookieJar, pick, signedIn } from "./core/session.js";
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(name);
 // Flags that take a value, so their value is not mistaken for a positional.
-const VALUED = new Set(["--cookie", "--header", "--login", "--only", "--without"]);
+const VALUED = new Set(["--cookie", "--header", "--login", "--only", "--without", "--src"]);
+// --browser optionally takes a driver name. Optional-valued flags are a
+// parsing trap: `--browser --fix` must not read `--fix` as the driver. So its
+// value counts only when the next token is not itself a flag.
+const KNOWN_DRIVERS = new Set(["chrome"]);
 const flag = (name) => {
   const i = argv.indexOf(name);
   return i === -1 ? null : argv[i + 1];
@@ -45,6 +51,7 @@ const valued = (name) => {
 const positional = [];
 for (let i = 0; i < argv.length; i++) {
   if (VALUED.has(argv[i])) i++;
+  else if (argv[i] === "--browser" && KNOWN_DRIVERS.has(argv[i + 1])) i++;
   else if (!argv[i].startsWith("--")) positional.push(argv[i]);
 }
 const [manifestPath, baseUrl] = positional;
@@ -157,10 +164,62 @@ async function main() {
 
   console.log(`Probing ${manifest.routes?.length ?? 0} routes and ${manifest.queries?.length ?? 0} queries against ${baseUrl}\n`);
 
+  /**
+   * A browser, only if asked for.
+   *
+   * Behind the driver contract rather than reached for directly, so the engine
+   * stays swappable: `--browser chrome` today, something else later, and a
+   * fake in the tests. The stage never learns which it got.
+   *
+   * Opt-in because starting a browser is not what someone expects from a
+   * command that has, until now, made HTTP requests. And it is separate from
+   * `available()`: a machine with no browser is a normal machine, and CI is
+   * usually one, so the stage says so and carries on rather than failing.
+   */
+  const browserValue = (() => {
+    const i = argv.indexOf("--browser");
+    if (i === -1) return null;
+    const next = argv[i + 1];
+    return next && !next.startsWith("--") ? next : "chrome";
+  })();
+  const wanted = browserValue;
+  let browser = null;
+  if (wanted) {
+    const { chromeDriver } = await import("./browsers/chrome.js");
+    const drivers = { chrome: chromeDriver };
+    if (!drivers[wanted]) {
+      console.error(`No browser driver called "${wanted}". Known: ${Object.keys(drivers).join(", ")}`);
+      process.exit(1);
+    }
+    browser = drivers[wanted]();
+    const ready = await browser.available();
+    console.log(ready.ok ? `Browser: ${ready.using} (${ready.how})\n` : `Browser unavailable: ${ready.why}\n`);
+  }
+
   const { results, problems, corrections } = await runProbes(stages, {
     manifest,
     ask: askOnce,
     allowWrites: has("--writes"),
+    browser,
+    baseUrl,
+    // Where the app's source lives, so the readiness stage can cross-check a
+    // proposed marker against it: a testId written in one file is page
+    // content, one written across many is shared chrome. Defaults to the
+    // manifest's parent-of-.voice, which is the app root the CLI generated
+    // from; --src overrides it.
+    srcRoot: flag("--src") ?? path.dirname(path.dirname(path.resolve(manifestPath))),
+    // The session the probe already established, so a browser stage sees the
+    // app as a signed-in user rather than measuring the login page.
+    // The base URL, but https, so a __Secure-/__Host- session cookie can be
+    // set. Such a cookie may only be handed to CDP against an https origin --
+    // yet its DOMAIN still has to match the host the browser navigates, which
+    // is the base URL's. Swapping only the scheme keeps the host aligned
+    // (localhost stays localhost) while satisfying the secure-context rule; a
+    // proxy's external hostname would be secure but point at the wrong domain.
+    cookies: jar.forBrowser(baseUrl.replace(/^http:/, "https:")),
+    // The same forwarding headers the HTTP side used, so a proxied app treats
+    // the browser like any other request rather than an insecure stranger.
+    headers,
   });
 
   console.log("Stages:");

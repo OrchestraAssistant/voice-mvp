@@ -39,6 +39,33 @@ export function cookieJar() {
       }
     },
     header: () => [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; "),
+    /**
+     * The same session, in the shape a browser wants.
+     *
+     * A probe that signs in over HTTP and then opens a browser has two
+     * sessions, and the browser's is anonymous -- so every protected route
+     * bounces to the login page and the stage measures that instead. Handing
+     * the jar over is what makes the two halves one visit.
+     */
+    /**
+     * The session in the shape CDP wants, keeping the cookie names intact.
+     *
+     * A `__Secure-`/`__Host-` prefixed cookie may only be SET in a secure
+     * context, and CDP enforces it: give it a `domain` with an `http` page and
+     * it rejects the whole batch, and RENAMING the cookie to drop the prefix
+     * makes the app hunt for a name that is no longer there. The way through is
+     * a `url` field on an `https://` origin -- CDP then treats the set as
+     * secure and accepts the prefixed name, and the browser sends it on every
+     * request regardless of the scheme it is actually navigating.
+     *
+     * So the URL handed in should be the app's real, secure origin (the one
+     * login happened against), even when the pages are then fetched over
+     * http://localhost behind a proxy.
+     */
+    forBrowser: (url) => {
+      const origin = new URL(url).origin;
+      return [...jar.entries()].map(([name, value]) => ({ name, value, url: origin }));
+    },
     size: () => jar.size,
   };
 }

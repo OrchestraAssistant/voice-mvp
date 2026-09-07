@@ -24,6 +24,7 @@ import { reachability } from "./stages/probe/reachability.js";
 import { queryShapes } from "./stages/probe/queryShapes.js";
 import { pageCopy } from "./stages/probe/pageCopy.js";
 import { requiredFields } from "./stages/probe/requiredFields.js";
+import { readiness } from "./stages/probe/readiness.js";
 
 export const STAGES = [
   // Producers: find the operations.
@@ -56,6 +57,7 @@ export const STAGES = [
   queryShapes,
   pageCopy,
   requiredFields,
+  readiness,
 ];
 
 /** The old name, kept because "detector" reads better for the producers. */

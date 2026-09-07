@@ -169,10 +169,131 @@ Found the demo's `updateSettings` declaring `name`, `email` and `theme` all
 required while the server accepts `{"theme":"dark"}` alone — so the manifest was
 telling the model to invent a name and an email to change one setting.
 
+## What to wait for on a page — `readiness`
+
+Needs a browser, so it is opt-in: `probe.js ... --browser`. The browser is the
+developer's own, found rather than shipped -- 12MB of puppeteer-core against
+262MB for a downloaded Chromium -- and it sits behind a driver contract so the
+engine can be swapped without a stage noticing.
+
+Opens each parameterless route, samples what exists twelve times over three
+seconds, and proposes the most PAGE-SPECIFIC stable element as that route's
+`readyWhen`. A measurement, not a judgement, which is why it is a probe and not
+an agent: nothing here is decided, only counted.
+
+The whole difficulty is telling a page's content from the app's chrome, since
+both can render late. Three signals, all mechanical, settle it:
+
+- **Specificity across routes.** A marker that shows up on many pages is
+  furniture no matter how late it arrives, and the one on the fewest pages is
+  the page's own. This is the primary ranking. An early attempt keyed on
+  arrival time instead and picked cal.diy's late-mounting gear icon over the
+  day switches that were there from the first frame -- so arrival time was
+  dropped entirely. `Sunday-switch`, on one route, wins; `settings-icon`, on
+  fourteen, is named and refused.
+- **Source spread breaks ties.** A `data-testid` written in one source file is
+  page content; one in twenty is a shared component's. It vetoes a marker rare
+  in this crawl but common in the code (`new_webhook`, 124 files) and confirms
+  the specific one (`app-store-app-card-apple-calendar`, 1 file).
+- **Some markers mean absence, not readiness.** `404-page`, `error-page` and
+  `maintenance` are excluded by name: proposing one says "wait for this route
+  to fail," which is a reachability finding in the wrong place.
+
+A redirect is checked at both ends, since cal.diy bounces an unauthenticated
+visitor after DOMContentLoaded and a start-only check measured the login page
+as though it were the route.
+
+Run it signed in. The probe hands its cookie jar to the browser, so `--login`
+covers both halves; without it most of an authenticated app is unmeasurable and
+says so. A `__Secure-` session cookie forces one wrinkle: it may only be set
+against an https origin, so the browser is given the base URL with its scheme
+swapped to https while the host is kept aligned.
+
+What it cannot do is generalise a measured VALUE into a shape. It proposes the
+literal `Sunday-switch`, which is locale-bound -- a Spanish user renders
+`Domingo-switch` -- where the true marker is `*-switch`. Recognising that needs
+the source template, not the rendered page.
+
 ## Page copy, harvested — `page-copy`
 
 The rendered heading and the line under it. Superseded for most apps by reading
 the source (11), which sees pages that never render on the server.
+
+---
+
+# What a flow can pin down
+
+Flow steps are hand-written in the overlay: nothing can infer a click sequence
+from source, and this is where a person says what a dialog is for.
+
+## An element the step actually meant — `testId` / `domId`
+
+A step targets by label, because a label is what `dom_snapshot` reports and
+what the person asking would have said. But a label is not unique and was never
+meant to be, so a step may also carry `testId` (a `data-testid`) or `domId` (an
+authored `id`), and then both have to match.
+
+Enrich, never require. Apps write these on some elements and not others, and a
+flow against a bare app has the label and has to work with it. cal.diy's create
+dialog is the honest case: of five steps, two have a test id and three have
+nothing but their label.
+
+Found by a failure. cal.diy labels the button opening a new schedule "New" and
+the one opening a new event type "New", telling them apart only by
+`data-testid`. `click: "New"` from the availability page opened the schedule
+dialog, hunted four seconds for a field called "Title" that a schedule dialog
+does not have, and stopped — three steps into the wrong screen. Anchored, it
+stops at step one.
+
+## When a page is ready to be read — `readyWhen`
+
+A route may declare what "ready" looks like: the `testId`, `domId` or `label`
+of an element that exists only once the real content has rendered. `navigate`
+waits for it before returning.
+
+Written by hand, because it is a claim about how the app renders that nothing
+in the source states. cal.diy's schedule editor uses `Sunday-switch`; its event
+type list uses the `event-types` container. Matched anywhere in the document,
+not only among the things you can press, since a readiness marker is usually a
+wrapper rather than a control.
+
+Found the hard way. A session navigated to the right schedule, snapshotted
+420ms later, saw the app shell, concluded the availability editor "was not on
+this screen", and left. The switches were not hidden from the snapshot, they
+did not exist yet.
+
+**Not inferable, which is why it is hand-written.** A static analyser would
+have to find, for each route, the element that appears only once data has
+arrived. In cal.diy that lives nowhere near the route: 0 of 79 page files
+contain a loading state at all, because the pages are thin and the loading sits
+several imports away in shared view components. Next.js's own `loading.tsx`
+convention covers 16 of those 79 routes, and it says a route HAS a loading
+state, not what "loaded" looks like. A wrong `readyWhen` is also worse than
+none: it fails slowly and confidently, either waiting out the full timeout or
+matching something that renders DURING loading. The right way to learn this is
+to measure it -- load the route in a browser, watch what appears last and
+stays -- which is a probe stage, not an analyser one.
+
+Without it, `navigate` guesses briefly and says when it gave up. The obvious
+guesses are all wrong: network idle never happens in an app that polls,
+mutation quiescence returns on a STABLE SKELETON, and a spinner animated in CSS
+mutates nothing at all. So the fallback watches the count of labelled
+interactive elements instead -- skeletons are divs and contribute almost none,
+and content arriving makes it jump. And the guess never claims readiness. Stability is not evidence of it: a page
+whose chrome renders in 200ms and whose content arrives at two seconds is
+stable on its shell from about 450ms, so an undeclared wait reports `assumed`
+either way. A bigger cap does not help, because the cap is only ever reached by
+a page that never stops changing at all.
+
+## Where the flow is valid — `page`
+
+The other half, and a different guarantee: the identifier says WHICH element,
+the page says WHERE the flow runs. Checked once before anything is clicked, so
+a flow aimed at the wrong screen opens nothing at all. Matched segment-wise
+with `:param` and `[param]` standing for one segment, so a flow declared for
+`/availability/:id` runs on `/availability/49` and not on `/availability`.
+
+The two fail at different points, which is the reason to have both.
 
 ---
 

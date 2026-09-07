@@ -123,6 +123,17 @@ function main() {
   });
   if (!merged) merged = merge(results);
   const { manifest, conflicts, notes } = merged;
+
+  // Again, AFTER the policies have run. The pass above happens before them,
+  // so anything a policy adds -- everything in manifest.overlay.json, which is
+  // where hand-written notes live -- kept its underscore field and shipped it
+  // to the model. Stripping in one place would be tidier and would run at the
+  // wrong time; stripping twice is what makes the rule true.
+  for (const kind of ["routes", "queries", "actions"]) {
+    for (const item of manifest[kind] ?? []) {
+      for (const field of Object.keys(item)) if (field.startsWith("_")) delete item[field];
+    }
+  }
   for (const r of results) if (r.failed) console.warn(`  ${r.detector} failed: ${r.failed}`);
   const include = context.include ?? null;
 
