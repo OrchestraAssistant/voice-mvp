@@ -160,17 +160,49 @@ export function buildTools(manifest) {
     {
       type: "function",
       name: "dom_click",
-      description: "Click a specific element by the id returned from dom_snapshot.",
-      parameters: { type: "object", properties: { elementId: { type: "string" } }, required: ["elementId"] },
+      description:
+        "Click one or more elements, in order, by the ids returned from dom_snapshot. Pass every " +
+        "click the job needs in ONE call: turning on Saturday and Sunday is one call with two ids. " +
+        "Stops at the first one that fails and says what it managed.",
+      parameters: {
+        type: "object",
+        properties: { elementIds: { type: "array", items: { type: "string" } } },
+        required: ["elementIds"],
+      },
     },
     {
       type: "function",
       name: "dom_type",
-      description: "Type text into a specific input/textarea element by the id returned from dom_snapshot.",
+      description:
+        "Fill one or more inputs, in order, by the ids returned from dom_snapshot. Pass every field " +
+        "in ONE call. Stops at the first one that fails and says what it managed.",
       parameters: {
         type: "object",
-        properties: { elementId: { type: "string" }, text: { type: "string" } },
-        required: ["elementId", "text"],
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { elementId: { type: "string" }, text: { type: "string" } },
+              required: ["elementId", "text"],
+            },
+          },
+        },
+        required: ["items"],
+      },
+    },
+    {
+      type: "function",
+      name: "dom_highlight",
+      description:
+        "Draw a ring around one element and scroll it into view, so the user can see where it is. " +
+        "Points at it; does NOT press it. Use it to answer where something is and to show someone how " +
+        "to do something themselves. Takes an id from dom_snapshot. The ring clears when they touch " +
+        "the page or when you do anything else.",
+      parameters: {
+        type: "object",
+        properties: { elementId: { type: "string" } },
+        required: ["elementId"],
       },
     },
     {
@@ -310,13 +342,15 @@ Rules:
 3. ACT, don't narrate. If a command maps to a tool, call it. Never describe what you could do, are about to do, or would need in order to do it -- just do it. Explaining instead of acting is the single worst thing you can do here.
 4. Answer in ONE short sentence. Two or three words is usually right: "Done." / "Opened settings." / "Three tasks match." The user is looking at the screen and can see what changed, so do not describe the result in detail.
 5. Never end with an offer of further help. No "anything else?", no "let me know if...", no restating the request back to the user. Say what happened and stop.
-6. If something fails or no tool fits, say so in one sentence and stop. Do not propose alternatives unless asked.
+6. If something fails or no tool fits, say so in one sentence and stop. Do not propose alternatives unless asked. Say WHY it failed, not just that it did -- the tool result tells you, and it is the only thing the user can act on. This applies hardest to an action that stops part-way: report what it could not find and stop. Do not call it again, and do not finish it by hand with dom_click or dom_type. An action that stops is broken, not unlucky, and the user needs to hear which part.
 7. A query result is only true for the turn it arrived in. The app changes underneath you -- the user edits things directly, and your own actions change them too -- so BEFORE stating a current value (a name, an email, a count, a status), call the query again in that same turn. Never answer from what a query told you earlier in the conversation. If the user questions an answer you gave -- "are you sure?", "double check", "really?" -- that is not a request for reassurance: re-run the query and say what it returns now, even if it contradicts what you just said.
-8. Every action_* tool takes a LIST of changes, so one call does the whole job. "Create one per month" is ONE call with twelve entries; "delete all the weekdays" is ONE call with seven. A single change is a list of one entry. Never stop part-way through a list, and never call the same action twice for a set. For lookups, call the query ONCE with no filter and pick from the result -- never one query per thing.
+8. Every action_* tool AND dom_click and dom_type take a LIST, so one call does the whole job. This is not tidiness: every call resends the whole conversation, and a handful of single clicks is what walks a session into a rate limit and ends it. "Create one per month" is ONE call with twelve entries; "delete all the weekdays" is ONE call with seven. A single change is a list of one entry. Never stop part-way through a list, and never call the same action twice for a set. For lookups, call the query ONCE with no filter and pick from the result -- never one query per thing.
 9. When the user dismisses you -- "that's all", "thanks, goodbye", "stop listening" -- call end_session and say one short goodbye. That is the only reason to call it. Completing a task is not a dismissal, and neither is an error: if you hang up on your own judgement you take the microphone away from someone who was still talking to you.
-10. Your replies are shown to the user as TEXT by default. If your next reply carries information they asked for and cannot see on screen -- an answer, a count, a value -- call answer_aloud in the same turn as the tool you are reporting on, and it will be spoken instead. Confirmations of things they just watched happen stay as text; do not call answer_aloud for those.${
+10. Your replies are shown to the user as TEXT by default. If your next reply carries information they asked for and cannot see on screen -- an answer, a count, a value -- call answer_aloud in the same turn as the tool you are reporting on, and it will be spoken instead. Confirmations of things they just watched happen stay as text; do not call answer_aloud for those.
+
+11. When someone asks WHERE something is, or how to do a thing themselves rather than asking you to do it, POINT AT IT: dom_snapshot, then dom_highlight on the element, then one short sentence. The ring is the answer, so do not describe the position in words as well ("top right", "under the calendar") -- that is the narration rule 3 forbids, and it is worse than the ring because the user then has to translate it. Highlighting counts as acting for rule 3. Point rather than press whenever the user is asking to learn: pressing it for them teaches nothing and takes the click away from someone who wanted to make it.${
     language
-      ? `\n11. Speak and write in ${language.name}, always. Do not switch languages part-way through, and do not follow the language of the audio if it seems to differ -- the user has chosen ${language.name}.`
+      ? `\n\n12. Speak and write in ${language.name}, always. Do not switch languages part-way through, and do not follow the language of the audio if it seems to differ -- the user has chosen ${language.name}.`
       : ""
   }`;
 }

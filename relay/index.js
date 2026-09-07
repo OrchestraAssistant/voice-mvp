@@ -52,9 +52,16 @@ app.use(express.json());
 function appendLog(logId, event) {
   if (!/^[\w.-]+$/.test(logId)) return; // it lands in a path; keep it boring
   fs.mkdirSync(LOG_DIR, { recursive: true });
+  // `at` is when the widget says it happened and `receivedAt` is when the
+  // batch reached us. Both, because they answer different questions and used
+  // to be the same field: events are batched for a couple of seconds, so
+  // arrival time collapses a whole turn onto one instant. The spread sits
+  // between them so a widget-supplied `at` wins and `receivedAt` cannot be
+  // overwritten by the payload.
+  const now = new Date().toISOString();
   fs.appendFileSync(
     path.join(LOG_DIR, `${logId}.jsonl`),
-    JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n",
+    JSON.stringify({ at: now, ...event, receivedAt: now }) + "\n",
   );
 }
 
