@@ -24,6 +24,7 @@ import { reachability } from "./stages/probe/reachability.js";
 import { queryShapes } from "./stages/probe/queryShapes.js";
 import { pageCopy } from "./stages/probe/pageCopy.js";
 import { requiredFields } from "./stages/probe/requiredFields.js";
+import { writeEffects } from "./stages/probe/writeEffects.js";
 import { readiness } from "./stages/probe/readiness.js";
 
 export const STAGES = [
@@ -57,6 +58,9 @@ export const STAGES = [
   queryShapes,
   pageCopy,
   requiredFields,
+  // After required-fields on purpose: that stage reads a STATUS, this one reads
+  // the state back to catch a 2xx that changed nothing.
+  writeEffects,
   readiness,
 ];
 

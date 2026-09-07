@@ -10,6 +10,9 @@
  *   --cookie "<header>"   send a session cookie you already have
  *   --header "K: V"       any other header, repeatable
  *   --writes              also probe write actions by omitting required fields
+ *   --effects <file.json> verify writes truly change state, read back after the
+ *                         fact. A fixture: per action, the natural call to make
+ *                         and where to watch its result. Needs --writes.
  *   --browser [name]      use a real browser for stages that need one (default:
  *                         chrome, borrowed from whatever you already have)
  *   --fix                 write what was learned into manifest.overlay.json
@@ -30,7 +33,7 @@ import { cookieJar, pick, signedIn } from "./core/session.js";
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(name);
 // Flags that take a value, so their value is not mistaken for a positional.
-const VALUED = new Set(["--cookie", "--header", "--login", "--only", "--without", "--src"]);
+const VALUED = new Set(["--cookie", "--header", "--login", "--only", "--without", "--src", "--effects"]);
 // --browser optionally takes a driver name. Optional-valued flags are a
 // parsing trap: `--browser --fix` must not read `--fix` as the driver. So its
 // value counts only when the next token is not itself a flag.
@@ -196,10 +199,26 @@ async function main() {
     console.log(ready.ok ? `Browser: ${ready.using} (${ready.how})\n` : `Browser unavailable: ${ready.why}\n`);
   }
 
+  // The read-back fixture, if given. In a file for the same reason the login
+  // spec is: it names real ids and payloads, which do not belong on a command line.
+  let effects = null;
+  if (flag("--effects")) {
+    try {
+      effects = JSON.parse(fs.readFileSync(flag("--effects"), "utf-8"));
+    } catch (err) {
+      console.error(`Could not read --effects fixture: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
   const { results, problems, corrections } = await runProbes(stages, {
     manifest,
     ask: askOnce,
+    // The uncached fetcher, for a probe that must read the same URL twice and
+    // see a real change between them (write-effects reads state before/after).
+    askFresh: ask,
     allowWrites: has("--writes"),
+    effects,
     browser,
     baseUrl,
     // Where the app's source lives, so the readiness stage can cross-check a
