@@ -34,6 +34,7 @@ import { execFileSync } from "node:child_process";
 
 import { validateDriver } from "../../browsers/contract.js";
 import { instancesFor, isPattern } from "../../core/routes.js";
+import { generalize, testIdShapes } from "../../core/testidShapes.js";
 
 /** Three seconds of watching, in twelve looks. Overridable so tests need not wait. */
 const SAMPLES = 12;
@@ -199,6 +200,10 @@ export const readiness = {
     }
 
     const measured = seen.size || 1;
+    // The test-id templates in the source, harvested once, so a measured id
+    // can be traded for the shape it was built from. Empty when there is no
+    // source to read, which just leaves every marker as its literal.
+    const shapes = testIdShapes(srcRoot);
 
     /**
      * How many measured routes each marker ends up on. This is the whole of
@@ -271,9 +276,27 @@ export const readiness = {
         continue;
       }
       const best = specific[0];
-      corrections.routes.push({ path, readyWhen: best.want });
+
+      /**
+       * Store the SHAPE, not the sample, when the id was built from a
+       * template. The probe can only measure `Sunday-switch`; the source holds
+       * `${weekday}-switch`. Writing the literal would key the wait to one
+       * locale and one row of data, so the day the app renders in Spanish, or
+       * the first schedule differs, the marker never appears. `generalize`
+       * swaps in `*-switch` when a source template produced it, and leaves a
+       * genuinely literal id alone.
+       */
+      const readyWhen = { ...best.want };
+      if (readyWhen.testId) {
+        const shape = generalize(readyWhen.testId, shapes);
+        if (shape !== readyWhen.testId) {
+          notes.push(`${path}: ${JSON.stringify(readyWhen.testId)} is one of a template ${JSON.stringify(shape)}; storing the shape`);
+          readyWhen.testId = shape;
+        }
+      }
+      corrections.routes.push({ path, readyWhen });
       notes.push(
-        `${path}: wait for ${JSON.stringify(best.want)}` +
+        `${path}: wait for ${JSON.stringify(readyWhen)}` +
           (best.spread ? ` (in ${best.spread} source file${best.spread > 1 ? "s" : ""})` : " (runtime-generated)"),
       );
     }

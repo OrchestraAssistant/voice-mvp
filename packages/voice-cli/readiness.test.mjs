@@ -154,3 +154,32 @@ describe("finding what to wait for", () => {
     assert.deepEqual(validatePage(page), []);
   });
 });
+
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+test("a templated marker is stored as its shape, not the measured value", async () => {
+  // The probe can only see Sunday-switch; the source has ${weekday}-switch.
+  // Storing the literal would break the day the app renders in another
+  // language. With the template in source, the stored marker is *-switch.
+  const dir = mkdtempSync(join(tmpdir(), "src-"));
+  writeFileSync(join(dir, "Schedule.tsx"), "data-testid={`${weekday}-switch`}\n");
+  const browser = fakeBrowser({
+    pages: {
+      "http://app/availability": { frames: [shellOf([{ tag: "button", testId: "Sunday-switch", label: "Sunday" }])] },
+      "http://app/other": { frames: [shellOf([{ tag: "button", testId: "save", label: "Save" }])] },
+    },
+  });
+  const out = await readiness.run({
+    manifest: manifest(["/availability", "/other"]),
+    browser, baseUrl: "http://app", srcRoot: dir, samples: 6, everyMs: 0,
+  });
+  rmSync(dir, { recursive: true, force: true });
+
+  assert.deepEqual(
+    out.corrections.routes.find((r) => r.path === "/availability"),
+    { path: "/availability", readyWhen: { testId: "*-switch" } },
+    "stored the locale-bound literal instead of the shape",
+  );
+});

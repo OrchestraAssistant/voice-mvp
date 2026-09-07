@@ -209,10 +209,18 @@ says so. A `__Secure-` session cookie forces one wrinkle: it may only be set
 against an https origin, so the browser is given the base URL with its scheme
 swapped to https while the host is kept aligned.
 
-What it cannot do is generalise a measured VALUE into a shape. It proposes the
-literal `Sunday-switch`, which is locale-bound -- a Spanish user renders
-`Domingo-switch` -- where the true marker is `*-switch`. Recognising that needs
-the source template, not the rendered page.
+It also generalises a measured VALUE back to the SHAPE it was built from. The
+probe can only see `Sunday-switch`; the source holds `data-testid={`${weekday}-switch`}`.
+Storing the literal would key the wait to one locale and one row of data, so
+static analysis harvests the test-id templates (the `*`-holed shapes) and the
+probe swaps its measured id for the matching one -- `*-switch`, `app-store-app-card-*`.
+A shape needs a real stem, not just separators between holes: `${a}-${b}` is
+`*-*`, which matches almost anything, and is dropped. An id that fits no
+template keeps its own text, because it was not built from one.
+
+This is the pipeline's division of labour exactly: static analysis knows the
+shape and not the value, the probe knows the value and not the shape, and
+matching one to the other recovers what neither could produce alone.
 
 ## Page copy, harvested — `page-copy`
 
