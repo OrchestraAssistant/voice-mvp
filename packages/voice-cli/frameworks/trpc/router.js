@@ -41,7 +41,7 @@ function collectRouters(srcDir, visit) {
         if (id.type !== "Identifier") return;
         if (init?.type !== "CallExpression" || init.callee?.name !== "router") return;
         if (init.arguments[0]?.type !== "ObjectExpression") return;
-        routers.set(id.name, init.arguments[0]);
+        routers.set(id.name, { node: init.arguments[0], file });
       },
     });
   }
@@ -114,7 +114,8 @@ function readProcedure(node) {
 }
 
 /** Walks a router object, following nested routers, collecting dotted paths. */
-function walkRouter(objectExpression, routers, prefix, seen, out) {
+function walkRouter(entry, routers, prefix, seen, out) {
+  const { node: objectExpression, file } = entry;
   for (const prop of objectExpression.properties) {
     const name = prop.key?.name ?? prop.key?.value;
     if (!name || !prop.value) continue;
@@ -129,12 +130,14 @@ function walkRouter(objectExpression, routers, prefix, seen, out) {
     }
     if (prop.value.type === "CallExpression" && prop.value.callee?.name === "router") {
       if (prop.value.arguments[0]?.type === "ObjectExpression") {
-        walkRouter(prop.value.arguments[0], routers, dotted, seen, out);
+        walkRouter({ node: prop.value.arguments[0], file }, routers, dotted, seen, out);
       }
       continue;
     }
     const procedure = readProcedure(prop.value);
-    if (procedure) out.push({ path: dotted, ...procedure });
+    // The file the procedure was defined in, so a schema reader can start from
+    // there and follow the import chain to a schema in another package.
+    if (procedure) out.push({ path: dotted, file, ...procedure });
   }
 }
 
@@ -169,7 +172,7 @@ export const trpcRouters = {
     const searchRoots = [srcDir, root, path.resolve(root, "..", ".."), path.resolve(root, "..")];
     const routers = new Map();
     for (const dir of [...new Set(searchRoots)]) {
-      for (const [name, node] of collectRouters(dir, visit)) if (!routers.has(name)) routers.set(name, node);
+      for (const [name, entry] of collectRouters(dir, visit)) if (!routers.has(name)) routers.set(name, entry);
       if (routers.size) break;
     }
     if (!routers.size) return {};
@@ -199,7 +202,7 @@ export const trpcRouters = {
           params: [],
           // The producer says exactly which type describes its input, so the
           // schema readers can stop guessing from name correlation.
-          ...(proc.inputSchema ? { _inputSchema: proc.inputSchema } : {}),
+          ...(proc.inputSchema ? { _inputSchema: proc.inputSchema, _inputSchemaFile: proc.file } : {}),
         };
         if (proc.kind === "query") queries.push(entry);
         else actions.push({ ...entry, requiresConfirmation: /delete|remove|destroy/i.test(proc.path), bodyFields: [] });

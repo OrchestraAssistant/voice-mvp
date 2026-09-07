@@ -1,0 +1,60 @@
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { packageAliases, resolveSpecifier, findDefinition } from "./resolveSymbol.js";
+
+/** A tiny fake monorepo: an app that re-exports a schema from a sibling package. */
+function fixture() {
+  const mono = mkdtempSync(join(tmpdir(), "mono-"));
+  mkdirSync(join(mono, "apps", "web", "src"), { recursive: true });
+  mkdirSync(join(mono, "packages", "features", "services"), { recursive: true });
+  writeFileSync(join(mono, "packages", "features", "package.json"), JSON.stringify({ name: "@acme/features" }));
+  // the real definition, two hops away and in another package
+  writeFileSync(join(mono, "packages", "features", "services", "Schedule.ts"),
+    'import { z } from "zod";\nexport const ZUpdate = z.object({ scheduleId: z.number(), name: z.string().optional() });\n');
+  // a re-export barrel
+  writeFileSync(join(mono, "packages", "features", "index.ts"),
+    'export { ZUpdate } from "./services/Schedule";\n');
+  // the app's router uses it via the package alias
+  const routerFile = join(mono, "apps", "web", "src", "router.ts");
+  writeFileSync(routerFile, 'import { ZUpdate } from "@acme/features";\nexport const r = ZUpdate;\n');
+  return { mono, routerFile, appRoot: join(mono, "apps", "web") };
+}
+
+describe("cross-package symbol resolution", () => {
+  test("package aliases come from each package's own name", () => {
+    const { mono, appRoot } = fixture();
+    const aliases = packageAliases(appRoot);
+    assert.equal(aliases.get("@acme/features"), join(mono, "packages", "features"));
+    rmSync(mono, { recursive: true, force: true });
+  });
+
+  test("a specifier resolves through an alias to a real file", () => {
+    const { mono, routerFile, appRoot } = fixture();
+    const aliases = packageAliases(appRoot);
+    const f = resolveSpecifier("@acme/features", routerFile, aliases);
+    assert.match(f, /packages\/features\/index\.ts$/);
+    rmSync(mono, { recursive: true, force: true });
+  });
+
+  test("a symbol is followed across a re-export into another package", () => {
+    // The exact shape that left cal's availabilityScheduleUpdate empty.
+    const { mono, routerFile, appRoot } = fixture();
+    const aliases = packageAliases(appRoot);
+    const def = findDefinition("ZUpdate", routerFile, aliases);
+    assert.ok(def, "did not resolve across the re-export");
+    assert.match(def.file, /services\/Schedule\.ts$/);
+    assert.equal(def.node.type, "CallExpression");
+    assert.equal(def.node.callee.property.name, "object");
+    rmSync(mono, { recursive: true, force: true });
+  });
+
+  test("an unresolvable symbol is null, not a throw", () => {
+    const { mono, routerFile, appRoot } = fixture();
+    const aliases = packageAliases(appRoot);
+    assert.equal(findDefinition("Nonexistent", routerFile, aliases), null);
+    rmSync(mono, { recursive: true, force: true });
+  });
+});

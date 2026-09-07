@@ -1885,3 +1885,45 @@ with one topic's tools when asked, never with all of them.
 Everything a manifest carried before still works: the `describeReturns` hint, a
 DOM flow's "happens on screen" note, and the destructive marking all moved into
 the catalog line rather than the typed description.
+
+## 38. Follow a schema across packages; surface why a call was rejected; stop a doomed retry
+
+Three fixes from one failed session: the model correctly found Weekend Warrior,
+called run_action to update it, and failed 18 times with 14 different guessed
+shapes because the manifest gave `availabilityScheduleUpdate` no body fields and
+the error said only "Invalid input".
+
+**The manifest was empty because the schema lives in another package.** The tRPC
+router says `.input(ZUpdateInputSchema)`, but that name is
+`export { ZUpdateInputSchema } from "@calcom/features/.../ScheduleService"` -- a
+re-export, to a z.object in a different package. The old reader searched for a
+local `const ZUpdateInputSchema = z.object(...)` and found nothing.
+
+The fix is a general, schema-AGNOSTIC symbol resolver (`core/resolveSymbol.js`):
+given a symbol and the file that references it, follow imports and re-exports --
+across package boundaries via the workspace's own `@scope/name` aliases -- to
+the AST node that defines it. What the node MEANS is the caller's business, so
+the same resolver serves a Zod reader today and a Yup or plain-type reader
+later; only the interpreter at the end differs. This is DESIGN-PHILOSOPHY §1 and
+§3 in one: static analysis does the finding, and the finding is reusable.
+Result on cal: body fields for 53 of 89 actions, all resolved across packages,
+including the update that had been unguessable.
+
+**The rejection reason was thrown away.** tRPC's error carries
+`zodError.fieldErrors: { scheduleId: ["Required"] }` -- the exact fix -- and the
+transport flattened it to the top-level "Invalid input". Now surfaced as
+"Invalid input (scheduleId: Required)", which is self-correcting: the model that
+sent `id` learns the field is `scheduleId`. A validation error the model can
+READ is worth more than any number of retries.
+
+**A doomed retry is capped.** A model that keeps failing the same action the
+same way is not making progress, and 18 attempts proved it. The widget tracks
+consecutive identical failures (keyed on action AND error text, so a DIFFERENT
+error -- one field corrected, the next revealed -- resets the count as the
+progress it is) and after a few returns a firm "stop and report", breaking a
+loop that would otherwise burn the session.
+
+**Also fixed on the way:** the Zod field-type unwrap read `timeZoneSchema.optional()`
+as type "optional" -- a wrapper leaking in where the base is a referenced schema
+rather than a `z.<type>()`. It now descends to the real base or keeps the
+default, so `timeZone` reads `string`, not `optional`.

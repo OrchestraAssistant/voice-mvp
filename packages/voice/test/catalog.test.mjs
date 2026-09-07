@@ -34,3 +34,25 @@ describe("the widget answers expand from the manifest", () => {
     assert.deepEqual(root.tools.map((t) => t.name), ["createTask"]);
   });
 });
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+const provider = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
+
+describe("the dispatcher teaches a model that calls a name directly", () => {
+  test("run_query and run_action are the dispatch entry points", () => {
+    assert.match(provider, /name === "run_query"/);
+    assert.match(provider, /name === "run_action"/);
+    assert.match(provider, /name === "expand"/);
+  });
+
+  test("a bare operation name is redirected to the right call, not just rejected", () => {
+    // Observed live: a model called `availabilityScheduleGet(...)` and
+    // `query(...)` instead of run_query, thrashed through five wrong shapes,
+    // and gave up. The widget holds the manifest, so it can name the fix.
+    assert.match(provider, /is an operation name, not a tool\. Call it as run_query/);
+    assert.match(provider, /is an operation name, not a tool\. Call it as run_action/);
+    assert.match(provider, /There is no "\$\{name\}" tool\. Use run_query/);
+  });
+});

@@ -44,6 +44,28 @@ export const rest = {
   },
 };
 
+/**
+ * A tRPC error, with the validation detail the model needs to fix its call.
+ *
+ * "Invalid input" alone is useless: the model that sent the wrong field names
+ * gets no hint and guesses again. tRPC's zodError carries exactly the fix --
+ * `{"scheduleId":["Required"]}` names the field it wanted -- and flattening it
+ * to the top-level message threw that away. Measured: an update failed 18 times
+ * with 14 different guessed shapes because "Invalid input" said nothing.
+ *
+ * Surfaced as "Invalid input (scheduleId: Required)", short enough to cost
+ * almost nothing and specific enough to be self-correcting.
+ */
+function withValidationDetail(detail) {
+  const base = detail?.message ?? "tRPC call failed";
+  const fieldErrors = detail?.data?.zodError?.fieldErrors;
+  if (!fieldErrors) return base;
+  const parts = Object.entries(fieldErrors)
+    .map(([field, msgs]) => `${field}: ${(Array.isArray(msgs) ? msgs : [msgs]).join(", ")}`)
+    .filter(Boolean);
+  return parts.length ? `${base} (${parts.join("; ")})` : base;
+}
+
 export const trpc = {
   request({ operation, args }) {
     // URL parameters are not a thing here: every value is input to the
@@ -89,7 +111,7 @@ export const trpc = {
   read(payload, { ok, status } = { ok: true }) {
     if (payload?.error) {
       const detail = payload.error.json ?? payload.error;
-      throw new Error(detail?.message ?? "tRPC call failed");
+      throw new Error(withValidationDetail(detail));
     }
     if (!ok) throw new Error(`Request failed: ${status}`);
     const data = payload?.result?.data;

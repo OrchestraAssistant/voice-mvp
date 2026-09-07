@@ -81,39 +81,51 @@ export function describeReturns(returns) {
   return "";
 }
 
-/** A one-line summary of an operation for a catalog listing. */
+/**
+ * One catalog entry: a NAME and what it takes, deliberately NOT shaped like a
+ * function signature.
+ *
+ * The first version read `query availabilityScheduleGet(scheduleId?)`, which
+ * the model saw as a tool and called directly -- there is no such tool, only
+ * run_query. So the kind is dropped (the section header carries it), the params
+ * become "takes:" rather than parentheses, and the name stands alone as the
+ * string you pass. Measured: with the signature form the model invented
+ * `availabilityScheduleGet(...)` and `query(...)` calls and never reached the
+ * dispatcher.
+ */
 export function opLine(op) {
   const args = [...(op.params ?? []), ...(op.bodyFields ?? [])]
     .map((p) => (p.required ? p.name : `${p.name}?`))
     .join(", ");
   const desc = (op.description ?? "").replace(/\s+/g, " ").trim();
   const returns = op.kind === "query" ? describeReturns(op.returns) : "";
-  const destructive = op.requiresConfirmation ? " (destructive)" : "";
-  // A flow runs in the page, so it can stop partway -- "stopped at step 3" is a
-  // different thing from a failed HTTP call, and the model has to know it can
-  // happen. The STEPS themselves are never shown: they are execution detail,
-  // and exposing them invites the model to reason about clicking, which is the
-  // thing modelling a flow as one action exists to prevent.
-  const onScreen = op.transport === "dom" ? " (on screen, one step at a time; can stop partway)" : "";
-  return `${op.kind} ${op.name}${args ? `(${args})` : ""}${destructive}${onScreen}${desc ? ` -- ${desc}` : ""}${returns}`;
+  const destructive = op.requiresConfirmation ? " [destructive]" : "";
+  // A flow runs in the page and can stop partway; the STEPS are never shown.
+  const onScreen = op.transport === "dom" ? " [on screen, can stop partway]" : "";
+  return `${op.name}${destructive}${onScreen}${args ? ` -- takes: ${args}` : ""}${desc ? ` -- ${desc}` : ""}${returns}`;
 }
 
 /**
- * The catalog text for the base prompt: the root operations in full, then the
+ * The catalog text for the base prompt: the root operations by kind, then the
  * top-level topics as expandable names. This is the whole of what a session
  * starts knowing about; everything else is an `expand` away.
  */
 export function rootCatalog(manifest) {
   const { direct, topics } = nodeAt(manifest, []);
+  const queries = direct.filter((o) => o.kind === "query");
+  const actions = direct.filter((o) => o.kind === "action");
   const lines = [];
-  if (direct.length) {
-    lines.push("Tools you can call now:");
-    for (const op of direct) lines.push(`  ${opLine(op)}`);
+
+  if (queries.length) {
+    lines.push("To READ, pass one of these names to run_query as { name, args }:");
+    for (const op of queries) lines.push(`  ${opLine(op)}`);
+  }
+  if (actions.length) {
+    lines.push(`${lines.length ? "\n" : ""}To CHANGE something, pass one of these names to run_action as { name, items }:`);
+    for (const op of actions) lines.push(`  ${opLine(op)}`);
   }
   if (topics.length) {
-    lines.push(
-      direct.length ? "\nMore tools, grouped by topic. Call expand({topic}) to reveal a group's tools:" : "Tools are grouped by topic. Call expand({topic}) to reveal a group's tools:",
-    );
+    lines.push(`${lines.length ? "\n" : ""}More tools are grouped by topic. Call expand({ topic }) with a topic name to reveal its tools:`);
     for (const t of topics) {
       lines.push(`  ${pathKey(t.path)}${t.description ? ` -- ${t.description}` : ""} (${t.count} tool${t.count === 1 ? "" : "s"})`);
     }

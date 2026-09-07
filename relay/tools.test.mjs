@@ -94,16 +94,16 @@ describe("the dispatcher and its catalog", () => {
 
   test("the catalog lists an operation's name, params and description", () => {
     // What was a typed schema per tool is now one line per tool in the prompt.
-    assert.match(catalog, /action createTask\(title/);
-    assert.match(catalog, /query tasks/);
+    assert.match(catalog, /createTask -- takes: title/);
+    assert.match(catalog, /tasks -- takes: search\?/);
   });
 
   test("a destructive action is marked in the catalog", () => {
-    assert.match(catalog, /action deleteTask.*\(destructive\)/);
+    assert.match(catalog, /deleteTask \[destructive\]/);
   });
 
   test("the rules point at run_query/run_action and expand, not the old tools", () => {
-    assert.match(catalog, /Prefer run_query and run_action/);
+    assert.match(catalog, /go through run_query or run_action/);
     assert.match(catalog, /run_action AND dom_click and dom_type take a LIST/);
     assert.doesNotMatch(catalog, /query_\* and action_\*/);
   });
@@ -234,7 +234,7 @@ describe("the manifest comes from the app", () => {
     assert.ok(names.includes("run_query"), "the dispatcher is always present");
     assert.ok(names.includes("navigate"), "the generic fallbacks do not depend on the manifest");
     // The operations themselves live in the catalog now, not as typed tools.
-    assert.match(buildInstructions(checked.manifest), /query tasks/);
+    assert.match(buildInstructions(checked.manifest), /\btasks\b/);
   });
 });
 
@@ -245,13 +245,13 @@ describe("what a query returns", () => {
     // running app answers it in one call, and a dozen tokens removes a guess.
     const probed = JSON.parse(JSON.stringify(manifest));
     probed.queries.find((q) => q.name === "tasks").returns = { kind: "array", of: ["id", "title", "done"] };
-    assert.match(buildInstructions(probed), /query tasks.*Returns a list; each item has: id, title, done\./);
+    assert.match(buildInstructions(probed), /tasks .*Returns a list; each item has: id, title, done\./);
   });
 
   test("an object shape reads differently from a list", () => {
     const probed = JSON.parse(JSON.stringify(manifest));
     probed.queries.find((q) => q.name === "settings").returns = { kind: "object", fields: ["name", "theme"] };
-    assert.match(buildInstructions(probed), /query settings.*Returns an object with: name, theme\./);
+    assert.match(buildInstructions(probed), /settings .*Returns an object with: name, theme\./);
   });
 
   test("a manifest that has never been probed reads exactly as before", () => {
@@ -266,7 +266,7 @@ describe("what a query returns", () => {
   test("a shape with no fields adds nothing rather than an empty sentence", () => {
     const probed = JSON.parse(JSON.stringify(manifest));
     probed.queries.find((q) => q.name === "tasks").returns = { kind: "object", fields: [] };
-    const line = buildInstructions(probed).split("\n").find((l) => /query tasks\(/.test(l));
+    const line = buildInstructions(probed).split("\n").find((l) => /^\s*tasks /.test(l));
     assert.doesNotMatch(line, /Returns/);
   });
 });
@@ -285,17 +285,17 @@ describe("a flow is an action, reached through the dispatcher", () => {
     });
     return m;
   };
-  const lineFor = (m, name) => buildInstructions(m).split("\n").find((l) => l.includes(`action ${name}`));
+  const lineFor = (m, name) => buildInstructions(m).split("\n").find((l) => new RegExp(`^\\s*${name}\\b`).test(l));
 
   test("it appears as an ordinary action with its named fields", () => {
     // The model calls run_action({name:"createEventType", items:[{title}]}) and
     // never learns a dialog is involved. Its fields are in the catalog line.
     const line = lineFor(withFlow(), "createEventType");
-    assert.match(line, /createEventType\(title, duration\?\)/);
+    assert.match(line, /createEventType.*takes: title, duration\?/);
   });
 
   test("but the line says it happens on screen", () => {
-    assert.match(lineFor(withFlow(), "createEventType"), /on screen, one step at a time/);
+    assert.match(lineFor(withFlow(), "createEventType"), /on screen/);
     assert.match(lineFor(withFlow(), "createEventType"), /stop partway/);
   });
 

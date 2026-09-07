@@ -158,6 +158,18 @@ export function VoiceProvider({
   // A mint in flight, so concurrent callers share one rather than each starting
   // their own. See ensureMinted.
   const mintingRef = useRef(null);
+  /**
+   * How many times in a row an action has failed the SAME way, so a doomed
+   * call can be stopped rather than retried forever.
+   *
+   * A model that gets a validation error will try to fix it, which is right --
+   * once the error says what is wrong (see the tRPC zodError surfacing). But if
+   * the same action keeps failing the same way, more attempts will not help:
+   * observed live, an update failed 18 times because its manifest carried no
+   * body fields and no attempt could have been right. After a few, the widget
+   * says stop and report, which is what a person would do.
+   */
+  const repeatFailRef = useRef({ key: null, count: 0 });
   // Created once. Does nothing unless BOTH this flag and the relay's VOICE_LOG
   // are on -- the relay says so in its mint response and the logger obeys.
   const loggerRef = useRef(null);
@@ -277,7 +289,29 @@ export function VoiceProvider({
         results.push({ error: String(err.message || err) });
       }
     }
-    return batch.length === 1 ? results[0] : { count: results.length, results };
+    const result = batch.length === 1 ? results[0] : { count: results.length, results };
+
+    // Stop a call that keeps failing the same way. Keyed on the action and the
+    // error text, so a DIFFERENT error (the model corrected one field and hit
+    // the next) resets the count -- that is progress, not a loop. Only the same
+    // action failing the same way, over and over, gets cut off.
+    const failure = result?.error ?? results.find((r) => r?.error)?.error;
+    const key = failure ? `${action.name}:${failure}` : null;
+    const rf = repeatFailRef.current;
+    if (!key) {
+      repeatFailRef.current = { key: null, count: 0 };
+      return result;
+    }
+    rf.count = key === rf.key ? rf.count + 1 : 1;
+    rf.key = key;
+    if (rf.count >= 3) {
+      repeatFailRef.current = { key: null, count: 0 };
+      return {
+        error: `${failure}`,
+        stop: `This call has failed ${rf.count} times with the same error. The arguments are wrong and retrying will not help. Tell the user what failed and stop; do not call this action again.`,
+      };
+    }
+    return result;
   };
 
   const executeTool = useCallback(
@@ -441,7 +475,25 @@ export function VoiceProvider({
         return await runBatch(action, batch);
       }
 
-      return { error: `Unrecognized tool: ${name}` };
+      // A safety net that teaches, not just rejects. A model given a catalog
+      // of operation names sometimes calls a NAME as if it were its own tool
+      // (`availabilityScheduleGet(...)`), or invents a short dispatcher name
+      // (`query(...)`). The widget holds the manifest, so it can tell what was
+      // meant and answer with the exact call to make -- which turns a dead turn
+      // into a corrected one. Observed live: without this the model thrashed
+      // through five wrong shapes and gave up.
+      const asQuery = findQuery(name);
+      if (asQuery) {
+        return { error: `"${name}" is an operation name, not a tool. Call it as run_query({ "name": "${name}", "args": {} }).` };
+      }
+      const asAction = findAction(name);
+      if (asAction) {
+        return { error: `"${name}" is an operation name, not a tool. Call it as run_action({ "name": "${name}", "items": [ {} ] }).` };
+      }
+      if (name === "query" || name === "action") {
+        return { error: `There is no "${name}" tool. Use run_query({ name, args }) to read or run_action({ name, items }) to change.` };
+      }
+      return { error: `Unrecognized tool: ${name}. Read with run_query, change with run_action, and see what exists with expand.` };
     },
     [manifest, navigate],
   );

@@ -33,8 +33,9 @@ describe("the tool tree", () => {
 
   test("the root catalog shows root ops in full and topics as names", () => {
     const cat = rootCatalog(m);
-    assert.match(cat, /query tasksList/);
-    assert.match(cat, /action createTask\(title\)/);
+    assert.match(cat, /run_query/);
+    assert.match(cat, /tasksList/);
+    assert.match(cat, /createTask -- takes: title/);
     assert.match(cat, /availability -- when you are bookable \(2 tools\)/);
     assert.doesNotMatch(cat, /scheduleUpdate/, "a grouped op is not spelled out at root");
   });
@@ -54,7 +55,7 @@ describe("the tool tree", () => {
   });
 
   test("a destructive query never happens; a destructive action is flagged in its line", () => {
-    assert.match(opLine({ kind: "action", name: "x", requiresConfirmation: true }), /\(destructive\)/);
+    assert.match(opLine({ kind: "action", name: "x", requiresConfirmation: true }), /\[destructive\]/);
     assert.doesNotMatch(opLine({ kind: "query", name: "y" }), /destructive/);
   });
 });
