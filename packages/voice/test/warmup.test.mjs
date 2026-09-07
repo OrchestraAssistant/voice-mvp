@@ -23,8 +23,31 @@ describe("warming", () => {
     // so a refresh timer may simply not fire. The check before use is the
     // guarantee; the timer is an optimisation.
     const p = src("VoiceProvider.jsx");
-    assert.match(p, /const ensureMinted = useCallback\([\s\S]{0,200}if \(isUsable\(mintedRef\.current\)\) return/);
+    assert.match(p, /const ensureMinted = useCallback\([\s\S]{0,400}if \(isUsable\(mintedRef\.current, wanted\)\) return/);
     assert.match(p, /minted: await ensureMinted\(/);
+  });
+
+  test("a key minted for one model is not reused for another", () => {
+    // Model and language are session-CREATION parameters; neither can be
+    // changed on a live session. Reusing a key minted before the user changed
+    // the setting opens a session on the old model and ignores the choice.
+    const key = { key: "k", expiresAt: Date.now() + 600_000, for: { model: "gpt-realtime", language: null } };
+    assert.equal(isUsable(key, { model: "gpt-realtime", language: null }), true);
+    assert.equal(isUsable(key, { model: "gpt-realtime-mini", language: null }), false);
+    assert.equal(isUsable(key, { model: "gpt-realtime", language: "es" }), false);
+    assert.equal(isUsable(key), true, "with nothing wanted, only expiry matters");
+  });
+
+  test("concurrent callers share one mint", () => {
+    // The freshness check reads a ref and the mint is a round trip, so two
+    // callers arriving inside that window both saw "no key" and both minted.
+    // The warm effect depends on `model`, which is null until the relay's
+    // options arrive and then becomes the default -- so it fires twice within
+    // a few hundred ms of mount, and StrictMode's double-mount adds more.
+    // Real sessions showed three and four mints inside 300ms.
+    const p = src("VoiceProvider.jsx");
+    assert.match(p, /if \(mintingRef\.current\) return mintingRef\.current/);
+    assert.match(p, /mintingRef\.current = null/, "an in-flight mint has to be cleared or the next one never runs");
   });
 
   test("warming never attaches a microphone", () => {

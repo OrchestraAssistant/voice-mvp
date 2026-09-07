@@ -314,13 +314,16 @@ describe("<Interpreter/> renders the whole interface", { concurrency: false }, (
       return {
         panel: css.includes("interpreter-widget") || css.includes("--iv-surface"),
         rim: css.includes("mask-composite"),
+        // The class, not the keyframe: a keyframe name is a styling detail
+        // and this only wants to know the layer mounted at all.
+        spotlight: css.includes("spotlight-frame"),
         layers: [...host.shadowRoot.querySelectorAll("[data-overlay-layer]")].map((el) =>
           el.getAttribute("data-overlay-layer"),
         ),
       };
     });
 
-  test("one component fills both layers", async () => {
+  test("one component fills every layer", async () => {
     const page = await browser.newPage();
     await preparePage(page);
     await page.goto(harness.url("?mount=shadow&assembled=1"));
@@ -329,9 +332,60 @@ describe("<Interpreter/> renders the whole interface", { concurrency: false }, (
 
     const on = await mounted(page);
     assert.ok(on, "no overlay host at all");
-    assert.deepEqual(on.layers, ["rim", "panel"], "the overlay lost a layer");
+    // Order is paint order, and it is an argument, not an accident: the rim is
+    // ambient and sits behind, the spotlight points at the HOST app so it goes
+    // above the rim, and the panel is on top because a ring that covered it
+    // would hide the thing doing the explaining.
+    assert.deepEqual(on.layers, ["rim", "spotlight", "panel"], "the overlay lost a layer");
     assert.ok(on.panel, "the bubble did not mount");
     assert.ok(on.rim, "the rim did not mount, which is the bug this exists for");
+    assert.ok(on.spotlight, "the spotlight did not mount");
+    await page.close();
+  });
+
+  test("typing in the widget never reaches the host's shortcuts", async () => {
+    // A host that binds keyboard shortcuts asks "is the user typing?" by
+    // looking at document.activeElement, which for focus inside a shadow root
+    // is the shadow HOST -- a div, not an input. cal.diy's kbar does exactly
+    // that, with two-letter chords bound to navigation, so typing "let's" into
+    // our command box fired its `e`,`t` chord and the app navigated away
+    // mid-sentence. It read as the agent wandering off; the agent had made no
+    // tool calls at all.
+    const page = await browser.newPage();
+    await preparePage(page);
+    await page.goto(harness.url("?mount=shadow&assembled=1"));
+    await page.waitForFunction(() => window.__find?.(".interpreter-widget"));
+    await page.waitForTimeout(400);
+
+    await page.evaluate(() => {
+      window.__hostSaw = [];
+      document.addEventListener("keydown", (e) => window.__hostSaw.push(e.key));
+    });
+
+    // Open the panel and type into the command box, the way a person would.
+    await page.evaluate(() => window.__find(".interpreter-widget button")?.click());
+    await page.waitForTimeout(700);
+    const typed = await page.evaluate(async () => {
+      const input = window.__find('input[placeholder="Type a command…"]') ?? window.__find("input");
+      if (!input) return null;
+      input.focus();
+      return document.activeElement?.tagName;
+    });
+    assert.ok(typed, "no command input to type into");
+    // The host's own check, run for real: this is what it sees while we type.
+    assert.equal(typed, "DIV", "activeElement is the shadow host -- the very thing that fools the guard");
+
+    await page.keyboard.type("let");
+    await page.waitForTimeout(200);
+
+    const hostSaw = await page.evaluate(() => window.__hostSaw);
+    assert.deepEqual(hostSaw, [], `the host received ${JSON.stringify(hostSaw)} while the user typed into the widget`);
+
+    const value = await page.evaluate(() => {
+      const input = window.__find('input[placeholder="Type a command…"]') ?? window.__find("input");
+      return input?.value;
+    });
+    assert.equal(value, "let", "stopping the host from hearing it also stopped us");
     await page.close();
   });
 

@@ -101,15 +101,62 @@ export function sessionUpdate(input) {
  * without that path and built a calendar app's tools from a task manager's
  * manifest. Sending it makes them the same object.
  */
+/**
+ * A provider's failure message, cut down to something worth saying out loud.
+ *
+ * The rate-limit one runs to 240 characters of organisation id, limit
+ * arithmetic and a documentation link. What the person in front of the app
+ * needs is that it is busy and roughly for how long.
+ */
+export function shortFailure(message = "") {
+  const wait = /try again in ([\d.]+)s/.exec(message)?.[1];
+  if (/rate limit/i.test(message)) {
+    return wait ? `Rate limited. Try again in about ${Math.ceil(Number(wait))} seconds.` : "Rate limited. Try again shortly.";
+  }
+  return message.length > 120 ? `${message.slice(0, 117)}...` : message;
+}
+
 export async function mintSession({ relayUrl = "", model, language, manifest } = {}) {
-  const res = await fetch(`${relayUrl}/voice/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, language, manifest }),
-  });
-  const data = await res.json();
+  const where = `${relayUrl || ""}/voice/session`;
+  let res;
+  try {
+    res = await fetch(where, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, language, manifest }),
+    });
+  } catch (err) {
+    // No connection at all: nothing listening, DNS, CORS. `fetch` throws a
+    // bare TypeError here, which says nothing about what to go and check.
+    throw new Error(`Could not reach the voice relay at ${where}. Is it running? (${err.message})`);
+  }
+
+  /**
+   * Read as text, then try JSON -- because the interesting failures are the
+   * ones that are not JSON at all.
+   *
+   * `res.json()` on a relay that is down produced "Unexpected end of JSON
+   * input", and the widget showed that to the user. A parser's complaint about
+   * an empty string, in place of "the relay is not running", to someone who
+   * only wanted to talk to their app. A dev proxy with nothing behind it
+   * answers exactly this way, and so does an HTML error page from anything
+   * sitting in front of the relay.
+   */
+  const body = await res.text();
+  let data = null;
+  try {
+    data = body ? JSON.parse(body) : null;
+  } catch {
+    data = null;
+  }
+  if (!data) {
+    throw new Error(`The voice relay at ${where} answered ${res.status} with no JSON. Is it running?`);
+  }
   if (!res.ok) throw new Error(data.error?.message || data.error || "Failed to create realtime session");
   return {
+    // What it was minted FOR, so a later caller can tell whether this key is
+    // still the right one rather than only whether it has expired.
+    for: { model: model ?? null, language: language ?? null },
     key: data.value,
     // Seconds from the API; milliseconds everywhere in here.
     expiresAt: data.expires_at ? data.expires_at * 1000 : Date.now() + 9 * 60_000,
@@ -119,8 +166,14 @@ export async function mintSession({ relayUrl = "", model, language, manifest } =
 }
 
 /** Is this key still worth trying? The margin covers a slow connect. */
-export function isUsable(minted, marginMs = 60_000) {
-  return !!minted?.key && minted.expiresAt - Date.now() > marginMs;
+export function isUsable(minted, wanted = null, marginMs = 60_000) {
+  if (!minted?.key || minted.expiresAt - Date.now() <= marginMs) return false;
+  // A key is minted FOR a model and a language: both are session-creation
+  // parameters and neither can be changed on a live session. Reusing one
+  // minted before the settings changed opens a session on the old model and
+  // silently ignores what the user picked.
+  if (!wanted) return true;
+  return minted.for?.model === wanted.model && minted.for?.language === wanted.language;
 }
 
 export async function connectRealtimeSession({
@@ -221,6 +274,8 @@ export async function connectRealtimeSession({
   // response creation means owning this too, so requests are serialised
   // instead of fired blindly.
   let responseActive = false;
+  // Whether the CURRENT turn has already been retried after a failure.
+  let responseRetried = false;
   let responseQueued = false;
 
   // Tools currently executing. A counter rather than a flag because one
@@ -455,6 +510,42 @@ export async function connectRealtimeSession({
         status: msg.response?.status,
         statusDetails: msg.response?.status_details,
       });
+
+      /**
+       * A response that FAILED, as opposed to one that finished with nothing
+       * to say. It has to reach the user, and it did not.
+       *
+       * Observed: a session ended mid-task on
+       * `rate_limit_exceeded ... Please try again in 7.853s`. The response
+       * carried zero tokens, the turn closed, the rim went idle, and the
+       * widget said nothing. From the outside that is indistinguishable from
+       * the agent deciding to ignore you -- and the fix it was asking for was
+       * to wait eight seconds, which we were holding in a string.
+       *
+       * Retried once, because the common cause names a delay and honouring it
+       * is the whole remedy. Once and not twice: a second failure is a real
+       * condition, and a widget that keeps quietly retrying is a widget that
+       * hangs.
+       */
+      if (msg.response?.status === "failed") {
+        const failure = msg.response?.status_details?.error;
+        const message = failure?.message || "the model failed to answer";
+        const wait = Number(/try again in ([\d.]+)s/.exec(message)?.[1]) || 0;
+        record({ type: "response_failed", code: failure?.code, message, retrying: !responseRetried });
+
+        if (!responseRetried) {
+          responseRetried = true;
+          // The server told us how long. Rounded up, because coming back a
+          // few milliseconds early spends the retry on the same refusal.
+          setTimeout(() => requestResponse(), Math.ceil(wait * 1000) + 250);
+          return;
+        }
+        onTranscript?.({ role: "assistant", text: shortFailure(message) });
+        return;
+      }
+      // A turn that got an answer clears the retry, so the next failure gets
+      // its own attempt rather than inheriting an old one.
+      responseRetried = false;
 
       const calls = output.filter((o) => o.type === "function_call");
       if (calls.length === 0) {

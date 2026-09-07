@@ -42,8 +42,15 @@ describe("tRPC", () => {
     assert.deepEqual(input, { json: { username: "pro" } });
   });
 
-  test("a query with no input sends none at all", () => {
-    assert.equal(trpc.request({ operation: list, args: {} }).url, "/api/trpc/availability/list");
+  test("a query with no arguments still sends an empty envelope", () => {
+    // It used to omit `?input=` entirely, so tRPC parsed the input as
+    // `undefined` -- and a zod object rejects `undefined` even when every
+    // field in it is optional. Two of cal.diy's availability queries take
+    // nothing mandatory and answered "Invalid input" to a call that asked for
+    // nothing, and a session burned five tool calls finding that out.
+    const { url } = trpc.request({ operation: list, args: {} });
+    const input = JSON.parse(decodeURIComponent(url.split("input=")[1]));
+    assert.deepEqual(input, { json: {} });
   });
 
   test("a mutation puts the envelope in the body", () => {
@@ -53,9 +60,11 @@ describe("tRPC", () => {
     assert.deepEqual(body, { json: { id: 4, name: "Weekdays" } });
   });
 
-  test("a mutation with no arguments still sends an envelope", () => {
-    // tRPC rejects an empty body rather than reading it as "no arguments".
-    assert.deepEqual(trpc.request({ operation: update, args: {} }).body, { json: null });
+  test("a mutation with no arguments sends an empty object, not a null", () => {
+    // Same reason as the query above, and `null` is not better than
+    // `undefined` here: `z.object({...}).safeParse(null)` is rejected too. An
+    // empty object is the one value an all-optional schema accepts.
+    assert.deepEqual(trpc.request({ operation: update, args: {} }).body, { json: {} });
   });
 
   test("the reply is unwrapped out of result.data.json", () => {

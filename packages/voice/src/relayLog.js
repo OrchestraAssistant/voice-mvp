@@ -49,7 +49,14 @@ export function createRelayLogger({ relayUrl = "", flushMs = 2000 } = {}) {
         if (!logId) return;
       }
       if (!logId) return;
-      queue.push(event);
+      // Stamped HERE, when it happened, not when the batch lands. Events are
+      // held for `flushMs` and the relay times them on arrival, so without
+      // this a whole turn arrives sharing one timestamp -- which made a real
+      // session look like four rim states inside a millisecond, and made the
+      // log useless for the one question it is kept for: what happened, in
+      // what order, and how far apart. An event that carries its own `at`
+      // keeps it.
+      queue.push({ at: new Date().toISOString(), ...event });
       if (!timer) timer = setTimeout(() => { timer = null; flush(); }, flushMs);
     },
     stop() {

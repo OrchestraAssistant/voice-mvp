@@ -90,10 +90,30 @@
         <label for="host-notes">Notes</label>
         <input id="host-notes" type="text" />
       </div>
+      <!-- Two buttons with the SAME label and different test ids, which is the
+           shape that sent a flow into the wrong dialog in cal.diy: it labels
+           the button opening a new schedule "New" and the one opening a new
+           event type "New", and tells them apart only by data-testid. -->
+      <button data-testid="new-schedule">New</button>
+      <button data-testid="new-event-type">New</button>
+      <div id="host-schedule-panel" hidden>
+        <label for="host-schedule-name">Name</label>
+        <input id="host-schedule-name" type="text" />
+      </div>
+      <div id="host-event-panel" hidden>
+        <label for="host-event-title">Event title</label>
+        <input id="host-event-title" type="text" />
+      </div>
       <script>
         document.getElementById("host-open").addEventListener("click", () => {
           setTimeout(() => document.getElementById("host-later").removeAttribute("hidden"), 250);
         });
+        const reveal = (testId, panel) =>
+          document.querySelector(`[data-testid="${testId}"]`).addEventListener("click", () => {
+            document.getElementById(panel).removeAttribute("hidden");
+          });
+        reveal("new-schedule", "host-schedule-panel");
+        reveal("new-event-type", "host-event-panel");
       </script>
     </section>
 

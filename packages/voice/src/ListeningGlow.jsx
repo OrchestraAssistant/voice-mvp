@@ -53,7 +53,7 @@ import { OverlayLayer } from "./ScreenOverlay.jsx";
  * near-white page show through. Over a dark app they differ, and the mask
  * is the one that's still correct.
  */
-const FALLOFF = [
+export const FALLOFF = [
   [0, 0.53],
   [4, 0.47],
   [8, 0.4],

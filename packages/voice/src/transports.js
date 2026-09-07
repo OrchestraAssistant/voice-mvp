@@ -49,15 +49,34 @@ export const trpc = {
     // URL parameters are not a thing here: every value is input to the
     // procedure. Anything the endpoint template does interpolate has already
     // been substituted, so pass the rest through whole.
-    const input = Object.keys(args ?? {}).length ? { json: args } : undefined;
+    /**
+     * The envelope goes on ALWAYS, even with nothing in it.
+     *
+     * A query with no arguments used to omit `?input=` entirely, so tRPC
+     * parsed the input as `undefined` -- and a zod object rejects `undefined`
+     * even when every field inside it is optional:
+     *
+     *     z.object({ scheduleId: z.optional(z.number()) })
+     *        .safeParse(undefined)  ->  REJECTED: Required
+     *        .safeParse({})         ->  accepted
+     *
+     * So a procedure that takes nothing mandatory answered "Invalid input" to
+     * a call that asked for nothing. Two of cal.diy's availability queries are
+     * exactly that shape, and a session spent five tool calls and most of a
+     * rate limit discovering it before giving up on the task.
+     *
+     * The mutation branch below already knew this -- an empty body is not "no
+     * arguments" either -- and the lesson simply never crossed the two lines
+     * between them. A procedure with no input parser at all ignores what it is
+     * sent, so there is nothing to lose by always sending it.
+     */
+    const input = { json: args ?? {} };
 
     if (operation.method === "GET") {
       const url = buildUrl(operation.endpoint, args);
-      return { method: "GET", url: input ? `${url}?input=${encodeURIComponent(JSON.stringify(input))}` : url };
+      return { method: "GET", url: `${url}?input=${encodeURIComponent(JSON.stringify(input))}` };
     }
-    // A mutation with no input still needs an envelope; tRPC rejects an empty
-    // body rather than treating it as "no arguments".
-    return { method: "POST", url: buildUrl(operation.endpoint, args), body: input ?? { json: null } };
+    return { method: "POST", url: buildUrl(operation.endpoint, args), body: input };
   },
 
   /**

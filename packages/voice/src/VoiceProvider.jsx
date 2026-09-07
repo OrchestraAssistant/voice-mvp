@@ -154,6 +154,9 @@ export function VoiceProvider({
   // no audio, no cost, nothing open. Just a credential with ~10 minutes on it.
   const mintedRef = useRef(null);
   const warmingRef = useRef(null);
+  // A mint in flight, so concurrent callers share one rather than each starting
+  // their own. See ensureMinted.
+  const mintingRef = useRef(null);
   // Created once. Does nothing unless BOTH this flag and the relay's VOICE_LOG
   // are on -- the relay says so in its mint response and the logger obeys.
   const loggerRef = useRef(null);
@@ -237,7 +240,9 @@ export function VoiceProvider({
     // A flow is an action that happens in the page rather than over HTTP.
     // Same shape, same tool, different execution -- which is why the model
     // never has to know a dialog is involved.
-    if (operation.transport === "dom") return dom.runFlow(operation.steps, args);
+    // `page` comes from the manifest entry, so a flow declared for one screen
+    // never starts on another. Absent means the flow is not tied to a page.
+    if (operation.transport === "dom") return dom.runFlow(operation.steps, args, { page: operation.page });
 
     const transport = transportFor(operation);
     const { method, url, body } = transport.request({ operation, args });
@@ -290,9 +295,52 @@ export function VoiceProvider({
           };
         }
         navigate(path);
-        // Reporting what we did, not what was asked for, so a salvaged call is
-        // visible in the log rather than looking like it worked first time.
-        return { status: "navigated", path, ...(path === args.path ? {} : { interpretedFrom: args }) };
+
+        /**
+         * Wait for the destination to exist, then report where we actually
+         * ARE -- both of which this used to skip.
+         *
+         * It returned the moment `navigate` was called, echoing the path it
+         * was asked for. Two separate lies. The page had not rendered, so the
+         * next snapshot described the app shell and the model concluded the
+         * screen did not have what it came for. And cal.diy bounces any admin
+         * settings route to the profile page, so the model was told it was
+         * somewhere it had never been.
+         *
+         * `readyWhen` comes off the route in the manifest: a page saying what
+         * "ready" looks like. Declared, we wait for that exact thing and can
+         * afford to be patient. Undeclared, we guess briefly and say so.
+         */
+        // By PATTERN, not by string: the manifest says /availability/:schedule
+        // and we are going to /availability/50, so an exact match finds
+        // nothing and every parameterised page silently loses its trigger.
+        const route = (manifest.routes ?? []).find((r) => r.path === path || dom.onPage(r.path, path));
+        const settled = await dom.waitForPage({ readyWhen: route?.readyWhen });
+        const landed = typeof location !== "undefined" ? location.pathname : path;
+
+        return {
+          status: "navigated",
+          // Where we ended up, which is not always where we aimed.
+          path: landed,
+          ...(landed !== path ? { asked: path, note: "the app sent us somewhere else" } : {}),
+          // Only when it is bad news. A page that came up cleanly says nothing.
+          // Three outcomes, not two. A declared trigger that fired is the only
+          // one that means "ready". Everything else is a page we stopped
+          // waiting on, and the difference matters: concluding something is
+          // absent from a page nobody confirmed had rendered is exactly how a
+          // session walked away from the screen it needed.
+          ...(settled.ready
+            ? {}
+            : {
+                readiness: settled.assumed ? "assumed" : "gave up waiting",
+                hint: settled.assumed
+                  ? (settled.settledWithout
+                      ? `The page stopped changing without ever showing ${JSON.stringify(settled.settledWithout)}, which usually means there is none of it to show -- an empty list, a schedule with no days. Snapshot and work with what is there.`
+                      : "This route declares no readiness signal, so the page may still be filling in. If what you expect is missing, snapshot again before concluding it is absent.")
+                  : `The page never showed ${JSON.stringify(settled.missing ?? [])}. Snapshot to see what it did render.`,
+              }),
+          ...(path === args.path ? {} : { interpretedFrom: args }),
+        };
       }
 
       // Signals to the transport layer, already acted on before they got here;
@@ -307,16 +355,32 @@ export function VoiceProvider({
         return { acknowledged: true, because: args.because };
       }
 
+      // A ring answers the question it was drawn for and nothing after it.
+      // Cleared before any tool that is not itself a highlight, rather than on
+      // a timer: whatever happens next is a new answer, and a ring left over
+      // from the previous one points confidently at something nobody asked
+      // about. dom_snapshot is exempt because looking is how the model finds
+      // what to point at, and clearing there would erase the ring it is about
+      // to redraw.
+      if (name !== "dom_highlight" && name !== "dom_snapshot") dom.clearHighlight();
+
       if (name === "dom_snapshot") {
         return { elements: dom.snapshot() };
       }
+      // Lists, like every action_* tool. A single id is a list of one, and
+      // that spelling is still accepted: an older session prompt is in flight
+      // for as long as a session lives, and a tool that rejects the shape the
+      // model was taught fails the turn rather than the argument.
       if (name === "dom_click") {
-        dom.click(args.elementId);
-        return { status: "clicked" };
+        const ids = args.elementIds ?? [args.elementId];
+        return dom.runSteps(ids.map((elementId) => ({ elementId })));
       }
       if (name === "dom_type") {
-        dom.typeText(args.elementId, args.text);
-        return { status: "typed" };
+        const items = args.items ?? [{ elementId: args.elementId, text: args.text }];
+        return dom.runSteps(items);
+      }
+      if (name === "dom_highlight") {
+        return dom.highlight(args.elementId);
       }
 
       if (name === "confirm_pending_action") {
@@ -383,21 +447,39 @@ export function VoiceProvider({
    * check at the point of use is the guarantee; the timer is an optimisation.
    */
   const ensureMinted = useCallback(async (overrides = {}) => {
-    if (isUsable(mintedRef.current)) return mintedRef.current;
-    try {
-      mintedRef.current = await mintSession({
-        relayUrl,
-        model: overrides.model ?? model,
-        language: overrides.language ?? language,
-        manifest,
-      });
-      return mintedRef.current;
-    } catch {
-      // Warming must never surface an error: nobody asked for this yet, and
-      // the Talk button will mint again and report properly if it still fails.
-      mintedRef.current = null;
-      return null;
-    }
+    const wanted = {
+      model: overrides.model ?? model ?? null,
+      language: overrides.language ?? language ?? null,
+    };
+    if (isUsable(mintedRef.current, wanted)) return mintedRef.current;
+
+    /**
+     * One mint at a time. The check above reads a ref and the mint is a
+     * network round trip, so two callers arriving inside that window both saw
+     * "no key" and both minted.
+     *
+     * That is not hypothetical: the warm effect depends on this callback,
+     * which depends on `model`, which is null until the relay's options
+     * arrive and then becomes the default -- so the effect fires twice within
+     * a few hundred milliseconds of mount, and StrictMode's double-mount adds
+     * more. Real sessions showed three and four mints inside 300ms, each one
+     * a session record on the relay and a log file nobody ever used.
+     */
+    if (mintingRef.current) return mintingRef.current;
+    mintingRef.current = (async () => {
+      try {
+        mintedRef.current = await mintSession({ relayUrl, ...wanted, manifest });
+        return mintedRef.current;
+      } catch {
+        // Warming must never surface an error: nobody asked for this yet, and
+        // the Talk button will mint again and report properly if it still fails.
+        mintedRef.current = null;
+        return null;
+      } finally {
+        mintingRef.current = null;
+      }
+    })();
+    return mintingRef.current;
   }, [relayUrl, model, language, manifest]);
 
   /**

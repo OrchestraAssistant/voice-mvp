@@ -221,3 +221,111 @@ describe("push to talk", () => {
     assert.equal(transport.ofType("response.create").length, 1, "the turn was answered twice");
   });
 });
+
+/**
+ * What the user is shown when the relay is not there.
+ *
+ * A dead relay is the single most likely thing to go wrong in development, and
+ * the widget reported it as "Unexpected end of JSON input" -- a parser
+ * complaining about an empty string, shown to someone who wanted to talk to
+ * their app. A dev proxy with nothing behind it answers exactly that way.
+ */
+describe("reaching the relay", () => {
+  const withFetch = async (reply, fn) => {
+    const real = globalThis.fetch;
+    globalThis.fetch = reply;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = real;
+    }
+  };
+  const mint = async () => {
+    const { mintSession } = await import("../src/realtimeClient.js");
+    return mintSession({ relayUrl: "http://relay", manifest: { routes: [], queries: [], actions: [] } });
+  };
+
+  test("an empty body names the relay instead of the parser", async () => {
+    await withFetch(async () => new Response("", { status: 500 }), async () => {
+      await assert.rejects(mint, (err) => {
+        assert.doesNotMatch(err.message, /JSON input/, "still showing a parser error");
+        assert.match(err.message, /relay/i);
+        assert.match(err.message, /http:\/\/relay\/voice\/session/, "does not say where it tried");
+        return true;
+      });
+    });
+  });
+
+  test("an HTML error page is not mistaken for an answer", async () => {
+    await withFetch(async () => new Response("<html>502</html>", { status: 502 }), async () => {
+      await assert.rejects(mint, /relay .* answered 502/);
+    });
+  });
+
+  test("nothing listening at all says so", async () => {
+    await withFetch(async () => { throw new TypeError("Failed to fetch"); }, async () => {
+      await assert.rejects(mint, /Could not reach the voice relay/);
+    });
+  });
+
+  test("a real error from the relay is still passed through", async () => {
+    // The message the relay wrote is better than anything we could invent.
+    await withFetch(
+      async () => new Response(JSON.stringify({ error: "OPENAI_API_KEY is not set on the relay." }), { status: 500 }),
+      async () => { await assert.rejects(mint, /OPENAI_API_KEY is not set/); },
+    );
+  });
+});
+
+/**
+ * A failed response is not a quiet one.
+ *
+ * A session ended mid-task on a rate limit: the response carried zero tokens,
+ * the turn closed, the rim went idle, and the widget said nothing. From the
+ * outside that is the agent ignoring you -- and the remedy it was asking for
+ * was to wait eight seconds, which we were holding in a string.
+ */
+describe("a response that failed", () => {
+  test("the message is cut down to something worth saying", async () => {
+    const { shortFailure } = await import("../src/realtimeClient.js");
+    const real =
+      "Rate limit reached for gpt-realtime (for limit gpt-4o-realtime) in organization " +
+      "org-rorMfNo6EqJER4hEBKs0zQE9 on tokens per min (TPM): Limit 40000, Used 37040, Requested 8196. " +
+      "Please try again in 7.853s. Visit https://platform.openai.com/account/rate-limits to learn more.";
+    const said = shortFailure(real);
+    assert.match(said, /8 seconds/, "the one number the user can act on");
+    assert.doesNotMatch(said, /org-/, "an organisation id is not for the person using the app");
+    assert.ok(said.length < 60, `still ${said.length} characters`);
+  });
+
+  test("an unfamiliar failure is passed along, not swallowed", async () => {
+    const { shortFailure } = await import("../src/realtimeClient.js");
+    assert.equal(shortFailure("The model is overloaded."), "The model is overloaded.");
+  });
+
+  test("it retries once, after the delay the error asked for", async () => {
+    // Once and not twice: the common cause names a delay and honouring it is
+    // the whole remedy, but a widget that keeps quietly retrying is one that
+    // hangs. The retry is what turns "the agent ignored me" back into a turn.
+    const { transport, events } = await fakeSession();
+    const failed = (message) => ({
+      type: "response.done",
+      response: { status: "failed", status_details: { type: "failed", error: { code: "rate_limit_exceeded", message } }, output: [] },
+    });
+
+    const before = transport.ofType("response.create").length;
+    await transport.play([failed("Rate limit reached. Please try again in 0.1s.")]);
+    const noted = events.find((e) => e.type === "response_failed");
+    assert.ok(noted, "a failed response left no trace at all");
+    assert.equal(noted.retrying, true);
+
+    await new Promise((r) => setTimeout(r, 600));
+    assert.ok(transport.ofType("response.create").length > before, "it never tried again");
+
+    // The second failure is a real condition, and is reported rather than retried.
+    await transport.play([failed("Rate limit reached. Please try again in 0.1s.")]);
+    const second = events.filter((e) => e.type === "response_failed");
+    assert.equal(second.length, 2);
+    assert.equal(second[1].retrying, false, "it retried a second time instead of speaking up");
+  });
+});

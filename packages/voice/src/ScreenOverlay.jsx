@@ -123,11 +123,15 @@ function raise(host) {
  * other answers with a raise, which fires a toggle. Measured at ~1800 events
  * a second, seen as the panel flickering above and below the rim.
  *
- * Sharing one host deletes the question instead of managing it. Both layers
- * are ordinary siblings in one tree, so paint order is DOM order, decided
- * here, once, and nothing has to fight for it at runtime.
+ * Sharing one host deletes the question instead of managing it. The layers are
+ * ordinary siblings in one tree, so paint order is DOM order, decided here,
+ * once, and nothing has to fight for it at runtime.
+ *
+ * The order is the argument. The rim is ambient and belongs behind everything.
+ * The spotlight points at the HOST app, so it sits above the rim and below the
+ * panel -- a ring that covered the panel would hide the thing explaining it.
  */
-const LAYERS = ["rim", "panel"];
+const LAYERS = ["rim", "spotlight", "panel"];
 
 const OverlayContext = createContext(null);
 
@@ -169,6 +173,39 @@ function mount() {
     el.style.display = "contents";
     shadow.append(el);
     layers[name] = el;
+  }
+
+  /**
+   * Keystrokes typed into the widget stop here.
+   *
+   * A host app that binds keyboard shortcuts asks "is the user typing?" by
+   * looking at `document.activeElement` -- and for focus inside a shadow root
+   * that is the shadow HOST, a <div>, not the input. So the guard says nobody
+   * is typing and the shortcut fires on every letter.
+   *
+   * cal.diy uses kbar, whose check is exactly this:
+   *
+   *     var activeElement = document.activeElement;
+   *     var ignoreStrokes = inputs.indexOf(activeElement.tagName...) !== -1
+   *
+   * with two-letter chords bound to navigation. Typing "let's modify the
+   * weekend warrior" into our command box contains `e` then `t`, which is
+   * kbar's chord for event types, and the app navigated away mid-sentence.
+   * Then `s`,`a` for availability, and so on. It read as the agent wandering
+   * off on its own; the agent had made no tool calls at all.
+   *
+   * This is the shadow root's bill coming due. It buys isolation from the
+   * host's CSS and keeps our chrome out of the agent's own DOM snapshots, and
+   * the same boundary that hides us from their stylesheet hides our input from
+   * their focus check. So: any key event raised inside the overlay is stopped
+   * at the host, before it reaches body or document. Bubble phase, so
+   * everything within the widget still sees it first.
+   *
+   * Only KEY events, and only ones from inside. A host's shortcuts keep
+   * working everywhere else on the page, which is most of it.
+   */
+  for (const type of ["keydown", "keyup", "keypress"]) {
+    host.addEventListener(type, (event) => event.stopPropagation());
   }
 
   const parent = document.body || document.documentElement;

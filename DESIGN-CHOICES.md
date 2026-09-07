@@ -1619,3 +1619,215 @@ get right.
 `crossfadeMs` reach the rim whether or not the bench is driving it, so an
 interpolation can be judged against another during a real conversation rather
 than against a memory of one.
+
+## 34. Anchor a flow step, and let it stop when it cannot find one
+
+**Chosen:** a step targets by label and may be constrained by `data-testid` or
+an authored `id`; a flow may declare the `page` it runs on; and a flow that
+stops reports and stays stopped.
+
+**Three defects, one run.** The agent was asked to create an availability. It
+opened a dialog, did nothing else, and said nothing useful.
+
+**A label is not unique and was never meant to be.** cal.diy labels the button
+that opens a new schedule "New" and the one that opens a new event type "New",
+and tells them apart by `data-testid`. The only write action in the manifest,
+`createEventType`, began `click: "New"`. From the availability page that opened
+the schedule dialog, spent four seconds looking for a field called "Title" that
+a schedule dialog does not have, and stopped — three steps into the wrong
+screen. Anchored to `new-event-type`, it stops at step one.
+
+So `snapshot()` now reports `testId` and `domId`, and a step may carry either.
+Every criterion present has to match; a criterion left out is not checked, so a
+step with only a label behaves exactly as before. **Enrich, never require** —
+apps write these on some elements and not others, and cal's own create dialog
+is the honest case: of five steps, two have a test id and three have nothing
+but their label. A rule that demanded anchors would have excluded the app that
+motivated them.
+
+`page` is the other half and a different guarantee: the identifier says WHICH
+element, the page says WHERE the flow is valid. It is checked once before
+anything is clicked, so a flow aimed at the wrong screen opens nothing at all.
+They fail at different points, which is the reason to have both.
+
+**And the flow's failure looked like it contradicted the session prompt.** Rule
+6 says say what failed and stop. The flow's own result said "take a
+dom_snapshot to see where it is rather than starting over". The prompt won --
+it is in the session prefix and the hint is one tool result -- so the model
+stopped, silently, and the user watched a dialog open and nothing happen.
+
+The first fix rewrote the hint to say report-and-stop, which settled the
+argument by deleting one side of it. That went too far, and reverting it is
+what found the actual line: **the hint reads, the rule bans writing.** Taking a
+snapshot is how the model tells the user something they can act on -- "the
+dialog is open, nothing was saved". Finishing the job with `dom_click` is how a
+manifest bug gets hidden. Those are different acts, and the original wording
+only ever asked for the first.
+
+So the hint is back as it was, and rule 6 carries the prohibition instead,
+naming `dom_click` and `dom_type` rather than looking. Narrower than "do not
+touch the DOM": reaching for `dom_click` when the manifest covers nothing is
+still right; using it to repair a flow that has already gone wrong is not.
+
+**What was actually broken was the silence, not the stopping.** The result
+carried `could not find a field labelled "Title"` the whole time, and rules 4
+and 6 squeezed it into one sentence that dropped it. Rule 6 now says to say
+WHY, not just that. A flow that cannot find its own field is a manifest bug,
+and the user is the one who can fix it — so they have to hear which part.
+
+Two tests had to be rewritten across this, both asserting wordings. That is
+what a test on a wording is for: it fails when the wording stops meaning what
+it meant, which is the moment to check the decision still holds.
+
+## 35. Point at it
+
+**Chosen:** a `dom_highlight` tool that draws a ring around one element of the
+host app and scrolls it into view, in a third overlay layer, tracked per frame.
+
+An agent that is an expert in your app should be able to teach it, and teaching
+means pointing. "Where is the submit button" answered in words -- "top right,
+under the calendar" -- makes the user translate a description into a location,
+which is the work they asked to be spared.
+
+**Most of it was already built, for something else.** The overlay is a
+viewport-sized fixed box in a shadow root, mounted outside the host's tree, in
+the browser's top layer, with `pointer-events: none`. That is exactly what
+drawing over an app you do not control requires, and every clause of it was
+argued for the listening rim (§on the overlay). `pointer-events: none` turns
+out to matter most: the ring must not eat the click on the thing it points at,
+because the whole point is that the user presses it themselves.
+
+**Per frame, and that is fine.** An element's rectangle moves on scroll, on
+resize and on every re-render, so the ring follows it or it becomes a lie.
+§31 measured the budget: an animated full-viewport gradient held a flat 60fps
+and it was the ten-layer MASK that cost 21. One `getBoundingClientRect` and one
+`transform` on a single element is nothing. Written straight to the node
+through a ref rather than through React state, because a setState per frame
+would re-render the subtree sixty times a second to move a box.
+
+**Criteria, never a node.** React replaces nodes on almost every state change,
+so a ring holding a node points at a detached element within a turn. It holds
+what the element looked like -- the same `testId`/`domId`/`label` triple §34
+added for flow steps -- and re-finds it. Which is the second time that triple
+has paid for itself.
+
+Re-finding deliberately does NOT call `snapshot()`, because that clears the
+registry and would invalidate every `el-N` the model is holding. A ring
+redrawing itself must not pull the ground out from under the next `dom_click`.
+
+**A bug fixed on the way, which was worse than the missing feature.**
+`isVisible()` excluded anything outside the viewport, so a snapshot stopped at
+the fold and the agent could not see a submit button until the page happened to
+be scrolled to it. Asked where one was, the honest answer from its own tools
+was that there wasn't one. Split into "rendered" and "in the viewport": both
+are reported, the second as an `offscreen` flag. Flows now prefer an on-screen
+match and still reach one that is not, since scrolling is something we can do
+and typing now scrolls the way clicking already did.
+
+**Rule 3 says ACT, don't narrate, which is hostile to a tool whose job is to
+show rather than do.** So rule 11 says pointing counts as acting, and adds the
+part that is easy to get wrong: having drawn the ring, do not also describe the
+position in words. And prefer pointing to pressing whenever the user is asking
+to learn -- doing it for them teaches nothing and takes the click away from
+someone who wanted to make it.
+
+The ring clears when the user touches the page or when the model does anything
+else. `dom_snapshot` is exempt, because looking is how it finds what to point
+at, and clearing there would erase the ring it is about to draw.
+
+**Made to look like the rest of it.** Four things, and only one is decoration.
+
+The ring takes the ELEMENT'S OWN corner radius, plus its inset, so a ring
+around a pill is a pill and a ring around an avatar is a circle. A fixed radius
+is the tell that a highlight was drawn by something that never looked at what
+it was pointing at. `calc()` handles it because a computed radius is `8px` on
+most things and `50%` on a circle and both are legal inside one; an elliptical
+corner computes to two values, which calc cannot take, so those pass through
+unchanged rather than dropping the radius and squaring off a circle.
+
+The halo is the RIM'S OWN FALLOFF, rescaled from 80px to 20px. Not a second set
+of hand-picked numbers: it is the same error function, and reusing it is the
+one kind of family resemblance that cannot quietly drift apart. Each stop
+becomes a spread ring, and every ring is blurred by a quarter of the halo --
+which is the part that had to be measured by looking. Eleven hard-edged rings
+across twenty pixels are visibly eleven rings, stepped, worst around a corner
+where they fan out. A blur wider than the gap between stops merges them back
+into the smooth decay the numbers describe.
+
+It enters on the PANEL'S SPRING, bounce 0 over half a second, scaling in from
+slightly wide the way a lens finds focus. Two pieces of one widget arriving
+differently is what makes a thing feel assembled rather than designed.
+
+And it breathes on the HALO ONLY, never the ring. Scaling an outline drifts it
+off the thing it is framing, which is the single impression a pointer cannot
+afford.
+
+Position and entrance live on two nested elements on purpose. The frame carries
+position, written straight to the node every frame; the ring inside carries the
+spring. One element would have framer and the follow loop both writing
+`transform`, and whichever wrote last that frame would win.
+
+Measured at 1280x800: 60fps with no ring, 60fps with a ring, and 60fps with a
+ring while the page scrolls, which is the case that repaints the blurred halo
+every frame. The budget §31 established holds.
+
+**A dev-harness trap worth naming.** Driving this from outside the page by
+importing `domActions.js` at its URL got a SECOND copy of a module that holds
+state: Vite appends a cache-busting query after a hot update, so the components
+had subscribed to one instance and the check was writing to another. The layer
+mounted, the stylesheet injected, and nothing ever appeared. The harness now
+exposes its own instance on `window`.
+
+
+## 36. Borrow a browser, behind a seam
+
+**Chosen:** the readiness signal is measured by a probe stage, driven through a
+browser the developer already has, behind a driver contract.
+
+**Why not static analysis.** §35's `readyWhen` has to name an element that
+exists only once content has arrived, and the source does not contain it. In
+cal.diy 0 of 79 page files hold a loading state -- the pages are thin and the
+loading sits several imports away -- and the marker chosen by hand,
+`Sunday-switch`, appears in the source as ``data-testid={`${weekday}-switch`}``.
+Deriving it means evaluating a map over a weekday array, not parsing. 124 of
+cal's test ids are built from expressions like that against 472 literals. And
+even with a candidate in hand, nothing in the source says whether it renders
+DURING loading or after. Readiness is a claim about time, and time is not in
+the file.
+
+**Why a probe and not an agent.** An agent for judgements, a probe for
+measurements. "What is this page for" is a judgement. "Which element arrives
+late and stays" has a mechanical procedure and no decision in it, so an agent
+would add cost and variance and nothing else.
+
+**Borrowed, not shipped.** puppeteer-core bundles no browser: 12MB, against
+262MB for Playwright's Chromium and 162MB for Lightpanda's binary. It is found
+in this order -- an explicit `VOICE_BROWSER`, a real installed browser, `PATH`,
+then the caches a testing tool already filled. That last one is what matches
+for most web developers, and finding it required looking under
+`XDG_CACHE_HOME` as well as `HOME`, which are different on Linux and were
+different here.
+
+**Lightpanda was measured, not dismissed.** It runs the app: fetching cal's
+login page gave 3 buttons where the server HTML has 1, and the labels come out
+right. But it has no layout engine, which is how it is fast:
+`getBoundingClientRect()` returns a 5x5 stub for every element and
+`getComputedStyle().display` returns `block` for every element. On the same
+page a real browser correctly identifies 2 of the 8 controls as hidden. A
+readiness probe measures what EXISTS over time and does not care; an agent
+choosing what to press would care enormously. So the contract makes visibility
+explicitly nullable rather than letting a stage assume, and both engines stay
+possible.
+
+**The seam is the point.** `browsers/contract.js` is four methods and one
+evaluated script. A stage that reached for a Puppeteer handle would end the
+seam, so the shared inventory script lives in the contract and every driver
+returns the same shape. `browsers/fake.js` is the same argument as the fake
+data channel: a test says what the page did over time and asserts what the
+stage concluded, with no browser anywhere.
+
+**Two bugs the first real run found, both of them mine.** The furniture filter
+compared first samples, so cal's dev overlay -- which mounts late on every page
+-- was proposed as the signal for 20 of 23 routes. And the redirect check ran
+only before sampling, so 34 routes that bounce to login after DOMContentLoaded
+were measured as themselves. Neither would have shown up against a fake.

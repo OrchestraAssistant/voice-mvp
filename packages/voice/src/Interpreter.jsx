@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { InterpreterBubble } from "./InterpreterBubble.jsx";
 import { ListeningGlow } from "./ListeningGlow.jsx";
+import { Spotlight } from "./Spotlight.jsx";
 import { rimState } from "./listening.js";
 import { useInterpreter } from "./VoiceProvider.jsx";
 
@@ -65,6 +66,8 @@ export function Interpreter({ mount, rim = true, tuneRim = false }) {
           crossfadeMs={tuning.crossfadeMs}
         />
       ) : null}
+      {/* Points at the host app, so it renders whether or not the rim does. */}
+      <Spotlight />
       <InterpreterBubble mount={mount} bench={tuneRim ? { tuning, setTuning } : null} />
     </>
   );

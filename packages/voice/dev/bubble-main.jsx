@@ -4,6 +4,14 @@ import { VoiceProvider } from "../src/VoiceProvider.jsx";
 import { InterpreterBubble } from "../src/InterpreterBubble.jsx";
 import { ListeningGlow } from "../src/ListeningGlow.jsx";
 import { Interpreter } from "../src/Interpreter.jsx";
+import * as dom from "../src/domActions.js";
+
+// The harness's own instance of the DOM tools, so a check driven from outside
+// the page acts on the SAME module the components subscribe to. Importing
+// them again by URL gets a second copy -- Vite appends a cache-busting query
+// after a hot update, and two copies of a module that holds state agree about
+// nothing. Dev harness only; `files` ships dist/.
+window.__dom = dom;
 
 
 /**
