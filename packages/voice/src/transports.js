@@ -45,6 +45,86 @@ export const rest = {
 };
 
 /**
+ * superjson's wire format, but only the part we emit: a payload plus a `meta`
+ * map naming the values that are not plain JSON.
+ *
+ * tRPC runs superjson as its transformer, so the server does
+ * `superjson.deserialize({ json, meta })` BEFORE zod ever sees the input. A
+ * `z.date()` field is the case that bites: superjson encodes a Date as its ISO
+ * string in `json` and records `["Date"]` at its path in `meta.values`; the
+ * server reads the meta and revives the string into a Date. Send the ISO string
+ * with no meta -- which is what `{ json: args }` did -- and it stays a string,
+ * and `z.date()` answers "Expected date, received string" no matter how correct
+ * the string is. Measured: cal.diy's schedule update rejected a perfectly valid
+ * `1970-01-01T09:00:00.000Z` on exactly this.
+ *
+ * Only Dates are annotated. That is the one superjson type the manifest can flag
+ * (see the date coercion below) and the only one an operation has been seen to
+ * need; everything else already round-trips as plain JSON. With no Dates present
+ * the result is `{ json }` with no `meta`, byte-identical to the old envelope,
+ * so nothing that did not carry a date changes.
+ */
+export function superjsonSerialize(value) {
+  const meta = {};
+  const walk = (v, path) => {
+    if (v instanceof Date) {
+      meta[path.join(".")] = ["Date"];
+      return v.toISOString();
+    }
+    if (Array.isArray(v)) return v.map((x, i) => walk(x, [...path, i]));
+    if (v && typeof v === "object") {
+      const out = {};
+      for (const k of Object.keys(v)) out[k] = walk(v[k], [...path, k]);
+      return out;
+    }
+    return v;
+  };
+  const json = walk(value, []);
+  return Object.keys(meta).length ? { json, meta: { values: meta } } : { json };
+}
+
+/**
+ * Turn declared date fields from the string the model sent into real Dates, so
+ * superjsonSerialize above can tag them.
+ *
+ * The manifest carries, per field, the key-paths that end at a `z.date()` --
+ * `[["start"], ["end"]]` for cal.diy's `schedule: Array<Array<{start, end}>>`.
+ * Arrays are TRANSPARENT: a path steps through object keys and recurses into
+ * every array element without consuming a segment, because the schedule's dates
+ * live under two levels of positional array. An empty path (`[]`) means the
+ * field value is itself a date.
+ *
+ * A string the model sent that is not a real date -- `"09:00"` with no day --
+ * becomes an Invalid Date, which cannot be serialised, so it is left as the
+ * original string. The server then answers "Invalid date" rather than the
+ * widget throwing, which is the more useful of the two failures.
+ */
+function coerceAtPath(value, path) {
+  if (Array.isArray(value)) return value.map((v) => coerceAtPath(v, path));
+  if (path.length === 0) {
+    if (value == null || value instanceof Date) return value;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? value : d;
+  }
+  if (value && typeof value === "object") {
+    const [key, ...rest] = path;
+    if (key in value) return { ...value, [key]: coerceAtPath(value[key], rest) };
+  }
+  return value;
+}
+
+export function coerceDeclaredDates(args, fields) {
+  let out = args;
+  for (const field of fields ?? []) {
+    if (!field.dates?.length || !out || !(field.name in out)) continue;
+    let value = out[field.name];
+    for (const path of field.dates) value = coerceAtPath(value, path);
+    out = { ...out, [field.name]: value };
+  }
+  return out;
+}
+
+/**
  * A tRPC error, with the validation detail the model needs to fix its call.
  *
  * "Invalid input" alone is useless: the model that sent the wrong field names
@@ -92,7 +172,11 @@ export const trpc = {
      * between them. A procedure with no input parser at all ignores what it is
      * sent, so there is nothing to lose by always sending it.
      */
-    const input = { json: args ?? {} };
+    // Declared date fields arrive as strings and must become Dates before
+    // superjson can tag them; then the envelope carries the meta the server
+    // needs to revive them. Both are no-ops for an operation with no dates.
+    const dated = coerceDeclaredDates(args ?? {}, [...(operation.params ?? []), ...(operation.bodyFields ?? [])]);
+    const input = superjsonSerialize(dated);
 
     if (operation.method === "GET") {
       const url = buildUrl(operation.endpoint, args);

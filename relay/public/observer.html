@@ -59,39 +59,62 @@ async function open(id, el) {
 function render(ev, cost) {
   if (!ev.length) { viewEl.innerHTML = "<div class='hint'>Empty session.</div>"; return; }
   const t0 = Date.parse(ev[0].at);
-  let prev = null;
-  const rows = [];
   const header = cost && cost.total != null
     ? `<div class="total">session cost: <b>$${cost.total.toFixed(4)}</b> <span style="color:#5a6274">· ${esc(cost.model||"")}</span></div>`
     : (cost && !cost.priced ? `<div class="total" style="color:#8b93a7">unpriced model${cost.model?" ("+esc(cost.model)+")":""}</div>` : "");
+
+  // A response spans from one response_requested to the next. With
+  // create_response:false the widget sends a fresh response.create after every
+  // tool result, so a SINGLE spoken turn produces several responses -- each
+  // stamped with the same standing transcript. Rendering each as its own "user"
+  // line made one utterance look like it was repeated a dozen times. So group by
+  // response: show the user's words only when they actually change, and let each
+  // response show what it DID, with its cost on that row.
+  const segs = [];
   for (const e of ev) {
-    // A usage event carries the cost of the response just before it; fold it
-    // onto that row as a badge rather than printing a line of its own.
-    if (e.type === "usage") {
-      if (e.costUSD != null && rows.length) {
-        rows[rows.length - 1] = rows[rows.length - 1].replace("</div></div>", ` <span class="cost">$${e.costUSD.toFixed(5)}</span></div></div>`);
-      }
-      continue;
-    }
-    const t = (Date.parse(e.at) - t0) / 1000;
+    if (e.type === "response_requested") segs.push({ transcript: e.transcript, at: e.at, events: [] });
+    else if (segs.length) segs[segs.length - 1].events.push(e);
+  }
+
+  let prev = null, lastUser = null;
+  const rows = [];
+  const push = (at, kind, who, v, badge = "") => {
+    const t = (Date.parse(at) - t0) / 1000;
     const gap = prev === null ? "" : "+" + (t - prev).toFixed(1) + "s";
     prev = t;
-    let kind = "meta", who = e.type, v = "";
-    if (e.type === "response_requested") { kind="user"; who="user"; v = esc(e.transcript); }
-    else if (e.type === "assistant_reply") { kind="agent"; who="agent"; v = esc(e.text); }
-    else if (e.type === "tool_call") {
-      const res = e.result || {};
-      const ok = res.error || res.stop ? "err" : "ok";
-      kind = ok === "err" ? "fail" : "tool"; who = e.name;
-      const args = JSON.stringify(e.args ?? {});
-      const out = res.stop || res.error || res.status || JSON.stringify(res).slice(0, 200);
-      v = `<span style="color:#8b93a7">${esc(args.slice(0,140))}</span>\n<span class="${ok==='err'?'err':''}">→ ${esc(String(out).slice(0,300))}</span>`;
+    rows.push(`<div class="row"><div class="t">${t.toFixed(1)}s</div><div class="gap">${gap}</div><div class="k ${kind}">${esc(who)}</div><div class="v">${v}${badge}</div></div>`);
+  };
+
+  for (const seg of segs) {
+    if (seg.transcript && seg.transcript !== lastUser) {
+      lastUser = seg.transcript;
+      push(seg.at, "user", "user", esc(seg.transcript));
     }
-    else if (e.type === "response_failed") { kind="fail"; who="✗ " + (e.code||"failed"); v = esc(e.message||"") + (e.retrying?' <span class="badge">retrying</span>':''); }
-    else continue; // activity and the like are not part of the flow
-    rows.push(`<div class="row"><div class="t">${t.toFixed(1)}s</div><div class="gap">${gap}</div><div class="k ${kind}">${esc(who)}</div><div class="v">${v}</div></div>`);
+    // The cost is the response's, wherever its usage event fell relative to the
+    // tool call (before it for a function call, after it for a spoken reply).
+    const usage = seg.events.find((e) => e.type === "usage" && e.costUSD != null);
+    const badge = usage ? ` <span class="cost">$${usage.costUSD.toFixed(5)}</span>` : "";
+    const outputs = seg.events.filter((e) => ["tool_call", "assistant_reply", "response_failed"].includes(e.type));
+    outputs.forEach((e, i) => {
+      const b = i === outputs.length - 1 ? badge : ""; // cost on the response's last output
+      if (e.type === "assistant_reply") push(e.at, "agent", "agent", esc(e.text), b);
+      else if (e.type === "response_failed") push(e.at, "fail", "✗ " + (e.code||"failed"), esc(e.message||"") + (e.retrying?' <span class="badge">retrying</span>':''), b);
+      else {
+        const res = e.result || {};
+        const isErr = res.error || res.stop;
+        const args = JSON.stringify(e.args ?? {});
+        const out = res.stop || res.error || res.status || JSON.stringify(res).slice(0, 200);
+        const v = `<span style="color:#8b93a7">${esc(args.slice(0,140))}</span>\n<span class="${isErr?'err':''}">→ ${esc(String(out).slice(0,300))}</span>`;
+        push(e.at, isErr ? "fail" : "tool", e.name, v, b);
+      }
+    });
+    // A response that produced no visible row (only a deferred/coalesced one)
+    // still shows its cost, folded onto whatever the last row is.
+    if (!outputs.length && badge && rows.length) {
+      rows[rows.length - 1] = rows[rows.length - 1].replace("</div></div>", badge + "</div></div>");
+    }
   }
-  viewEl.innerHTML = header + rows.join("");
+  viewEl.innerHTML = header + (rows.join("") || "<div class='hint'>Empty session.</div>");
 }
 
 loadList();

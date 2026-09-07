@@ -89,6 +89,36 @@ function scalarName(node) {
   return base?.callee?.object?.name === "z" ? base.callee.property?.name : null;
 }
 
+/**
+ * The key-paths under a field that end at a `z.date()`.
+ *
+ * A Date cannot survive the JSON the model speaks: tRPC's superjson transformer
+ * needs it tagged, and the tag is built from these paths at request time (see
+ * transports.js). Arrays are TRANSPARENT -- descending into `z.array(...)` adds
+ * no path segment -- so cal.diy's `schedule: Array<Array<{start, end}>>` yields
+ * `[["start"], ["end"]]`, the two dates buried under two positional arrays. A
+ * field that is itself a bare `z.date()` yields `[[]]`: the empty path meaning
+ * "the value here". Empty when the field holds no date, so only date-bearing
+ * fields carry the annotation and the manifest stays lean.
+ */
+function datePaths(node, prefix = [], depth = 0) {
+  const { base } = unwrap(node);
+  if (!base || base.callee?.object?.name !== "z") return [];
+  const method = base.callee.property?.name;
+  if (method === "date") return [prefix];
+  if (depth >= 4) return [];
+  if (method === "array") return datePaths(base.arguments[0], prefix, depth + 1);
+  if (method === "object") {
+    const out = [];
+    for (const p of base.arguments[0]?.properties ?? []) {
+      const key = p.key?.name ?? p.key?.value;
+      if (key != null) out.push(...datePaths(p.value, [...prefix, key], depth + 1));
+    }
+    return out;
+  }
+  return [];
+}
+
 function fieldsOf(objectExpression) {
   return objectExpression.properties.map((prop) => {
     const name = prop.key.name || prop.key.value;
@@ -103,12 +133,15 @@ function fieldsOf(objectExpression) {
     }
     // The nested shape, only when it adds something a scalar type does not.
     const shape = shapeOf(prop.value);
+    // The paths to any dates inside, so the transport can tag them for superjson.
+    const dates = datePaths(prop.value);
     return {
       name,
       required,
       type,
       ...(enumValues ? { enumValues } : {}),
       ...(shape && /[<{]/.test(shape) ? { shape } : {}),
+      ...(dates.length ? { dates } : {}),
     };
   });
 }

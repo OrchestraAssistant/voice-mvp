@@ -67,6 +67,61 @@ describe("tRPC", () => {
     assert.deepEqual(trpc.request({ operation: update, args: {} }).body, { json: {} });
   });
 
+  test("a declared date field is superjson-tagged so z.date() accepts it", () => {
+    // The exact failure from a live run: the schema is
+    // `schedule: z.array(z.array(z.object({ start: z.date(), end: z.date() })))`,
+    // the model sent valid ISO strings, and with no superjson meta they stayed
+    // strings and z.date() said "Expected date, received string". The manifest
+    // now carries the date paths (arrays transparent), so the body must arrive
+    // with both the ISO in `json` and a `["Date"]` tag at each path in `meta`.
+    const withDates = {
+      ...update,
+      bodyFields: [
+        { name: "scheduleId" },
+        { name: "schedule", dates: [["start"], ["end"]] },
+      ],
+    };
+    const { body } = trpc.request({
+      operation: withDates,
+      args: {
+        scheduleId: 50,
+        schedule: [[{ start: "1970-01-01T09:00:00.000Z", end: "1970-01-01T17:00:00.000Z" }], []],
+      },
+    });
+    assert.deepEqual(body.json.schedule, [
+      [{ start: "1970-01-01T09:00:00.000Z", end: "1970-01-01T17:00:00.000Z" }],
+      [],
+    ]);
+    assert.deepEqual(body.meta, {
+      values: {
+        "schedule.0.0.start": ["Date"],
+        "schedule.0.0.end": ["Date"],
+      },
+    });
+    assert.equal("scheduleId" in body.meta.values ? "tagged" : "plain", "plain"); // a number is not tagged
+  });
+
+  test("a field with no dates is byte-identical to the old envelope", () => {
+    // The superjson change must not touch anything that did not carry a date.
+    const { body } = trpc.request({
+      operation: { ...update, bodyFields: [{ name: "name" }] },
+      args: { name: "Weekdays" },
+    });
+    assert.deepEqual(body, { json: { name: "Weekdays" } });
+    assert.equal("meta" in body, false);
+  });
+
+  test("an unparseable date string is left alone rather than crashing", () => {
+    // `new Date("09:00")` is Invalid and cannot be serialised. Leaving it a
+    // string lets the server answer "Invalid date" instead of the widget throwing.
+    const { body } = trpc.request({
+      operation: { ...update, bodyFields: [{ name: "at", dates: [[]] }] },
+      args: { at: "09:00" },
+    });
+    assert.equal(body.json.at, "09:00");
+    assert.equal(body.meta, undefined);
+  });
+
   test("the reply is unwrapped out of result.data.json", () => {
     assert.deepEqual(trpc.read({ result: { data: { json: [{ id: 1 }] } } }, { ok: true }), [{ id: 1 }]);
   });
