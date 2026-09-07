@@ -76,6 +76,30 @@ function render(ev, cost) {
     else if (segs.length) segs[segs.length - 1].events.push(e);
   }
 
+  // Coalesce the interim and final transcripts of ONE spoken turn. Realtime
+  // streams a partial ("Go to the") then the final ("Go to the bookings page."),
+  // and each fires its own response; shown as two rows they read as the user
+  // repeating themselves. A run where each transcript is a prefix of the next,
+  // and close in time, is one turn -- labelled with the final (longest) text,
+  // with every response under it. The time guard keeps a genuinely short
+  // utterance ("No.") from swallowing a later one that happens to start the same.
+  const norm = (s) => (s || "").trim().toLowerCase();
+  const prefixRelated = (a, b) => {
+    const x = norm(a), y = norm(b);
+    return x && y && (x.startsWith(y) || y.startsWith(x));
+  };
+  const turns = [];
+  for (const seg of segs) {
+    const last = turns[turns.length - 1];
+    const closeInTime = last && Date.parse(seg.at) - Date.parse(last.at) < 8000;
+    if (last && closeInTime && prefixRelated(last.transcript, seg.transcript)) {
+      if ((seg.transcript || "").length > (last.transcript || "").length) last.transcript = seg.transcript;
+      last.events.push(...seg.events);
+    } else {
+      turns.push({ transcript: seg.transcript, at: seg.at, events: [...seg.events] });
+    }
+  }
+
   let prev = null, lastUser = null;
   const rows = [];
   const push = (at, kind, who, v, badge = "") => {
@@ -85,7 +109,7 @@ function render(ev, cost) {
     rows.push(`<div class="row"><div class="t">${t.toFixed(1)}s</div><div class="gap">${gap}</div><div class="k ${kind}">${esc(who)}</div><div class="v">${v}${badge}</div></div>`);
   };
 
-  for (const seg of segs) {
+  for (const seg of turns) {
     if (seg.transcript && seg.transcript !== lastUser) {
       lastUser = seg.transcript;
       push(seg.at, "user", "user", esc(seg.transcript));
