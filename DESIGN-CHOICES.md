@@ -1951,3 +1951,30 @@ in turn, the tRPC envelope (§the transport fix), the dispatcher (§37), a legib
 catalog (§37 follow-up), cross-package field names (§38), the rejection reason
 (§38), and now the nested shape. Each is general; the task just happened to
 exercise all of them.
+
+## 40. Not every error is worth a retry; and a window to watch a run
+
+Two things a painful-but-successful session made obvious.
+
+**Errors split by whether a retry could succeed.** A rate limit says "try again
+in 8s" and the wait IS the fix. A validation error ("schedule: Expected array")
+will reject the identical call forever. Treating them alike made the agent burn
+four attempts on a doomed write -- and, worse, each retry re-sent the whole
+conversation and spent the token budget again, pushing the rate limit deeper so
+every later step waited longer. `classifyError` splits them: transient (rate
+limit, 5xx, network) is retried; validation (400/bad input) and fatal
+(401/403/404) are cut off on the FIRST strike with advice to change the shape
+substantially or use the DOM tools instead. Unknown errors stay
+possibly-transient, so a real one is never wrongly abandoned. This is also why a
+session paced so strangely: the rim's stop-start is the agent waiting out a
+rate-limit backoff between almost every action, and fewer doomed retries means
+fewer of those waits.
+
+**A session observer.** The logs were only readable by grepping JSONL. A small
+relay page (`/voice/observer`, behind VOICE_LOG) lists sessions and renders one
+turn by turn -- user, agent, tool call with args and result, and every
+response_failed with its retry badge -- each with its offset and the gap since
+the last. It reads the logs and never writes them, and lives on the relay
+because that is where they are written. It immediately earned its keep: it
+showed the model's first schedule attempt was an object keyed by day name, a
+shape the raw log made no faster to see.

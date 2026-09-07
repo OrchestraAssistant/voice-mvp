@@ -7,6 +7,7 @@ import { summaryEvent, tallySession } from "./usage.js";
 import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
 import { buildTools, buildInstructions, resolveModel, resolveLanguage, validateManifest, MODELS, LANGUAGES } from "./tools.js";
+import { listSessions, readSession } from "./observer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -113,6 +114,21 @@ app.post("/voice/log", (req, res) => {
 app.get("/voice/options", (req, res) => {
   res.json({ models: MODELS, languages: LANGUAGES, defaults: { model: REALTIME_MODEL, language: "auto" } });
 });
+
+/**
+ * The session observer: a page and its data, for watching a run turn by turn.
+ * Behind VOICE_LOG like everything that touches transcripts -- with logging off
+ * there is nothing recorded to look at, and nothing to serve.
+ */
+if (LOGGING) {
+  app.get("/voice/observer", (req, res) => res.sendFile(path.join(__dirname, "public", "observer.html")));
+  app.get("/voice/observer/sessions", (req, res) => res.json(listSessions(LOG_DIR)));
+  app.get("/voice/observer/session/:id", (req, res) => {
+    const events = readSession(LOG_DIR, req.params.id);
+    if (!events) return res.status(404).json({ error: "no such session" });
+    res.json(events);
+  });
+}
 
 // Mints an ephemeral Realtime session token, server-side, so OPENAI_API_KEY
 // never reaches the browser. That key is the only reason this endpoint exists.

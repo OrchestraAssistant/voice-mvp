@@ -1,0 +1,87 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Voice session observer</title>
+<style>
+  :root { --bg:#0f1117; --panel:#171a23; --line:#252a37; --ink:#e6e8ee; --dim:#8b93a7;
+          --user:#7cc4ff; --agent:#9be89b; --tool:#c9b3ff; --err:#ff8f8f; --accent:#5b3bff; }
+  * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink);
+      font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; display:grid; grid-template-columns:320px 1fr; height:100vh }
+  aside { border-right:1px solid var(--line); overflow:auto; background:var(--panel) }
+  main { overflow:auto; padding:18px 22px }
+  h1 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:14px 16px 8px }
+  .s { padding:10px 16px; border-bottom:1px solid var(--line); cursor:pointer }
+  .s:hover { background:#1d212c } .s.active { background:#20263a; border-left:3px solid var(--accent); padding-left:13px }
+  .s .when { color:var(--dim); font-size:12px } .s .q { color:var(--ink); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .row { display:flex; gap:10px; padding:5px 0; border-bottom:1px solid #1c2029; align-items:baseline }
+  .t { color:var(--dim); width:64px; flex:none; text-align:right; font-size:12px }
+  .gap { color:#5a6274; width:60px; flex:none; text-align:right; font-size:12px }
+  .k { flex:none; width:130px; font-weight:600 }
+  .k.user{color:var(--user)} .k.agent{color:var(--agent)} .k.tool{color:var(--tool)} .k.fail{color:var(--err)} .k.meta{color:var(--dim)}
+  .v { white-space:pre-wrap; word-break:break-word; flex:1 } .v .err { color:var(--err) }
+  .badge { font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:10px; padding:0 7px; margin-left:6px }
+  .hint { color:var(--dim); padding:40px; text-align:center }
+  code { background:#20242f; padding:1px 5px; border-radius:4px }
+</style></head>
+<body>
+  <aside><h1>Sessions</h1><div id="list"></div></aside>
+  <main id="view"><div class="hint">Pick a session on the left.</div></main>
+<script>
+const rel = ""; // same origin as the relay proxy
+const listEl = document.getElementById("list");
+const viewEl = document.getElementById("view");
+let active = null;
+
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+const shortTime = (iso) => (iso ? iso.replace("T"," ").replace(/\..*/,"").slice(5) : "");
+
+async function loadList() {
+  const r = await fetch(rel + "/voice/observer/sessions");
+  const rows = await r.json();
+  listEl.innerHTML = rows.map((s) => `
+    <div class="s" data-id="${esc(s.id)}">
+      <div class="when">${shortTime(s.at)}${s.model ? " · " + esc(s.model) : ""}</div>
+      <div class="q">${s.firstUser ? esc(s.firstUser) : "<span style='color:#5a6274'>(no turn)</span>"}</div>
+    </div>`).join("") || "<div class='hint'>No sessions yet.</div>";
+  listEl.querySelectorAll(".s").forEach((el) => el.onclick = () => open(el.dataset.id, el));
+}
+
+async function open(id, el) {
+  listEl.querySelectorAll(".s").forEach((s) => s.classList.remove("active"));
+  el?.classList.add("active");
+  active = id;
+  const r = await fetch(rel + "/voice/observer/session/" + encodeURIComponent(id));
+  const ev = await r.json();
+  render(ev);
+}
+
+function render(ev) {
+  if (!ev.length) { viewEl.innerHTML = "<div class='hint'>Empty session.</div>"; return; }
+  const t0 = Date.parse(ev[0].at);
+  let prev = null;
+  const rows = [];
+  for (const e of ev) {
+    const t = (Date.parse(e.at) - t0) / 1000;
+    const gap = prev === null ? "" : "+" + (t - prev).toFixed(1) + "s";
+    prev = t;
+    let kind = "meta", who = e.type, v = "";
+    if (e.type === "response_requested") { kind="user"; who="user"; v = esc(e.transcript); }
+    else if (e.type === "assistant_reply") { kind="agent"; who="agent"; v = esc(e.text); }
+    else if (e.type === "tool_call") {
+      const res = e.result || {};
+      const ok = res.error || res.stop ? "err" : "ok";
+      kind = ok === "err" ? "fail" : "tool"; who = e.name;
+      const args = JSON.stringify(e.args ?? {});
+      const out = res.stop || res.error || res.status || JSON.stringify(res).slice(0, 200);
+      v = `<span style="color:#8b93a7">${esc(args.slice(0,140))}</span>\n<span class="${ok==='err'?'err':''}">→ ${esc(String(out).slice(0,300))}</span>`;
+    }
+    else if (e.type === "response_failed") { kind="fail"; who="✗ " + (e.code||"failed"); v = esc(e.message||"") + (e.retrying?' <span class="badge">retrying</span>':''); }
+    else continue; // skip usage/activity/etc in the main flow
+    rows.push(`<div class="row"><div class="t">${t.toFixed(1)}s</div><div class="gap">${gap}</div><div class="k ${kind}">${esc(who)}</div><div class="v">${v}</div></div>`);
+  }
+  viewEl.innerHTML = rows.join("");
+}
+
+loadList();
+setInterval(() => { loadList(); if (active) fetch(rel + "/voice/observer/session/" + encodeURIComponent(active)).then(r=>r.json()).then(render); }, 5000);
+</script>
+</body></html>

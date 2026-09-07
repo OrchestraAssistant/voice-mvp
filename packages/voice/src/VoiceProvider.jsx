@@ -7,6 +7,7 @@ import { transportFor } from "./transports.js";
 import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
 import { expandTopic } from "./catalog.js";
+import { classifyError } from "./errors.js";
 
 const InterpreterContext = createContext(null);
 
@@ -291,25 +292,32 @@ export function VoiceProvider({
     }
     const result = batch.length === 1 ? results[0] : { count: results.length, results };
 
-    // Stop a call that keeps failing the same way. Keyed on the action and the
-    // error text, so a DIFFERENT error (the model corrected one field and hit
-    // the next) resets the count -- that is progress, not a loop. Only the same
-    // action failing the same way, over and over, gets cut off.
+    // Stop a call that will not succeed by retrying. Keyed on the action and
+    // the error text, so a DIFFERENT error (a field corrected, the next
+    // revealed) resets the count -- that is progress, not a loop.
     const failure = result?.error ?? results.find((r) => r?.error)?.error;
-    const key = failure ? `${action.name}:${failure}` : null;
-    const rf = repeatFailRef.current;
-    if (!key) {
+    if (!failure) {
       repeatFailRef.current = { key: null, count: 0 };
       return result;
     }
+    const { retryable } = classifyError(failure);
+    const key = `${action.name}:${failure}`;
+    const rf = repeatFailRef.current;
     rf.count = key === rf.key ? rf.count + 1 : 1;
     rf.key = key;
-    if (rf.count >= 3) {
+
+    // A validation or fatal error will reject the same call every time. Say so
+    // on the FIRST failure -- retrying the identical arguments cannot help, and
+    // each retry re-sends the whole conversation and pushes the rate limit
+    // deeper. A transient error (a rate limit) gets the benefit of the doubt: it
+    // is only cut off if it repeats, since a wait genuinely fixes it.
+    const limit = retryable ? 3 : 1;
+    if (rf.count >= limit) {
       repeatFailRef.current = { key: null, count: 0 };
-      return {
-        error: `${failure}`,
-        stop: `This call has failed ${rf.count} times with the same error. The arguments are wrong and retrying will not help. Tell the user what failed and stop; do not call this action again.`,
-      };
+      const advice = retryable
+        ? `This call has failed ${rf.count} times the same way. Stop and tell the user what failed.`
+        : `The arguments are wrong and this exact call will keep failing. Do NOT retry it. Either send a substantially different shape, or use the DOM tools (dom_snapshot then dom_click/dom_type) to do it on the page. If neither is possible, tell the user what failed.`;
+      return { error: `${failure}`, stop: advice };
     }
     return result;
   };

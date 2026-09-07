@@ -31,9 +31,30 @@ describe("a call that keeps failing the same way is stopped", () => {
 
   test("the widget tracks repeated identical failures and cuts them off", () => {
     assert.match(provider, /repeatFailRef/);
-    assert.match(provider, /failed \$\{rf\.count\} times with the same error/);
+    assert.match(provider, /failed \$\{rf\.count\} times the same way/);
     // A different error resets the count -- correcting one field to reveal the
     // next is progress, not a loop.
     assert.match(provider, /key === rf\.key \? rf\.count \+ 1 : 1/);
+  });
+});
+
+import { classifyError } from "../src/errors.js";
+
+describe("errors are split by whether a retry could help", () => {
+  test("a rate limit is transient; a validation error is not", () => {
+    assert.equal(classifyError("Rate limit reached. Try again in 8s.").retryable, true);
+    assert.equal(classifyError("Invalid input (schedule: Expected array)").retryable, false);
+    assert.equal(classifyError("Unauthorized").retryable, false);
+    assert.equal(classifyError("Not found").retryable, false);
+  });
+
+  test("an unknown error is treated as possibly-transient, never abandoned early", () => {
+    assert.equal(classifyError("something odd happened").retryable, true);
+  });
+
+  test("a non-retryable failure is cut off on the first strike, and points at the DOM route", () => {
+    const p = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/VoiceProvider.jsx"), "utf8");
+    assert.match(p, /const limit = retryable \? 3 : 1/);
+    assert.match(p, /use the DOM tools/);
   });
 });
