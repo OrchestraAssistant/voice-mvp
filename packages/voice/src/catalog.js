@@ -13,6 +13,12 @@
 const asPath = (group) => (Array.isArray(group) ? group : group ? [group] : []);
 const samePath = (a, b) => a.length === b.length && a.every((s, i) => s === b[i]);
 
+// A body field as the MODEL should see it: `dates` (transport encoding) and
+// `review` (a build-time triage flag for a human/LLM) are stripped -- one is
+// noise in the prompt, the other is our uncertainty, which would only sap the
+// model's confidence. Same projection the relay applies to the root catalog.
+const forSession = ({ dates, review, ...field }) => field;
+
 function operations(manifest) {
   return [
     ...(manifest.queries ?? []).map((o) => ({ ...o, kind: "query" })),
@@ -44,7 +50,7 @@ export function expandTopic(manifest, topic) {
       name: op.name,
       description: op.description ?? "",
       params: op.params ?? [],
-      ...(op.bodyFields ? { bodyFields: op.bodyFields } : {}),
+      ...(op.bodyFields ? { bodyFields: op.bodyFields.map(forSession) } : {}),
       ...(op.requiresConfirmation ? { requiresConfirmation: true } : {}),
     })),
     subtopics: [...children.entries()].map(([seg, count]) => ({

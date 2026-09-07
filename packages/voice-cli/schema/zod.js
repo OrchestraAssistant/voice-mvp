@@ -58,27 +58,49 @@ function unwrap(node) {
  * schedule. Returns null for a plain scalar (the field's `type` already says
  * "string"), so only compound shapes are carried.
  *
- * Depth-capped: past three levels the type is just "array"/"object". Full depth
- * would occasionally reproduce a huge nested schema in the prompt we spent the
- * dispatcher work shrinking, and three levels covers everything a person would
- * type by hand anyway.
+ * Depth-capped, but the cap is only about the PROMPT. Past three levels the
+ * rendered type is just "array"/"object" -- full depth would reproduce a huge
+ * nested schema in the prompt we spent the dispatcher work shrinking, and three
+ * levels covers everything a person would type by hand. That cap is a rendering
+ * choice, not the limit of what we KNOW: it is deliberately separate from the
+ * extraction below (dates) which runs to full depth, because knowing and showing
+ * are two different jobs and one knob for both hid a real date-encoding bug
+ * under the cap. When the render does truncate, `ctx.truncated` records it, so
+ * the field can be flagged for review -- the model is being shown a partial
+ * shape and will guess the rest.
  */
-function shapeOf(node, depth = 0) {
+function shapeOf(node, depth = 0, ctx = { truncated: false }) {
   const { base } = unwrap(node);
   if (!base || base.callee?.object?.name !== "z") return null; // referenced/unknown
   const method = base.callee.property?.name;
 
   if (method === "array") {
-    if (depth >= 3) return "array";
-    const inner = shapeOf(base.arguments[0], depth + 1);
+    if (depth >= 3) {
+      ctx.truncated = true;
+      return "array";
+    }
+    const inner = shapeOf(base.arguments[0], depth + 1, ctx);
     return `Array<${inner ?? scalarName(base.arguments[0]) ?? "any"}>`;
   }
   if (method === "object") {
-    if (depth >= 3) return "object";
-    const fields = (base.arguments[0]?.properties ?? [])
-      .map((p) => p.key?.name ?? p.key?.value)
+    if (depth >= 3) {
+      ctx.truncated = true;
+      return "object";
+    }
+    // Recurse into COMPOUND fields so a nested shape is shown, but leave a
+    // scalar field as its bare name -- `{ start, end }` stays terse, while
+    // `{ user: { name, email } }` gains the level it needs. Recursing is also
+    // what lets a deep object chain reach the cap and flag itself truncated;
+    // rendering names only would hide the depth without ever tripping it.
+    const parts = (base.arguments[0]?.properties ?? [])
+      .map((p) => {
+        const key = p.key?.name ?? p.key?.value;
+        if (key == null) return null;
+        const inner = shapeOf(p.value, depth + 1, ctx); // null for a scalar
+        return inner ? `${key}: ${inner}` : key;
+      })
       .filter(Boolean);
-    return fields.length ? `{ ${fields.join(", ")} }` : "object";
+    return parts.length ? `{ ${parts.join(", ")} }` : "object";
   }
   return null; // a scalar; `type` already carries it
 }
@@ -87,6 +109,88 @@ function shapeOf(node, depth = 0) {
 function scalarName(node) {
   const { base } = unwrap(node);
   return base?.callee?.object?.name === "z" ? base.callee.property?.name : null;
+}
+
+/** The wrapper methods on a node, outermost first: `z.array(x).min(7)` -> ["min"]. */
+function wrapperMethods(node) {
+  const methods = [];
+  while (node?.type === "CallExpression" && node.callee?.type === "MemberExpression") {
+    if (node.callee.object?.name === "z") break; // reached the base z.X()
+    if (node.callee.property?.name) methods.push(node.callee.property.name);
+    if (node.callee.object?.type === "CallExpression") {
+      node = node.callee.object;
+      continue;
+    }
+    break;
+  }
+  return methods;
+}
+
+/**
+ * A field name that makes a list element self-describing. An array of objects
+ * that each carry one of these is addressed by identity; an array of objects
+ * that carry none is addressed by POSITION, and position is a convention we
+ * cannot read.
+ */
+const IDENTIFYING = new Set([
+  "id", "day", "weekday", "dayofweek", "date", "datetime", "type", "kind",
+  "name", "key", "slug", "label", "index", "order", "uid", "code", "value",
+]);
+
+/**
+ * Whether a field carries an unstated convention -- case (2), the weekday grid.
+ *
+ * The tell is meaning that rides on POSITION or an integer code, named by
+ * nothing: a nested array (the index is a coordinate), an array of objects with
+ * no identifying field (order or length does the work), or a fixed-length list
+ * of bare values (the slots are enumerated). cal.diy's
+ * `schedule: Array<Array<{start, end}>>` trips the first. Returns a human reason
+ * or null. Tuned for recall: a false positive costs one glance by a reviewer, a
+ * miss is a silent runtime failure.
+ */
+function opacity(node) {
+  const { base } = unwrap(node);
+  if (base?.callee?.object?.name !== "z" || base.callee.property?.name !== "array") return null;
+
+  const inner = unwrap(base.arguments?.[0]).base;
+  const innerMethod = inner?.callee?.object?.name === "z" ? inner.callee.property?.name : null;
+
+  if (innerMethod === "array") return "nested array -- an index carries meaning that nothing names";
+  if (innerMethod === "object") {
+    const keys = (inner.arguments?.[0]?.properties ?? [])
+      .map((p) => String(p.key?.name ?? p.key?.value ?? "").toLowerCase())
+      .filter(Boolean);
+    if (keys.length && !keys.some((k) => IDENTIFYING.has(k))) {
+      return "array of objects with no identifying field -- order carries meaning";
+    }
+  }
+  const scalarInner = innerMethod && !["array", "object"].includes(innerMethod);
+  if (scalarInner && wrapperMethods(node).includes("length")) {
+    return "fixed-length list of bare values -- the positions carry meaning";
+  }
+  return null;
+}
+
+/**
+ * What, if anything, a human or LLM should look at before this field is trusted
+ * on the API path. Build-time metadata, kept OFF the prompt (expand strips it):
+ * a triage note that says "this might be knowable with a bit of checking", never
+ * the model's confusion made into prompt text.
+ *
+ * Three kinds, most severe first. `unknown`: the shape itself is undetermined
+ * (z.any/unknown/record) -- case (3), not resolvable by reading a schema that
+ * says nothing. `opaque`: the shape is known but a convention rides on it --
+ * case (2), resolvable by a reviewer. `truncated`: the render stopped at the
+ * depth cap, so the model is shown a partial shape -- case (4), the weakest
+ * signal, usually a deep peripheral field.
+ */
+function fieldReview({ type, node, truncated }) {
+  if (type === "any" || type === "unknown") return { kind: "unknown", reason: `input type is z.${type}(); the shape is not determined` };
+  if (type === "record") return { kind: "unknown", reason: "z.record() -- arbitrary keys, shape not determined" };
+  const opaque = opacity(node);
+  if (opaque) return { kind: "opaque", reason: opaque };
+  if (truncated) return { kind: "truncated", reason: "shape truncated at render depth; deeper fields are not shown to the model" };
+  return null;
 }
 
 /**
@@ -106,7 +210,12 @@ function datePaths(node, prefix = [], depth = 0) {
   if (!base || base.callee?.object?.name !== "z") return [];
   const method = base.callee.property?.name;
   if (method === "date") return [prefix];
-  if (depth >= 4) return [];
+  // Deliberately deep. This is EXTRACTION, not rendering: a path is a few bytes
+  // whatever its depth, so the tight cap the prompt render uses buys nothing
+  // here and would silently miss a date below it -- reintroducing the exact
+  // "Expected date, received string" the superjson fix removed, now under the
+  // cap where nothing looks. The high bound only guards a pathological schema.
+  if (depth >= 8) return [];
   if (method === "array") return datePaths(base.arguments[0], prefix, depth + 1);
   if (method === "object") {
     const out = [];
@@ -132,9 +241,13 @@ function fieldsOf(objectExpression) {
       }
     }
     // The nested shape, only when it adds something a scalar type does not.
-    const shape = shapeOf(prop.value);
+    // `ctx` catches a render truncation on the way, which becomes a review flag.
+    const ctx = { truncated: false };
+    const shape = shapeOf(prop.value, 0, ctx);
     // The paths to any dates inside, so the transport can tag them for superjson.
     const dates = datePaths(prop.value);
+    // Whether a human/LLM should look before this field is trusted on the API.
+    const review = fieldReview({ type, node: prop.value, truncated: ctx.truncated });
     return {
       name,
       required,
@@ -142,9 +255,13 @@ function fieldsOf(objectExpression) {
       ...(enumValues ? { enumValues } : {}),
       ...(shape && /[<{]/.test(shape) ? { shape } : {}),
       ...(dates.length ? { dates } : {}),
+      ...(review ? { review } : {}),
     };
   });
 }
+
+// Exported for tests; the enricher above is the only production caller.
+export { fieldsOf, shapeOf, datePaths, opacity, fieldReview };
 
 export const zodBodies = {
   name: "zod-bodies",
@@ -253,6 +370,28 @@ export const zodBodies = {
         }
       }
     }
-    return { notes: enriched.length ? [`body fields from Zod: ${enriched.join(", ")}`] : [] };
+    // Roll the field flags up to their action, and add the operation-level
+    // case (3): a write with no readable body at all. This `review` list is a
+    // triage sheet for the human/LLM pass and a hint the dispatcher can read to
+    // prefer the DOM path -- so it stays in the manifest but never reaches the
+    // model (expand strips the field-level flags; the model never sees this
+    // op-level list, which expand does not emit). The transport is left alone:
+    // there is no DOM flow to route to until one exists.
+    const flagged = [];
+    for (const action of actions) {
+      const fieldFlags = (action.bodyFields ?? []).filter((f) => f.review).map((f) => ({ field: f.name, ...f.review }));
+      const writes = ["POST", "PUT", "PATCH"].includes((action.method ?? "").toUpperCase());
+      if (writes && !(action.bodyFields ?? []).length) {
+        fieldFlags.push({ field: null, kind: "unknown", reason: "no input shape could be resolved" });
+      }
+      if (fieldFlags.length) {
+        action.review = fieldFlags;
+        flagged.push(action.name);
+      }
+    }
+
+    const notes = enriched.length ? [`body fields from Zod: ${enriched.join(", ")}`] : [];
+    if (flagged.length) notes.push(`flagged for review, kept off-prompt: ${flagged.length} action(s) (${flagged.slice(0, 8).join(", ")}${flagged.length > 8 ? ", ..." : ""})`);
+    return { notes };
   },
 };

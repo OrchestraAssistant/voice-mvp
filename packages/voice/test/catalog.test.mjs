@@ -5,7 +5,10 @@ import { expandTopic } from "../src/catalog.js";
 const m = {
   queries: [{ name: "scheduleGet", description: "one schedule", group: ["availability", "schedule"] }],
   actions: [
-    { name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true },
+    {
+      name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true,
+      bodyFields: [{ name: "schedule", type: "array", shape: "Array<Array<{ start, end }>>", dates: [["start"], ["end"]], review: { kind: "opaque", reason: "nested array" } }],
+    },
     { name: "createTask", description: "new task" }, // root
   ],
   groups: [{ path: ["availability"], description: "when you are bookable" }],
@@ -27,6 +30,15 @@ describe("the widget answers expand from the manifest", () => {
 
   test("an unknown topic is null so the dispatcher can report it", () => {
     assert.equal(expandTopic(m, "nope"), null);
+  });
+
+  test("a field's build-time tags (dates, review) never reach the model", () => {
+    const field = expandTopic(m, "availability/schedule").tools
+      .find((t) => t.name === "scheduleUpdate").bodyFields
+      .find((f) => f.name === "schedule");
+    assert.equal(field.shape, "Array<Array<{ start, end }>>"); // the model keeps this
+    assert.equal("dates" in field, false);
+    assert.equal("review" in field, false);
   });
 
   test("root is reachable as the empty path", () => {

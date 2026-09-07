@@ -26,6 +26,15 @@ const asPath = (group) => (Array.isArray(group) ? group : group ? [group] : []);
 const samePath = (a, b) => a.length === b.length && a.every((s, i) => s === b[i]);
 const pathKey = (p) => p.join("/");
 
+/**
+ * A body field as the MODEL should see it. `dates` is encoding metadata the
+ * transport reads, and `review` is a build-time triage flag for a human/LLM --
+ * neither belongs in the prompt: one is noise, the other is our own uncertainty,
+ * which would only sap the model's confidence. The model gets name, type,
+ * whether it is required, its values, and its shape, and nothing else.
+ */
+const forSession = ({ dates, review, ...field }) => field;
+
 /** Every query and action, tagged with its kind and normalised path. */
 function operations(manifest) {
   return [
@@ -156,7 +165,7 @@ export function expand(manifest, topic) {
       name: op.name,
       description: op.description ?? "",
       params: op.params ?? [],
-      ...(op.bodyFields ? { bodyFields: op.bodyFields } : {}),
+      ...(op.bodyFields ? { bodyFields: op.bodyFields.map(forSession) } : {}),
       ...(op.requiresConfirmation ? { requiresConfirmation: true } : {}),
     })),
     subtopics: topics.map((t) => ({ topic: pathKey(t.path), description: t.description, count: t.count })),

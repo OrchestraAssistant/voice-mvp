@@ -9,7 +9,13 @@ const m = {
     { name: "appsList", description: "installed apps", group: ["apps"] },
   ],
   actions: [
-    { name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true },
+    {
+      name: "scheduleUpdate", description: "change hours", group: ["availability", "schedule"], requiresConfirmation: true,
+      bodyFields: [
+        { name: "scheduleId", required: true, type: "number" },
+        { name: "schedule", required: false, type: "array", shape: "Array<Array<{ start, end }>>", dates: [["start"], ["end"]], review: { kind: "opaque", reason: "nested array" } },
+      ],
+    },
     { name: "createTask", description: "new task", bodyFields: [{ name: "title", required: true }] }, // root
   ],
   groups: [
@@ -52,6 +58,18 @@ describe("the tool tree", () => {
 
   test("an unknown topic returns null, not an empty node", () => {
     assert.equal(expand(m, "nope"), null);
+  });
+
+  test("expand keeps a field's shape for the model but strips off-prompt tags", () => {
+    // `dates` is transport encoding and `review` is a build-time triage flag;
+    // neither belongs in the prompt. The model still gets name/required/shape.
+    const field = expand(m, "availability/schedule").tools
+      .find((t) => t.name === "scheduleUpdate").bodyFields
+      .find((f) => f.name === "schedule");
+    assert.equal(field.shape, "Array<Array<{ start, end }>>");
+    assert.equal(field.required, false);
+    assert.equal("dates" in field, false, "dates must not reach the prompt");
+    assert.equal("review" in field, false, "review must not reach the prompt");
   });
 
   test("a destructive query never happens; a destructive action is flagged in its line", () => {
