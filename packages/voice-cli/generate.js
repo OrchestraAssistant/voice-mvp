@@ -38,9 +38,10 @@ const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
   --only <names>      run only these, comma-separated
   --without <names>   run everything except these
 
-  npx @yourco/voice-cli skill [--agents] [--print]
-                      install the manifest-enrichment skill so your agent can
-                      resolve the flagged operations (the judgement pass)
+  npx @yourco/voice-cli skill [--print]
+                      install the skill that teaches your agent the whole
+                      workflow -- generate, probe, and the judgement pass.
+                      (Other agents: npx skills add <repo> --skill yourco-voice)
 
 Run it from your app's root. Every stage that fired is listed in the output,
 along with every one that found nothing and why. --only and --without exist so
