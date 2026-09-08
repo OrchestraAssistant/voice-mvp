@@ -1,5 +1,9 @@
 /**
- * A Chrome-shaped browser the developer already has, driven over CDP.
+ * A Chrome-shaped browser the developer already has, driven over CDP -- either
+ * one already RUNNING that exposes CDP (connect to it), or a binary on disk
+ * (launch it). Connecting is preferred: it needs no local binary and no system
+ * libraries, because owning a browser process is not the probe's job -- using
+ * one that exists is.
  *
  * puppeteer-core rather than puppeteer or playwright because it bundles no
  * browser: 12MB against 262MB for a downloaded Chromium. See find.js for why
@@ -24,6 +28,17 @@ async function loadPuppeteer() {
 
 export function chromeDriver({ headless = true, viewport = { width: 1280, height: 900 } } = {}) {
   let browser = null;
+  let connected = false; // to an existing browser, so we detach rather than kill it
+
+  // A browser the environment ALREADY runs, reachable over CDP -- Chrome's
+  // normal automation API. `VOICE_BROWSER_ENDPOINT` is either an http(s) URL of
+  // a browser started with --remote-debugging-port (puppeteer discovers the ws
+  // from it) or a ws:// endpoint directly. Preferred over launching one:
+  // connecting needs no local binary, no system libraries, no process to own.
+  const endpoint = process.env.VOICE_BROWSER_ENDPOINT || null;
+  const connectOpts = endpoint
+    ? endpoint.startsWith("ws") ? { browserWSEndpoint: endpoint } : { browserURL: endpoint }
+    : null;
 
   return {
     name: "chrome",
@@ -32,24 +47,35 @@ export function chromeDriver({ headless = true, viewport = { width: 1280, height
       if (!(await loadPuppeteer())) {
         return { ok: false, why: "puppeteer-core is not installed (npm i -D puppeteer-core)" };
       }
+      // Connect mode: an endpoint is enough; no binary needs to be present.
+      if (connectOpts) return { ok: true, using: endpoint, how: "connected to an existing browser over CDP" };
       const found = findBrowser();
       if (!found) {
-        return { ok: false, why: "no Chrome-shaped browser found; set VOICE_BROWSER to one" };
+        return {
+          ok: false,
+          why: "no browser available; point VOICE_BROWSER_ENDPOINT at a running Chrome (--remote-debugging-port) or VOICE_BROWSER at a binary to launch",
+        };
       }
       return { ok: true, using: found.path, how: found.how };
     },
 
     async open(url, { cookies = [], headers = {}, settleMs = 0 } = {}) {
       const puppeteer = await loadPuppeteer();
-      const found = findBrowser();
       if (!browser) {
-        browser = await puppeteer.launch({
-          executablePath: found.path,
-          headless,
-          // A clean profile, never the developer's. Their cookies and sessions
-          // are not ours to borrow; the probe has --login for auth.
-          args: ["--no-sandbox", "--disable-dev-shm-usage"],
-        });
+        if (connectOpts) {
+          // Attach to what is already there; do not launch or own it.
+          browser = await puppeteer.connect(connectOpts);
+          connected = true;
+        } else {
+          const found = findBrowser();
+          browser = await puppeteer.launch({
+            executablePath: found.path,
+            headless,
+            // A clean profile, never the developer's. Their cookies and sessions
+            // are not ours to borrow; the probe has --login for auth.
+            args: ["--no-sandbox", "--disable-dev-shm-usage"],
+          });
+        }
       }
       const page = await browser.newPage();
       await page.setViewport(viewport);
@@ -86,8 +112,11 @@ export function chromeDriver({ headless = true, viewport = { width: 1280, height
     },
 
     async close() {
-      await browser?.close();
+      // A browser we connected to is not ours to close -- detach and leave it
+      // running. One we launched, we shut down.
+      if (browser) await (connected ? browser.disconnect() : browser.close());
       browser = null;
+      connected = false;
     },
   };
 }
