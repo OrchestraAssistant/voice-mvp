@@ -5,3 +5,4 @@ dist/
 
 # Session transcripts, when VOICE_LOG=1. Recordings of what people said.
 relay/logs/
+.trial-serve/

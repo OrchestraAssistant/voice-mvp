@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,7 +85,14 @@ describe("what gets published", () => {
     // analyser is a core plus a directory per framework, and a published
     // package missing frameworks/ would resolve nothing at all.
     const pkg = JSON.parse(readFileSync(join(dirname(CLI), "package.json"), "utf8"));
-    assert.deepEqual(pkg.files, ["generate.js", "probe.js", "skill.js", "registry.js", "core", "frameworks", "schema", "stages", "skills", "MANIFEST-FEATURES.md"]);
+    assert.deepEqual(pkg.files, ["generate.js", "probe.js", "skill.js", "registry.js", "core", "frameworks", "schema", "stages", "browsers", "skills", "MANIFEST-FEATURES.md"]);
+    // Every top-level source dir that the code imports must be shipped, or the
+    // published tarball crashes on load -- browsers/ was imported by readiness.js
+    // and omitted, which a hand-maintained allowlist is exactly prone to.
+    const dirs = readdirSync(dirname(CLI), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !["node_modules", "test", "skills"].includes(e.name))
+      .map((e) => e.name);
+    for (const d of dirs) assert.ok(pkg.files.includes(d), `files[] is missing the '${d}' directory`);
     assert.equal(pkg.bin["voice-cli"], "./generate.js");
     assert.ok(!pkg.files.includes("."), "shipping the whole directory is what the allowlist exists to prevent");
   });
