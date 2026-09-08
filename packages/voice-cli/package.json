@@ -6,7 +6,8 @@
   "type": "module",
   "bin": {
     "voice-cli": "./generate.js",
-    "voice-probe": "./probe.js"
+    "voice-probe": "./probe.js",
+    "voice-skill": "./skill.js"
   },
   "scripts": {
     "generate": "node generate.js",
@@ -22,11 +23,13 @@
   "files": [
     "generate.js",
     "probe.js",
+    "skill.js",
     "registry.js",
     "core",
     "frameworks",
     "schema",
     "stages",
+    "skills",
     "MANIFEST-FEATURES.md"
   ]
 }

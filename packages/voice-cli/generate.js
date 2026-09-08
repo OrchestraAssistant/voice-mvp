@@ -17,6 +17,15 @@ import { STAGES } from "./registry.js";
 import { runDetectors, selectStages } from "./core/run.js";
 import { merge } from "./core/merge.js";
 import { OVERLAY_FILE } from "./core/overlay.js";
+import { installSkill } from "./skill.js";
+
+// `voice-cli skill` installs the manifest-enrichment skill into the repo, for
+// the agent that will run the judgement pass. Dispatched before anything else,
+// since it does not read the app's source.
+if (process.argv[2] === "skill") {
+  installSkill(process.argv.slice(3));
+  process.exit(0);
+}
 
 const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
 
@@ -28,6 +37,10 @@ const USAGE = `voice-cli -- turn a React app's source into .voice/manifest.json
   --stages            list every stage and what it does
   --only <names>      run only these, comma-separated
   --without <names>   run everything except these
+
+  npx @yourco/voice-cli skill [--agents] [--print]
+                      install the manifest-enrichment skill so your agent can
+                      resolve the flagged operations (the judgement pass)
 
 Run it from your app's root. Every stage that fired is listed in the output,
 along with every one that found nothing and why. --only and --without exist so

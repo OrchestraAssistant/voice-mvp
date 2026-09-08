@@ -85,7 +85,7 @@ describe("what gets published", () => {
     // analyser is a core plus a directory per framework, and a published
     // package missing frameworks/ would resolve nothing at all.
     const pkg = JSON.parse(readFileSync(join(dirname(CLI), "package.json"), "utf8"));
-    assert.deepEqual(pkg.files, ["generate.js", "probe.js", "registry.js", "core", "frameworks", "schema", "stages", "MANIFEST-FEATURES.md"]);
+    assert.deepEqual(pkg.files, ["generate.js", "probe.js", "skill.js", "registry.js", "core", "frameworks", "schema", "stages", "skills", "MANIFEST-FEATURES.md"]);
     assert.equal(pkg.bin["voice-cli"], "./generate.js");
     assert.ok(!pkg.files.includes("."), "shipping the whole directory is what the allowlist exists to prevent");
   });
