@@ -27,6 +27,7 @@ export function testIdShapes(root) {
     out = execFileSync(
       "grep",
       ["-rhoE", "--include=*.tsx", "--include=*.jsx", "--include=*.ts", "--include=*.js",
+       "--exclude-dir=node_modules", "--exclude-dir=.next", "--exclude-dir=dist",
        "data-testid=\\{`[^`]*`\\}", root],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 },
     );

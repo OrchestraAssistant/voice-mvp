@@ -31,6 +31,45 @@ export function walk(dir, test, out = []) {
 export const firstDir = (root, candidates) =>
   candidates.map((c) => path.join(root, c)).find((p) => fs.existsSync(p)) ?? null;
 
+/**
+ * The MONOREPO root above `from`, not just the nearest package.
+ *
+ * A workspace member (cal.diy's apps/web) holds its own package.json but its
+ * components -- and the test-id templates in them, like `${weekday}-switch` in
+ * packages/features -- live in SIBLING packages. Harvesting from the member
+ * alone misses them, so a rendered `Sunday-switch` never finds its `*-switch`
+ * shape. This walks up to the highest ancestor that looks like a repo root -- a
+ * package.json declaring `workspaces`, a lockfile, or a .git -- so a grep from
+ * there sees every package. Falls back to `from` for a plain single-package app,
+ * where the member IS the whole tree.
+ */
+export function repoRoot(from) {
+  let dir = from;
+  let best = from;
+  for (let i = 0; i < 15; i++) {
+    const pkg = path.join(dir, "package.json");
+    const isRoot =
+      (fs.existsSync(pkg) && /["']workspaces["']/.test(safeRead(pkg))) ||
+      fs.existsSync(path.join(dir, "yarn.lock")) ||
+      fs.existsSync(path.join(dir, "pnpm-workspace.yaml")) ||
+      fs.existsSync(path.join(dir, "package-lock.json")) ||
+      fs.existsSync(path.join(dir, ".git"));
+    if (isRoot) best = dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return best;
+}
+
+const safeRead = (p) => {
+  try {
+    return fs.readFileSync(p, "utf8");
+  } catch {
+    return "";
+  }
+};
+
 /** camelCase a hook name into a tool name: useCreateTask -> createTask. */
 export const toolName = (hookName) => {
   const bare = hookName.replace(/^use/, "");

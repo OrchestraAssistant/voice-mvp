@@ -35,7 +35,8 @@ describe("test-id shapes", () => {
 });
 
 import { testIdShapes } from "./core/testidShapes.js";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { repoRoot } from "./core/parse.js";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -56,5 +57,26 @@ describe("harvesting shapes from source", () => {
     assert.ok(shapes.includes("app-store-app-card-*"), "kept a long stem");
     assert.ok(!shapes.includes("*-*"), "rejected the stemless shape");
     assert.ok(!shapes.some((s) => !s.includes("*")), "a plain literal is not a shape");
+  });
+
+  test("a template in a sibling package is only found from the monorepo root", () => {
+    // The bug: cal.diy's `${weekday}-switch` lives in packages/features, but the
+    // probe harvested from apps/web alone, so `Sunday-switch` never became
+    // `*-switch`. repoRoot climbs to the workspace root, where a grep sees every
+    // package.
+    const root = mkdtempSync(join(tmpdir(), "mono-"));
+    mkdirSync(join(root, "apps", "web", ".voice"), { recursive: true });
+    mkdirSync(join(root, "packages", "features"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ workspaces: ["apps/*", "packages/*"] }));
+    writeFileSync(join(root, "apps", "web", "package.json"), "{}");
+    writeFileSync(join(root, "packages", "features", "Schedule.tsx"), "data-testid={`${weekday}-switch`}");
+
+    const appDir = join(root, "apps", "web");
+    assert.equal(repoRoot(appDir), root, "climbs to the workspaces root");
+    assert.ok(!testIdShapes(appDir).includes("*-switch"), "scoped to the app, the sibling template is invisible");
+    assert.ok(testIdShapes(repoRoot(appDir)).includes("*-switch"), "from the root, it is found");
+    assert.equal(generalize("Domingo-switch", testIdShapes(repoRoot(appDir))), "*-switch", "and generalises, locale and all");
+
+    rmSync(root, { recursive: true, force: true });
   });
 });

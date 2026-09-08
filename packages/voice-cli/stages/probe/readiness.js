@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { validateDriver } from "../../browsers/contract.js";
 import { instancesFor, isPattern } from "../../core/routes.js";
 import { generalize, testIdShapes } from "../../core/testidShapes.js";
+import { repoRoot } from "../../core/parse.js";
 
 /** Three seconds of watching, in twelve looks. Overridable so tests need not wait. */
 const SAMPLES = 12;
@@ -75,7 +76,8 @@ function sourceSpread(literal, root) {
   try {
     const out = execFileSync(
       "grep",
-      ["-rlF", "--include=*.tsx", "--include=*.jsx", "--include=*.ts", "--include=*.js", `"${literal}"`, root],
+      ["-rlF", "--include=*.tsx", "--include=*.jsx", "--include=*.ts", "--include=*.js",
+       "--exclude-dir=node_modules", "--exclude-dir=.next", "--exclude-dir=dist", `"${literal}"`, root],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 8 << 20 },
     );
     const files = out.split("\n").filter(Boolean).length;
@@ -200,10 +202,16 @@ export const readiness = {
     }
 
     const measured = seen.size || 1;
+    // Harvest from the MONOREPO root, not the one workspace we generated from.
+    // cal.diy's `${weekday}-switch` lives in packages/features, outside apps/web,
+    // so scoping the grep to apps/web found no `*-switch` shape and left the
+    // marker as the day-specific, locale-bound `Sunday-switch`. The repo root
+    // sees every package; source spread below uses it for the same reason.
+    const scanRoot = srcRoot ? repoRoot(srcRoot) : srcRoot;
     // The test-id templates in the source, harvested once, so a measured id
     // can be traded for the shape it was built from. Empty when there is no
     // source to read, which just leaves every marker as its literal.
-    const shapes = testIdShapes(srcRoot);
+    const shapes = testIdShapes(scanRoot);
 
     /**
      * How many measured routes each marker ends up on. This is the whole of
@@ -261,7 +269,7 @@ export const readiness = {
        * just cannot confirm from source.
        */
       for (const c of candidates) {
-        c.spread = sourceSpread(c.want.testId ?? c.want.domId, srcRoot);
+        c.spread = sourceSpread(c.want.testId ?? c.want.domId, scanRoot);
       }
       const specific = candidates
         .filter((c) => c.onRoutes <= specificEnough && (c.spread ?? 0) <= CHROME_FILES)
