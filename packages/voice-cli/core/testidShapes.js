@@ -18,6 +18,68 @@
  * everything and signals nothing.
  */
 import { execFileSync } from "node:child_process";
+import traverse from "@babel/traverse";
+import { parseFile } from "./parse.js";
+
+const GREP_SCOPE = [
+  "--include=*.tsx", "--include=*.jsx", "--include=*.ts", "--include=*.js",
+  "--exclude-dir=node_modules", "--exclude-dir=.next", "--exclude-dir=dist",
+];
+const grepFiles = (pattern, flag, root) => {
+  try {
+    return execFileSync("grep", [flag, ...GREP_SCOPE, pattern, root],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 })
+      .split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * How widely the COMPONENT that emits `testId` is used -- the genericness the
+ * element's own count hides.
+ *
+ * A shared affordance bakes its testId into a reusable component:
+ * `export const PencilIcon = createIcon(Lucide, "pencil-icon")`. So the LITERAL
+ * `pencil-icon` sits in exactly one file (the definition) and looks unique,
+ * while the component renders on a dozen pages. Grepping the literal -- what the
+ * readiness probe did -- is fooled every time; grepping the COMPONENT is not.
+ *
+ * The tell is the literal appearing in a single file that assigns it to a
+ * PascalCase export. From there, count the files that use that name. Null when
+ * the pattern does not hold -- a page-specific testId defined inline, or a shape
+ * (handled elsewhere) -- so a genuinely local marker is never wrongly demoted.
+ */
+export function componentSpread(testId, root) {
+  if (!testId || !root || testId.includes("*")) return null;
+  const files = grepFiles(testId, "-rlF", root);
+  if (files.length !== 1) return null; // not the one-definition shape of a shared component
+  const owner = exportedOwner(files[0], testId);
+  if (!owner || !/^[A-Z]/.test(owner)) return null; // a component is PascalCase; a config const is not
+  return grepFiles(`\\b${owner}\\b`, "-rlE", root).filter((f) => f !== files[0]).length;
+}
+
+/** The binding name (a const/function/class) whose body holds `literal`, in `file`. */
+function exportedOwner(file, literal) {
+  let ast;
+  try {
+    ast = parseFile(file);
+  } catch {
+    return null;
+  }
+  const visit = traverse.default ?? traverse;
+  let owner = null;
+  visit(ast, {
+    StringLiteral(path) {
+      if (owner || path.node.value !== literal) return;
+      const dec = path.findParent((p) => p.isVariableDeclarator());
+      const fn = path.findParent((p) => p.isFunctionDeclaration() || p.isClassDeclaration());
+      owner = dec?.node?.id?.name ?? fn?.node?.id?.name ?? null;
+      if (owner) path.stop();
+    },
+  });
+  return owner;
+}
 
 /** Every distinct test-id template in the source tree, as `*`-holed shapes. */
 export function testIdShapes(root) {
@@ -49,6 +111,49 @@ export function testIdShapes(root) {
     if (stem.length >= 3) shapes.add(shape);
   }
   return [...shapes];
+}
+
+/**
+ * How many source files each shape's template appears in.
+ *
+ * A template-built id cannot be counted by its rendered value: `Sunday-switch`
+ * is nowhere in the source, only `${weekday}-switch` is. So the readiness probe,
+ * grepping the literal, scored it as "not found" and penalised it -- and lost it
+ * to `pencil-icon`, a shared icon whose testId literal happens to sit in exactly
+ * one file (its definition) though it renders everywhere. Counting the TEMPLATE
+ * instead gives the shape a fair, real specificity: `*-switch` lives in one
+ * file, and that one file is the availability editor.
+ *
+ * Same grep as testIdShapes, but keeping filenames, so each template can be
+ * traced to the files that hold it.
+ */
+export function shapeFileCounts(root) {
+  if (!root) return new Map();
+  let out = "";
+  try {
+    out = execFileSync(
+      "grep",
+      ["-rHoE", "--include=*.tsx", "--include=*.jsx", "--include=*.ts", "--include=*.js",
+       "--exclude-dir=node_modules", "--exclude-dir=.next", "--exclude-dir=dist",
+       "data-testid=\\{`[^`]*`\\}", root],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 },
+    );
+  } catch {
+    return new Map();
+  }
+  const files = new Map(); // shape -> Set<file>
+  for (const line of out.split("\n")) {
+    const at = line.indexOf(":data-testid=");
+    if (at < 0) continue;
+    const file = line.slice(0, at);
+    const m = line.slice(at + 1).match(/`([^`]*)`/);
+    if (!m || !m[1].includes("${")) continue;
+    const shape = m[1].replace(/\$\{[^}]*\}/g, "*").replace(/\*+/g, "*");
+    if (shape.replace(/\*/g, "").replace(/[^a-zA-Z0-9]/g, "").length < 3) continue;
+    if (!files.has(shape)) files.set(shape, new Set());
+    files.get(shape).add(file);
+  }
+  return new Map([...files].map(([shape, set]) => [shape, set.size]));
 }
 
 /** Does a rendered id fit a `*`-holed shape? `*` matches one-or-more chars. */

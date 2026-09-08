@@ -34,7 +34,7 @@ import { execFileSync } from "node:child_process";
 
 import { validateDriver } from "../../browsers/contract.js";
 import { instancesFor, isPattern } from "../../core/routes.js";
-import { generalize, testIdShapes } from "../../core/testidShapes.js";
+import { generalize, testIdShapes, shapeFileCounts, shapeMatches, componentSpread } from "../../core/testidShapes.js";
 import { repoRoot } from "../../core/parse.js";
 
 /** Three seconds of watching, in twelve looks. Overridable so tests need not wait. */
@@ -212,6 +212,9 @@ export const readiness = {
     // can be traded for the shape it was built from. Empty when there is no
     // source to read, which just leaves every marker as its literal.
     const shapes = testIdShapes(scanRoot);
+    // Per-shape source-file counts, so a template-built marker is scored by its
+    // template rather than its rendered literal (which is nowhere in source).
+    const shapeSpread = shapeFileCounts(scanRoot);
 
     /**
      * How many measured routes each marker ends up on. This is the whole of
@@ -225,8 +228,20 @@ export const readiness = {
     for (const { final } of seen.values()) {
       for (const key of final) across.set(key, (across.get(key) ?? 0) + 1);
     }
-    // Definite furniture: present, at the end, on most routes.
-    const shell = new Set([...across.entries()].filter(([, n]) => n > 1 && n >= measured * 0.6).map(([key]) => key));
+    // Every route's end-state testIds, so specificity is judged on the SHAPE we
+    // would store, not on the sample. `Sunday-switch` sits on one route, but the
+    // marker stored is `*-switch`, which matches switches on several;
+    // `availability-title` becomes `*-title`, on nearly every page. Scoring the
+    // literal let those over-general shapes pass as page-specific -- it is why
+    // scoring by template file alone regressed `/apps` to `horizontal-tab-*` and
+    // `/event-types/:type` to `*-button`. Scoring the shape's reach does not.
+    const routeTestIds = [...seen.values()].map(({ final }) =>
+      [...final].map((k) => JSON.parse(k).testId).filter(Boolean),
+    );
+    const markerReach = (testId) =>
+      testId.includes("*")
+        ? routeTestIds.filter((ids) => ids.some((id) => shapeMatches(testId, id))).length
+        : across.get(JSON.stringify({ testId })) ?? 1;
 
     // A marker has to be present through most of the watch, or it is a
     // flicker and worse than nothing. It need not be LATE -- fast content is
@@ -236,6 +251,19 @@ export const readiness = {
     // A testId in more files than this is a shared component's, not a page's,
     // whatever the crawl saw -- `new_webhook` turned up in 124 files.
     const CHROME_FILES = 20;
+    // A testId baked into a component used in this many files is a shared
+    // affordance -- `pencil-icon` (the edit pencil, on ~a dozen pages) has a
+    // component spread of 4 though its literal sits in one file and the crawl,
+    // which never opened the menus it hides in, saw it on one route. The
+    // element's own count cannot catch that; the component's can.
+    const COMPONENT_SHARED = 3;
+    const compCache = new Map();
+    const sharedComponent = (testId) => {
+      if (!testId || testId.includes("*")) return false;
+      if (!compCache.has(testId)) compCache.set(testId, componentSpread(testId, scanRoot));
+      const n = compCache.get(testId);
+      return n != null && n >= COMPONENT_SHARED;
+    };
     // Markers that describe a page's ABSENCE, not its readiness. `404-page` is
     // the not-found template: proposing it says "wait for this route to fail",
     // which is a reachability finding wearing the wrong hat.
@@ -244,9 +272,20 @@ export const readiness = {
     const corrections = { routes: [], queries: [], actions: [] };
     for (const [path, { times }] of seen) {
       const candidates = [...times.entries()]
-        .filter(([key, count]) => isStable(count) && !shell.has(key))
-        .map(([key]) => ({ want: JSON.parse(key), onRoutes: across.get(key) ?? 1 }))
-        .filter((c) => !NOT_READINESS.has(c.want.testId));
+        .filter(([, count]) => isStable(count))
+        .map(([key]) => {
+          const raw = JSON.parse(key);
+          // Generalise NOW -- `Sunday-switch` -> `*-switch` -- and rank the
+          // marker that will actually be stored, not the sample that produced it.
+          const want = raw.testId ? { ...raw, testId: generalize(raw.testId, shapes) } : raw;
+          const onRoutes = want.testId ? markerReach(want.testId) : across.get(key) ?? 1;
+          return { want, raw: raw.testId, onRoutes };
+        })
+        .filter((c) => !NOT_READINESS.has(c.want.testId))
+        // Furniture: present, at the end, on most routes -- judged on the shape.
+        .filter((c) => !(c.onRoutes > 1 && c.onRoutes >= measured * 0.6))
+        // A shared-component testId is chrome even when the crawl saw it once.
+        .filter((c) => !sharedComponent(c.want.testId));
       if (!candidates.length) {
         if (times.size) notes.push(`${path}: nothing stable and page-specific to wait for`);
         continue;
@@ -269,7 +308,13 @@ export const readiness = {
        * just cannot confirm from source.
        */
       for (const c of candidates) {
-        c.spread = sourceSpread(c.want.testId ?? c.want.domId, scanRoot);
+        // A shape (already generalised above) is scored by its template's file
+        // count -- its rendered literal is nowhere in source. A plain literal is
+        // grepped as before.
+        const id = c.want.testId ?? c.want.domId;
+        c.spread = c.want.testId?.includes("*")
+          ? (shapeSpread.get(c.want.testId) ?? sourceSpread(c.raw ?? id, scanRoot))
+          : sourceSpread(id, scanRoot);
       }
       const specific = candidates
         .filter((c) => c.onRoutes <= specificEnough && (c.spread ?? 0) <= CHROME_FILES)
@@ -286,21 +331,15 @@ export const readiness = {
       const best = specific[0];
 
       /**
-       * Store the SHAPE, not the sample, when the id was built from a
-       * template. The probe can only measure `Sunday-switch`; the source holds
-       * `${weekday}-switch`. Writing the literal would key the wait to one
-       * locale and one row of data, so the day the app renders in Spanish, or
-       * the first schedule differs, the marker never appears. `generalize`
-       * swaps in `*-switch` when a source template produced it, and leaves a
-       * genuinely literal id alone.
+       * The marker is already the SHAPE when a template produced it -- the
+       * ranking generalised `Sunday-switch` to `*-switch` before scoring, so the
+       * wait is keyed to the template, not to one locale or one row of data
+       * (`Sunday` in English, `Domingo` in Spanish). Note it when the sample
+       * differed, so the diff reads clearly.
        */
       const readyWhen = { ...best.want };
-      if (readyWhen.testId) {
-        const shape = generalize(readyWhen.testId, shapes);
-        if (shape !== readyWhen.testId) {
-          notes.push(`${path}: ${JSON.stringify(readyWhen.testId)} is one of a template ${JSON.stringify(shape)}; storing the shape`);
-          readyWhen.testId = shape;
-        }
+      if (best.raw && best.raw !== readyWhen.testId) {
+        notes.push(`${path}: ${JSON.stringify(best.raw)} is one of a template ${JSON.stringify(readyWhen.testId)}; storing the shape`);
       }
       corrections.routes.push({ path, readyWhen });
       notes.push(

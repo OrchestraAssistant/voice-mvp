@@ -34,7 +34,7 @@ describe("test-id shapes", () => {
   });
 });
 
-import { testIdShapes } from "./core/testidShapes.js";
+import { testIdShapes, shapeFileCounts, componentSpread } from "./core/testidShapes.js";
 import { repoRoot } from "./core/parse.js";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,5 +78,35 @@ describe("harvesting shapes from source", () => {
     assert.equal(generalize("Domingo-switch", testIdShapes(repoRoot(appDir))), "*-switch", "and generalises, locale and all");
 
     rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a shape is scored by the files its template appears in, not its rendered value", () => {
+    // The ranking penalised `Sunday-switch` because the literal is nowhere in
+    // source -- only `${weekday}-switch` is. Counting the template gives the
+    // shape a real, fair specificity.
+    const dir = mkdtempSync(join(tmpdir(), "spread-"));
+    writeFileSync(join(dir, "editor.tsx"), "data-testid={`${weekday}-switch`}");
+    writeFileSync(join(dir, "list.tsx"), "data-testid={`${app.slug}-row`}\ndata-testid={`${app.slug}-row`}");
+    const counts = shapeFileCounts(dir);
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(counts.get("*-switch"), 1, "template in one file");
+    assert.equal(counts.get("*-row"), 1, "two hits in one file still counts one file");
+  });
+
+  test("a shared component's testId is scored by how widely the component is used", () => {
+    // The bug: `pencil-icon`'s literal sits only in the icon definition, so the
+    // grep called it unique though the component renders everywhere.
+    const dir = mkdtempSync(join(tmpdir(), "comp-"));
+    writeFileSync(join(dir, "icons.tsx"), 'export const PencilIcon = createIcon(Lucide, "pencil-icon");');
+    writeFileSync(join(dir, "a.tsx"), "import { PencilIcon } from './icons';\n<PencilIcon/>");
+    writeFileSync(join(dir, "b.tsx"), "import { PencilIcon } from './icons';\n<PencilIcon/>");
+    writeFileSync(join(dir, "c.tsx"), "import { PencilIcon } from './icons';\n<PencilIcon/>");
+    // A page-specific testId defined inline is NOT flagged.
+    writeFileSync(join(dir, "page.tsx"), 'export function Page(){ return <div data-testid="locale-select"/> }');
+    const pencil = componentSpread("pencil-icon", dir);
+    const local = componentSpread("locale-select", dir);
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(pencil, 3, "PencilIcon is used in three files besides its definition");
+    assert.ok(!local || local < 3, "an inline page testId is not counted as a shared component");
   });
 });
