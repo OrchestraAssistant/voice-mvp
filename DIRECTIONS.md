@@ -185,7 +185,7 @@ common* SPA-over-REST one, not a Plane peculiarity.
 **Read this table honestly.** The *support* column is authoritative -- it is the
 CLI's own stage report (producers `next-app-router`, `next-pages-router`,
 `next-route-handlers`, `next-pages-api`, `react-router`, `react-router-config`,
-`tanstack-router`, `remix-fs-routes`, `trpc-routers`, `request-hooks`, `axios-services`,
+`tanstack-router`, `tanstack-server-routes`, `remix-fs-routes`, `astro-pages`, `trpc-routers`, `request-hooks`, `axios-services`,
 `openapi-spec`; enrichers `zod-bodies`, `valibot-bodies`, `yup-bodies`,
 `arktype-bodies`, `typescript-types`, `page-metadata`, `call-sites`; and
 `graphql-operations`, whose ops ride a dedicated widget `graphql` transport). The *ranking* within each category is rough ecosystem prevalence,
@@ -204,8 +204,9 @@ an already-found op) · **N** not yet.
 | Vite + React SPA / CRA | Y | via react-router producer, *if* JSX routes |
 | React Router v7 (framework) ◆ | Y | **react-router-config** producer (navigation) |
 | Remix (classic, file routes) | Y | **remix-fs-routes** (navigation) |
-| TanStack Start | ~ | routing covered by **tanstack-router**; the meta-framework's server/build is not |
-| Gatsby / Astro / Redwood | N (L) | own router/build |
+| TanStack Start | Y* | routing via **tanstack-router**, API routes via **tanstack-server-routes**. *`createServerFn` server functions are RPC to a framework id (the Server-Actions case), left alone |
+| Astro | Y | **astro-pages** -- `src/pages/**` pages (navigation) + `.ts`/`.js` endpoints (real HTTP) |
+| Gatsby / Redwood | N (L) | own router/build |
 
 ### Routing declaration
 | Option | | Note |
@@ -226,10 +227,12 @@ an already-found op) · **N** not yet.
 | tRPC routers | Y | trpc-routers |
 | Next Route Handlers (app/api) | Y | next-route-handlers |
 | Next Pages API routes | Y | next-pages-api |
+| Astro endpoints (`src/pages/**/*.ts`) | Y | **astro-pages** (exported GET/POST/... functions) |
+| TanStack Start server routes | Y | **tanstack-server-routes** (`createAPIFileRoute`/`createServerFileRoute` explicit-path forms) |
 | Exported react-query/SWR hooks over fetch | Y | request-hooks (useQuery/useMutation + fetch helper) |
 | REST via axios service classes ◆ | Y | **axios-services** producer (`this.<verb>(url, data)`; TS body via `_inputType`) |
 | REST via bare fetch / ky wrappers | N (M) | un-hooked call sites (too scattered to name reliably) |
-| Next Server Actions ("use server") | N | deliberately skipped: bound encrypted action IDs, no stable URL -- DOM tier only |
+| Next Server Actions / TanStack `createServerFn` | N | deliberately skipped: RPC to a framework-internal id, no stable callable URL -- DOM tier only |
 | OpenAPI / Swagger JSON spec | Y | **openapi-spec** (paths → typed ops; $ref + allOf resolved) |
 | GraphQL operations (Apollo / urql) | Y | **graphql-operations** + widget `graphql` transport; inlines fragments (same-file and imported, across packages, via the symbol resolver). Subscriptions deferred |
 | Supabase / Firebase SDK calls | N (L) | SDK method calls, not routes |
@@ -328,6 +331,16 @@ operation that splices in shared fragments is reconstructed and emitted rather
 than skipped. Only a fragment that resolves to no gql document on disk leaves
 its operation unemitted. A **remix-fs-routes** producer also landed, reading the
 filename-convention routing Remix and `@react-router/fs-routes` apps use.
+
+Two meta-frameworks followed. **astro-pages** reads `src/pages/**`: the
+`.astro`/`.md`/`.mdx` files are navigation routes, and the `.ts`/`.js` files that
+export `GET`/`POST`/... are real HTTP endpoints -- both callable, one producer.
+**tanstack-server-routes** reads TanStack Start's `createAPIFileRoute` /
+`createServerFileRoute` explicit-path API routes (its page routing was already
+covered by `tanstack-router`). Both frameworks' RPC-style server functions
+(`createServerFn`, like Next Server Actions) are left alone: they resolve to a
+framework-internal id, not a URL the widget can call, so emitting them would be
+the addressable-but-uncallable trap.
 
 The Plane shape that motivated all of this went from **0 routes / 0 actions** to
 a full manifest on a fixture that mirrors it (RR-v7 routes + axios services +
