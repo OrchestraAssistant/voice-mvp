@@ -162,3 +162,152 @@ one of these is true: we observe a real layout-driven failure; we build recorded
 flows (where layout-tagging earns its keep); or a product targets mobile
 specifically. Until then this is captured, not committed -- which is what this
 file is for.
+
+---
+
+## 3. Stack coverage: where the manifest can be built today
+
+We began as a **Next / tRPC / zod / react-query tool**, and as of the producer
+round below we also read the **React-Router-v7 / axios-service / REST** world
+(plus Valibot and Yup schemas). This section is the map of that edge, dimension
+by dimension, so that "can we do app X?" is a lookup rather than an
+investigation, and so that adding a capability is a deliberate move against a
+known gap.
+
+The map was prompted by `testapps/plane` (Plane): React Router v7 framework
+mode, axios service classes over a Django REST backend, `@plane/types`
+interfaces, SWR + MobX, and **zero testIds**. On first look the CLI extracted
+**0 routes / 0 actions** -- not because Plane is small (it is huge: 23 service
+classes, 339 methods) but because its every seam matched none of our detectors.
+That gap is what the new producers close; the shape is a coherent and *very
+common* SPA-over-REST one, not a Plane peculiarity.
+
+**Read this table honestly.** The *support* column is authoritative -- it is the
+CLI's own stage report (producers `next-app-router`, `next-pages-router`,
+`next-route-handlers`, `next-pages-api`, `react-router`, `react-router-config`,
+`trpc-routers`, `request-hooks`, `axios-services`; enrichers `zod-bodies`,
+`valibot-bodies`, `yup-bodies`, `typescript-types`, `page-metadata`,
+`call-sites`). The *ranking* within each category is rough ecosystem prevalence,
+and the effort tags (S/M/L) on remaining gaps are estimates. `◆` marks where
+Plane lands. (A rendered, colour-coded version of this lives as a private
+artifact -- regenerate it from this table if the two drift.)
+
+Legend: **Y** supported · **~** partial (works with host help, or only enriches
+an already-found op) · **N** not yet.
+
+### Framework / meta-framework
+| Option | | Note |
+|---|---|---|
+| Next.js -- App Router | Y | next-app-router + next-route-handlers |
+| Next.js -- Pages Router | Y | next-pages-router + next-pages-api |
+| Vite + React SPA / CRA | Y | via react-router producer, *if* JSX routes |
+| React Router v7 (framework) ◆ | Y | **react-router-config** producer (navigation) |
+| Remix (classic, file routes) | N (M) | file-convention routes |
+| TanStack Start / Gatsby / Astro / Redwood | N (L) | own router/build |
+
+### Routing declaration
+| Option | | Note |
+|---|---|---|
+| Next app/pages file convention | Y | folder → route |
+| React Router JSX `<Route path element>` | Y | parsed |
+| RR data router `createBrowserRouter([])` | Y | **react-router-config** (object routes, nested children) |
+| RR-v7 `route()/layout()` in routes.ts ◆ | Y | **react-router-config** (helper calls, merged across files) |
+| Remix fs-routes / TanStack Router / Wouter | N (S-M) | |
+| Hash router | ~ | JSX form detected; hash paths untested |
+| Hand-rolled switch / conditional render | N (L) | not declarative -- hard to recover |
+
+### API layer / operation source (the crux)
+| Option | | Note |
+|---|---|---|
+| tRPC routers | Y | trpc-routers |
+| Next Route Handlers (app/api) | Y | next-route-handlers |
+| Next Pages API routes | Y | next-pages-api |
+| Exported react-query/SWR hooks over fetch | Y | request-hooks (useQuery/useMutation + fetch helper) |
+| REST via axios service classes ◆ | Y | **axios-services** producer (`this.<verb>(url, data)`; TS body via `_inputType`) |
+| REST via bare fetch / ky wrappers | N (M) | un-hooked call sites (too scattered to name reliably) |
+| Next Server Actions ("use server") | N | deliberately skipped: bound encrypted action IDs, no stable URL -- DOM tier only |
+| GraphQL ops / OpenAPI spec / Supabase SDK | N (M-L) | (an OpenAPI spec is a gift -- parse it directly) |
+
+### Request typing / schema source
+| Option | | Note |
+|---|---|---|
+| zod | Y | zod-bodies -- creates the field list AND types it |
+| TypeScript interfaces / types ◆ | Y* | typescript-types: name correlation, **plus an explicit `_inputType` hint** a producer can hand it (resolved across workspace packages, `Partial<T>` unwrapped). *Enriches a found op; still will not create one. |
+| Valibot | Y | **valibot-bodies** (optional/nullish/pipe/picklist) |
+| Yup | Y | **yup-bodies** (`.required()` opt-in, `.oneOf` enum, `object().shape`) |
+| GraphQL schema / OpenAPI schema | N (M) | |
+| ArkType / io-ts / JSON Schema / Prisma types | N (S-M) | ArkType's string DSL is the next cheap adapter |
+
+### Data layer -- refresh after a write
+onAfterAction is generic (the host wires it); a synthetic focus event is the
+fallback. So "support" here is whether our refresh story *works*, not something
+we detect.
+| Option | | Note |
+|---|---|---|
+| TanStack Query (react-query) | Y | invalidateQueries; refetch-on-focus fallback |
+| SWR ◆ | Y | mutate(); revalidateOnFocus fallback |
+| Next Router cache (router.refresh) | Y | onAfterAction → router.refresh() |
+| Apollo Client cache | Y | refetchQueries |
+| RTK Query / urql / Zustand / Redux / MobX ◆ | ~ | host wires the refetch in onAfterAction -- no focus magic |
+| Raw useEffect + fetch | N | no cache to poke; focus fallback may miss |
+
+### DOM anchoring -- runtime perception & action
+This is the widget's *live* tier (`domActions.js`), and it is far richer than
+"testId or bust". It is distinct from the *static* readiness-marker harvest,
+which is testId-shape-centric. **0 testIds does not kill the DOM tier** -- it
+only costs disambiguation of same-labelled controls and statically-harvested
+`readyWhen` markers. Everything below is used at runtime.
+| Anchor | | Note |
+|---|---|---|
+| data-testid / data-test-id ◆(=0) | Y | primary disambiguator + readiness marker (`*`-shape); `-undefined` guarded |
+| id attribute (domId) | Y | first-class anchor + readiness marker |
+| ARIA role (button/link/checkbox/switch/combobox/textbox) | Y | drives the interactive selector |
+| aria-label / aria-labelledby | Y | accessible name → label |
+| label[for] / wrapping label / placeholder | Y | label↔control association; names inputs & editors |
+| semantic tags (button/a/input/select/textarea/contenteditable) | Y | base selector |
+| visible text (innerText) / heading-above | Y | last-resort label; heading names rich-text editors |
+| landmark roles (nav / main / dialog) | ~ | not a first-class anchor; dialogs reached via re-snapshot |
+| stable classes / hashed CSS-in-JS | N | never keyed on (by design) -- unreachable only if NO id/testid/role/label/text |
+
+### Styling isolation -- host compatibility
+Largely solved by the default shadow-DOM mount, regardless of host stack:
+Tailwind v3/v4, CSS Modules, styled-components/emotion, vanilla-extract,
+MUI/Chakra, Panda/UnoCSS, Bootstrap -- all **Y**. The one caveat: global CSS /
+Sass under the *light-DOM* `mount="inline"` path needs the `.iv-scope` wrapper
+(the exported sheet is scoped for exactly this).
+
+### The two highest-leverage producers -- now SHIPPED
+
+Both of the producers this section used to nominate are built, tested (unit +
+an end-to-end `test/integration/planeShape.test.mjs` that guards them against
+each other), and in the registry:
+
+1. **`react-router-config` (was RR-v7, S).** Reads `route()/index()/layout()/
+   prefix()` config and `createBrowserRouter([{ path, element }])` objects,
+   joining inline nesting and collecting routes across the files a merged tree
+   is split over. Unlocks voice **navigation** for the React-Router-v7 world.
+2. **`axios-services` (was axios-service-class, L).** Model `class ... {
+   this.<verb>(url, data) }` methods into queries/actions -- endpoint and url
+   params from the template literal, query params from an axios config object,
+   collision-safe names, and the body param's TS type recorded as `_inputType`
+   for the TypeScript enricher (which now resolves it across workspace packages
+   and unwraps `Partial<T>`). Unlocks the whole SPA-over-REST class.
+
+Also shipped alongside: **`valibot-bodies`** and **`yup-bodies`** enrichers.
+
+The Plane shape that motivated all of this went from **0 routes / 0 actions** to
+a full manifest on a fixture that mirrors it (RR-v7 routes + axios services +
+sibling-package types). Plane itself was pulled from `/library` before a final
+run against the real source, so that last validation is on a faithful fixture,
+not the app.
+
+### The next candidates (still captured, not committed)
+- **GraphQL operations (M-L)** -- `gql` tags + the schema; a large, coherent world.
+- **OpenAPI / Swagger spec (M)** -- when an app ships one, it is the cheapest
+  possible producer: the operations, methods and bodies are already written down.
+- **ArkType (S)** -- the last cheap validation-schema adapter.
+- **RR-v7 static readiness** -- the config producer gives navigation; DOM
+  readiness markers for these routes still come only from the live tier.
+
+The trigger to build any of these is the same as before: a real app we want that
+needs it.

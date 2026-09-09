@@ -10,11 +10,15 @@
  * enrichers -- with one deliberate exception noted below.
  */
 import { reactRouter } from "./frameworks/react/router.js";
+import { reactRouterConfig } from "./frameworks/react/routerConfig.js";
 import { requestHooks } from "./frameworks/react/requestHooks.js";
 import { nextAppRouter, nextPagesRouter } from "./frameworks/next/routes.js";
 import { nextRouteHandlers, nextPagesApi } from "./frameworks/next/api.js";
 import { trpcRouters } from "./frameworks/trpc/router.js";
+import { axiosServices } from "./frameworks/rest/axiosServices.js";
 import { zodBodies } from "./schema/zod.js";
+import { valibotBodies } from "./schema/valibot.js";
+import { yupBodies } from "./schema/yup.js";
 import { tsTypes } from "./schema/typescript.js";
 import { pageMetadata } from "./schema/pageMetadata.js";
 import { callSites } from "./stages/callSites.js";
@@ -31,18 +35,25 @@ import { readiness } from "./stages/probe/readiness.js";
 export const STAGES = [
   // Producers: find the operations.
   reactRouter,
+  reactRouterConfig,
   requestHooks,
   nextAppRouter,
   nextPagesRouter,
   nextRouteHandlers,
   nextPagesApi,
   trpcRouters,
+  axiosServices,
 
   // Enrichers: fill in what the producers could not see. Zod before
   // TypeScript on purpose -- writing a schema is a statement of intent about
   // the wire, while a type that shares a name is a correlation, and the
   // TypeScript reader only fills what is still empty.
   zodBodies,
+  // The other validation schemas sit beside Zod and before TypeScript, for the
+  // same reason: a schema is a statement of intent about the wire, while a type
+  // that shares a name is a correlation. Each only fills a body still empty.
+  valibotBodies,
+  yupBodies,
   tsTypes,
   pageMetadata,
   callSites,

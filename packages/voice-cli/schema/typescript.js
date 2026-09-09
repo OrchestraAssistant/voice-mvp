@@ -1,5 +1,5 @@
 import traverse from "@babel/traverse";
-import { parseFile, walk } from "../core/parse.js";
+import { parseFile, repoRoot, walk } from "../core/parse.js";
 
 /**
  * Request body shapes, read from TypeScript.
@@ -77,6 +77,37 @@ const candidateNames = (typeName) => {
   return [typeName, bare].map((n) => n.charAt(0).toLowerCase() + n.slice(1));
 };
 
+/** Every type alias/interface under `dirs`, optionally only the names wanted. */
+function collectTypes(dirs, visit, only = null) {
+  const types = new Map();
+  const want = (name) => !only || only.has(name);
+  for (const dir of [...new Set(dirs.filter(Boolean))]) {
+    for (const file of walk(dir, (n) => /\.tsx?$/.test(n))) {
+      let ast;
+      try {
+        ast = parseFile(file);
+      } catch {
+        continue;
+      }
+      visit(ast, {
+        TSTypeAliasDeclaration(nodePath) {
+          const name = nodePath.node.id.name;
+          if (types.has(name) || !want(name)) return;
+          const fields = membersOf(nodePath.node.typeAnnotation);
+          if (fields.length) types.set(name, fields);
+        },
+        TSInterfaceDeclaration(nodePath) {
+          const name = nodePath.node.id.name;
+          if (types.has(name) || !want(name)) return;
+          const fields = membersOf(nodePath.node.body);
+          if (fields.length) types.set(name, fields);
+        },
+      });
+    }
+  }
+  return types;
+}
+
 export const tsTypes = {
   name: "typescript-types",
   role: "enricher",
@@ -87,40 +118,52 @@ export const tsTypes = {
     if (!needsBody.length) return {};
 
     const visit = traverse.default ?? traverse;
-    const types = new Map();
+    const types = collectTypes([srcDir], visit);
 
-    for (const file of walk(srcDir, (n) => /\.tsx?$/.test(n))) {
-      let ast;
-      try {
-        ast = parseFile(file);
-      } catch {
-        continue;
-      }
-      visit(ast, {
-        TSTypeAliasDeclaration(nodePath) {
-          const fields = membersOf(nodePath.node.typeAnnotation);
-          if (fields.length) types.set(nodePath.node.id.name, fields);
-        },
-        TSInterfaceDeclaration(nodePath) {
-          const fields = membersOf(nodePath.node.body);
-          if (fields.length) types.set(nodePath.node.id.name, fields);
-        },
-      });
-    }
-    if (!types.size) return {};
-
-    // Match by name, longest first, so UpdateTaskInput wins over TaskInput for
-    // updateTask rather than whichever happened to be parsed first.
-    const byLength = [...types.keys()].sort((a, b) => b.length - a.length);
     const filled = [];
-    for (const action of needsBody) {
-      const match = byLength.find((typeName) => candidateNames(typeName).includes(action.name));
-      if (!match) continue;
-      // URL parameters are already carried in `params`; repeating them as body
-      // fields would tell the model to send an id twice.
+    /** URL params are already in `params`; a body must not repeat the id. */
+    const fill = (action, typeName, map, partial) => {
       const urlParams = new Set((action.params ?? []).map((p) => p.name));
-      action.bodyFields = types.get(match).filter((f) => !urlParams.has(f.name));
-      filled.push(`${action.name} from ${match}`);
+      let fields = map.get(typeName).filter((f) => !urlParams.has(f.name));
+      // `Partial<T>` makes every field optional -- the whole point of a partial
+      // update is that you send only what changes.
+      if (partial) fields = fields.map((f) => ({ ...f, required: false }));
+      action.bodyFields = fields;
+      filled.push(`${action.name} from ${typeName}${partial ? " (Partial)" : ""}`);
+    };
+
+    // A producer that KNOWS which type is its input says so with `_inputType`
+    // (axios-services reads `data: TIssuePayload` off the method signature), and
+    // that beats name correlation. Try those first, and only for them widen the
+    // search past srcDir -- a monorepo keeps shared types in a sibling package
+    // (`@plane/types`), which the default srcDir walk never sees. The widening
+    // is gated on an unresolved `_inputType`, so an app that sets none is
+    // scanned exactly as before.
+    const explicit = needsBody.filter((a) => a._inputType);
+    for (const action of explicit) if (types.has(action._inputType)) fill(action, action._inputType, types, action._inputPartial);
+    const unresolved = explicit.filter((a) => !a.bodyFields?.length);
+    if (unresolved.length) {
+      // Widen to the MONOREPO root, and no further. A shared type lives in a
+      // sibling workspace package (`@plane/types`), which repoRoot() finds by
+      // walking up to the workspace boundary -- never past it. The earlier,
+      // naive `root/../..` walked OUTSIDE the repo into /tmp (and, from a repo
+      // at the filesystem's edge, toward `/`): slow, and not the app's code.
+      const top = repoRoot(srcDir);
+      if (top !== srcDir) {
+        const wide = collectTypes([top], visit, new Set(unresolved.map((a) => a._inputType)));
+        for (const action of unresolved) if (wide.has(action._inputType)) fill(action, action._inputType, wide, action._inputPartial);
+      }
+    }
+
+    // Everything without an explicit type falls back to name correlation over
+    // the srcDir types, exactly as before. Longest name first, so
+    // UpdateTaskInput wins over TaskInput for updateTask.
+    if (types.size) {
+      const byLength = [...types.keys()].sort((a, b) => b.length - a.length);
+      for (const action of needsBody.filter((a) => !a._inputType && !a.bodyFields?.length)) {
+        const match = byLength.find((typeName) => candidateNames(typeName).includes(action.name));
+        if (match) fill(action, match, types, false);
+      }
     }
     return { notes: filled.length ? [`body fields from TypeScript: ${filled.join(", ")}`] : [] };
   },
