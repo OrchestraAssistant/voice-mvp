@@ -59,10 +59,24 @@ portals into an overlay on `document.body`:
 import { VoiceProvider, Interpreter } from "@yourco/voice";
 import manifest from "./.voice/manifest.json";
 
-<VoiceProvider manifest={manifest} navigate={yourRouterPush}>
+<VoiceProvider
+  manifest={manifest}
+  navigate={yourRouterPush}
+  // Refresh your data after a voice write, or the change only shows on reload:
+  onAfterAction={() => queryClient.invalidateQueries()}   // your cache; e.g. react-query / tRPC utils.invalidate()
+>
   <Interpreter />
 </VoiceProvider>
 ```
+
+`onAfterAction` matters more than it looks. A voice write hits your API
+out-of-band, so your client cache does not know and the UI sits stale until a
+refetch -- the classic "it only showed after I refreshed". Wire it to the same
+cache-invalidation your own mutations already do (`queryClient.invalidateQueries()`,
+`utils.invalidate()`, `router.refresh()`, `mutate(() => true)`), optionally
+surgical via the action name it is passed: `onAfterAction={({ name }) => ...}`.
+Skip it and we synthesise a focus event, which most React-Query/SWR apps refetch
+on -- so it usually still updates, just less precisely.
 
 The manifest is yours, not the relay's. It is generated from your source,
 committed beside your code and bundled with your app, so it cannot describe a

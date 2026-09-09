@@ -69,3 +69,19 @@ describe("the dispatcher teaches a model that calls a name directly", () => {
     assert.match(provider, /There is no "\$\{name\}" tool\. Use run_query/);
   });
 });
+
+describe("after a write, the app is made to reflect it", () => {
+  test("refreshHost prefers onAfterAction, else nudges the host's data layer", () => {
+    // A host that wired onAfterAction invalidates its own cache precisely; absent
+    // it, a synthetic focus/visibilitychange makes React-Query/SWR refetch.
+    assert.match(provider, /callbacksRef\.current\.onAfterAction/);
+    assert.match(provider, /new Event\("focus"\)/);
+    assert.match(provider, /new Event\("visibilitychange"\)/);
+  });
+
+  test("onAfterAction is handed the action context, once per operation not per item", () => {
+    assert.match(provider, /refreshHost\(\{ name: action\.name/);
+    // runAction is now a bare perform; the refresh moved to runBatch (one choke point).
+    assert.match(provider, /const runAction = async \(action, args\) => perform\(action, args\)/);
+  });
+});
