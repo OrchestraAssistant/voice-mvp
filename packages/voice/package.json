@@ -10,8 +10,8 @@
       "import": "./dist/voice.js",
       "default": "./dist/voice.js"
     },
-    "./styles.css": "./dist/voice.css",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./inline.css": "./dist/voice.css"
   },
   "files": [
     "dist"

@@ -91,10 +91,13 @@ the rim is not an error and nothing warns about it -- the app just has no
 ambient feedback, and it looks finished. That is what happened on the first
 real integration, which is why the top tier exists.
 
-**Do not import the stylesheet.** The widget renders into its own shadow root
-and injects its compiled CSS there. `@yourco/voice/styles.css` exists for
-`mount="inline"` only, and in a host document it shares a global class
-namespace with your app: a bare `.hidden` from it landed after a real app's
+**Do not import the stylesheet.** The default shadow mount needs no CSS import —
+the widget renders into its own shadow root and injects its compiled CSS there.
+The sheet is exported as `@yourco/voice/inline.css` (deliberately not
+`styles.css`, so the reflexive import fails loudly instead of breaking layout),
+and it exists for `mount="inline"` on a NON-Tailwind host only: in a Tailwind
+host document it shares a global class namespace with your app — a bare
+`.hidden` from it landed after a real app's
 `.md:flex` in the same cascade layer, and since media queries carry no
 specificity, that app's desktop sidebar stayed hidden at every width and the
 whole layout fell back to its mobile bar. Prefer the default mount.

@@ -55,7 +55,11 @@ describe("what a consumer can resolve", () => {
     assert.equal(pkg.exports["./package.json"], "./package.json");
   });
 
-  test("the stylesheet is a separate entry, not bundled into the JS", () => {
-    assert.equal(pkg.exports["./styles.css"], "./dist/voice.css");
+  test("the stylesheet is a separate entry, exported as inline.css not styles.css", () => {
+    // Named inline.css on purpose: the default shadow mount needs no CSS import,
+    // and a reflexive `import "@yourco/voice/styles.css"` should fail loudly
+    // rather than leak the sheet into a Tailwind host and break its layout.
+    assert.equal(pkg.exports["./inline.css"], "./dist/voice.css");
+    assert.equal(pkg.exports["./styles.css"], undefined, "styles.css must NOT resolve");
   });
 });
