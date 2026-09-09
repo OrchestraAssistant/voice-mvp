@@ -61,15 +61,42 @@ describe("graphql-operations producer", () => {
     assert.equal(actions[0].requiresConfirmation, true);
   });
 
-  test("an interpolated (fragment) document is NOT emitted -- it can't be reproduced", () => {
+  test("a same-file fragment is inlined, so the interpolated op IS emitted", () => {
     const dir = src({
       "frag.ts": `import { gql } from "@apollo/client";
         const FIELDS = gql\`fragment Fields on Task { id title }\`;
         export const GET = gql\`query GetTask($id: ID!) { task(id: $id) { ...Fields } } \${FIELDS}\`;`,
     });
     const { queries } = graphqlOperations.run({ srcDir: dir });
-    // The fragment itself has no operation header; the interpolated query is skipped.
-    assert.equal(queries.length, 0);
+    const q = queries.find((x) => x.name === "getTask");
+    assert.ok(q, "interpolated query with a local fragment was not emitted");
+    assert.match(q.document, /query GetTask/);
+    assert.match(q.document, /fragment Fields on Task/, "the fragment was not inlined into the document");
+    assert.equal(q.bodyFields[0].name, "id");
+  });
+
+  test("nested fragments are inlined transitively", () => {
+    const dir = src({
+      "frag.ts": `import { gql } from "@apollo/client";
+        const BASE = gql\`fragment Base on Task { id }\`;
+        const FULL = gql\`fragment Full on Task { ...Base title } \${BASE}\`;
+        export const GET = gql\`query GetTask($id: ID!) { task(id: $id) { ...Full } } \${FULL}\`;`,
+    });
+    const q = graphqlOperations.run({ srcDir: dir }).queries.find((x) => x.name === "getTask");
+    assert.ok(q);
+    assert.match(q.document, /fragment Full on Task/);
+    assert.match(q.document, /fragment Base on Task/, "the transitively-referenced fragment was not inlined");
+  });
+
+  test("an imported (unresolvable) fragment is NOT emitted -- it can't be reproduced", () => {
+    const dir = src({
+      "op.ts": `import { gql } from "@apollo/client";
+        import { FIELDS } from "./fragments";
+        export const GET = gql\`query GetTask($id: ID!) { task(id: $id) { ...Fields } } \${FIELDS}\`;`,
+    });
+    // FIELDS is imported, not a local gql const, so the document cannot be
+    // faithfully reconstructed and the op is read but not emitted.
+    assert.equal(graphqlOperations.run({ srcDir: dir }).queries.length, 0);
   });
 
   test("subscriptions are skipped; a non-gql tag is ignored", () => {

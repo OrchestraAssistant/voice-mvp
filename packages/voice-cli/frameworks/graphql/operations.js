@@ -58,6 +58,33 @@ function parseOperation(doc) {
 /** camelCase the operation name into a tool name: CreateTask -> createTask. */
 const toolName = (name) => name.charAt(0).toLowerCase() + name.slice(1);
 
+/** The literal text of one quasi (the cooked form, raw as a fallback). */
+const quasiText = (q) => q?.value?.cooked ?? q?.value?.raw ?? "";
+
+/**
+ * Reconstruct the runtime document string of a `gql` template.
+ *
+ * A self-contained template is just its one quasi. An interpolated one --
+ * `gql\`query { ...Fields } \${FIELDS}\`` -- is what graphql-tag concatenates at
+ * runtime: each `${doc}` becomes that document's source text spliced in place.
+ * So this walks the same way, resolving each interpolation to a NAMED gql
+ * document in `byName` (the fragments declared in this file). Returns the full
+ * text, or null if any interpolation cannot be resolved to a local gql doc --
+ * an imported fragment, or an expression that is not one -- because a document
+ * we cannot reproduce exactly must not be emitted as callable.
+ */
+function reconstruct(quasiNode, byName, seen = new Set()) {
+  let text = quasiText(quasiNode.quasis[0]);
+  for (let i = 0; i < quasiNode.expressions.length; i++) {
+    const expr = quasiNode.expressions[i];
+    if (expr.type !== "Identifier" || !byName.has(expr.name) || seen.has(expr.name)) return null;
+    const piece = reconstruct(byName.get(expr.name), byName, new Set([...seen, expr.name]));
+    if (piece == null) return null;
+    text += piece + quasiText(quasiNode.quasis[i + 1]);
+  }
+  return text;
+}
+
 /**
  * The GraphQL endpoint, best-effort, from a client config -- `uri`/`url` on an
  * ApolloClient / HttpLink / urql createClient / GraphQLClient. Defaults to
@@ -102,11 +129,12 @@ export const graphqlOperations = {
     const seen = new Set();
     let endpoint = null; // resolved lazily, only if an operation is found
 
-    const consider = (quasiNode) => {
-      // Interpolated documents (fragments spliced in) cannot be reproduced
-      // faithfully here, so they are not emitted as callable operations.
-      if (quasiNode.expressions.length !== 0) return;
-      const doc = quasiNode.quasis[0]?.value?.cooked ?? quasiNode.quasis[0]?.value?.raw;
+    const consider = (quasiNode, byName) => {
+      // Reconstruct the full document, inlining any fragments spliced in from
+      // this file. null means an interpolation we could not resolve (an
+      // imported fragment, say) -- then the document cannot be reproduced
+      // faithfully, so it is read but not emitted as callable.
+      const doc = reconstruct(quasiNode, byName);
       if (!doc) return;
       const parsed = parseOperation(doc);
       if (!parsed) return;
@@ -142,13 +170,25 @@ export const graphqlOperations = {
       } catch {
         continue;
       }
+      // Two passes over the file: first collect every gql document by the const
+      // it is bound to (fragments included), so an operation can inline the ones
+      // it splices; then consider each as a possible operation. A fragment
+      // declared after the operation that uses it still resolves, because the
+      // whole map is built before anything is considered.
+      const gqlNodes = [];
+      const byName = new Map();
       visit(ast, {
         TaggedTemplateExpression(nodePath) {
           const tag = nodePath.node.tag;
           const tagName = tag?.type === "Identifier" ? tag.name : tag?.property?.name;
-          if (tagName === "gql" || tagName === "graphql") consider(nodePath.node.quasi);
+          if (tagName !== "gql" && tagName !== "graphql") return;
+          const quasi = nodePath.node.quasi;
+          gqlNodes.push(quasi);
+          const decl = nodePath.parent;
+          if (decl?.type === "VariableDeclarator" && decl.id?.type === "Identifier") byName.set(decl.id.name, quasi);
         },
       });
+      for (const quasi of gqlNodes) consider(quasi, byName);
     }
     return { queries, actions };
   },

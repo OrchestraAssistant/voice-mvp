@@ -185,7 +185,7 @@ common* SPA-over-REST one, not a Plane peculiarity.
 **Read this table honestly.** The *support* column is authoritative -- it is the
 CLI's own stage report (producers `next-app-router`, `next-pages-router`,
 `next-route-handlers`, `next-pages-api`, `react-router`, `react-router-config`,
-`tanstack-router`, `trpc-routers`, `request-hooks`, `axios-services`,
+`tanstack-router`, `remix-fs-routes`, `trpc-routers`, `request-hooks`, `axios-services`,
 `openapi-spec`; enrichers `zod-bodies`, `valibot-bodies`, `yup-bodies`,
 `arktype-bodies`, `typescript-types`, `page-metadata`, `call-sites`; and
 `graphql-operations`, whose ops ride a dedicated widget `graphql` transport). The *ranking* within each category is rough ecosystem prevalence,
@@ -203,7 +203,7 @@ an already-found op) · **N** not yet.
 | Next.js -- Pages Router | Y | next-pages-router + next-pages-api |
 | Vite + React SPA / CRA | Y | via react-router producer, *if* JSX routes |
 | React Router v7 (framework) ◆ | Y | **react-router-config** producer (navigation) |
-| Remix (classic, file routes) | N (M) | file-convention routes |
+| Remix (classic, file routes) | Y | **remix-fs-routes** (navigation) |
 | TanStack Start | ~ | routing covered by **tanstack-router**; the meta-framework's server/build is not |
 | Gatsby / Astro / Redwood | N (L) | own router/build |
 
@@ -216,7 +216,7 @@ an already-found op) · **N** not yet.
 | RR-v7 `route()/layout()` in routes.ts ◆ | Y | **react-router-config** (helper calls, merged across files) |
 | TanStack Router (file or code) | Y | **tanstack-router** (`createFileRoute`/`createRoute`, `$param`→`:param`) |
 | Wouter | ~ | `<Route path>` caught by react-router (JSX); `component` prop name missed |
-| Remix fs-routes (flat files) | N (M) | filename-encoded paths |
+| Remix / fs-routes (flat, folder, v1 nested) | Y | **remix-fs-routes** (splits the spec on both `.` and `/`) |
 | Hash router | ~ | JSX form detected; hash paths untested |
 | Hand-rolled switch / conditional render | N (L) | not declarative -- hard to recover |
 
@@ -231,7 +231,7 @@ an already-found op) · **N** not yet.
 | REST via bare fetch / ky wrappers | N (M) | un-hooked call sites (too scattered to name reliably) |
 | Next Server Actions ("use server") | N | deliberately skipped: bound encrypted action IDs, no stable URL -- DOM tier only |
 | OpenAPI / Swagger JSON spec | Y | **openapi-spec** (paths → typed ops; $ref + allOf resolved) |
-| GraphQL operations (Apollo / urql) | Y | **graphql-operations** producer + widget `graphql` transport (self-contained `gql` docs; fragments/subscriptions deferred) |
+| GraphQL operations (Apollo / urql) | Y | **graphql-operations** + widget `graphql` transport; inlines same-file fragments (transitively). Cross-file fragments & subscriptions deferred |
 | Supabase / Firebase SDK calls | N (L) | SDK method calls, not routes |
 
 ### Request typing / schema source
@@ -319,9 +319,12 @@ typed variables) and the widget gained a **`graphql` transport** that POSTs the
 document with the model's arguments as `variables`, unwrapping `data` and
 raising the `errors` array. Built together on purpose -- a producer alone would
 have emitted addressable-but-uncallable ops, the Server-Actions trap. Only
-self-contained documents are emitted (no `${fragment}` interpolation), so every
-GraphQL op is faithfully reproducible; the query document ships in the manifest
-but the catalog projection keeps it out of the prompt.
+every emitted GraphQL op is faithfully reproducible; the query document ships in
+the manifest but the catalog projection keeps it out of the prompt. A follow-up
+round taught the producer to **inline same-file fragments** (transitively), so
+an operation that splices in local fragments is reconstructed and emitted rather
+than skipped -- and a **remix-fs-routes** producer read the filename-convention
+routing that Remix and `@react-router/fs-routes` apps use.
 
 The Plane shape that motivated all of this went from **0 routes / 0 actions** to
 a full manifest on a fixture that mirrors it (RR-v7 routes + axios services +
@@ -330,13 +333,13 @@ run against the real source, so that last validation is on a faithful fixture,
 not the app.
 
 ### The next candidates (still captured, not committed)
-- **GraphQL fragments/subscriptions** -- reassemble an interpolated `gql`
-  document by inlining the fragments it splices, so operations that reference
-  shared fragments become callable too (today they are read but not emitted).
-- **Remix classic fs-routes (M)** -- filename-encoded paths (`posts.$id.tsx`),
-  the older sibling of the RR-v7 config we already read.
-- **RR-v7 / TanStack static readiness** -- the config producers give navigation;
-  DOM readiness markers for those routes still come only from the live tier.
+- **Cross-file GraphQL fragments / subscriptions** -- same-file fragments are
+  inlined now; a fragment IMPORTED from another module still can't be resolved
+  (it needs the symbol resolver, as zod's cross-package schemas do), so those
+  operations are read but not emitted. Subscriptions are not a request/response.
+- **RR-v7 / TanStack / Remix static readiness** -- the routing producers give
+  navigation; DOM readiness markers for those routes still come only from the
+  live tier.
 - **YAML OpenAPI** -- only if a dependency is acceptable; JSON covers most.
 - **Supabase / Firebase SDK calls** -- SDK method calls, not routes.
 

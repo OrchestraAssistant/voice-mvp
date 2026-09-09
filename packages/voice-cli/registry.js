@@ -12,6 +12,7 @@
 import { reactRouter } from "./frameworks/react/router.js";
 import { reactRouterConfig } from "./frameworks/react/routerConfig.js";
 import { tanstackRouter } from "./frameworks/tanstack/router.js";
+import { remixFsRoutes } from "./frameworks/remix/fsRoutes.js";
 import { requestHooks } from "./frameworks/react/requestHooks.js";
 import { nextAppRouter, nextPagesRouter } from "./frameworks/next/routes.js";
 import { nextRouteHandlers, nextPagesApi } from "./frameworks/next/api.js";
@@ -42,6 +43,7 @@ export const STAGES = [
   reactRouter,
   reactRouterConfig,
   tanstackRouter,
+  remixFsRoutes,
   requestHooks,
   nextAppRouter,
   nextPagesRouter,
