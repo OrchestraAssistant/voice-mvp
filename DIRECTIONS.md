@@ -136,3 +136,29 @@ So the plan, when we build the responsive story:
   -- `readyWhen`, flows -- are layout-specific, so they carry a layout tag within
   ONE manifest, and the widget filters those by its runtime width. DRY, and still
   ships nothing useless to a layout.
+
+**The client filters by the LIVE viewport, and it rides the dispatcher we
+already have.** One manifest, layout-tagged; the widget -- the only thing that
+knows the runtime width -- drops the tags that do not apply before the catalog
+reaches the AI. This is not a new mechanism: the widget already decides what the
+AI sees (root catalog vs. `expand` subsets), and layout is one more filter
+dimension on that same pass. And the value is mostly CORRECTNESS, not tokens:
+`readyWhen` markers never reach the AI at all (internal widget behaviour, zero
+tokens), and a DOM flow ships only its one-line name, so the token saving is the
+occasional genuinely-mobile-only or desktop-only operation. The real win is not
+handing the AI a flow or marker that cannot work in the layout it is looking at
+-- a failure, not just waste.
+
+**Not yet -- the trigger to build this.** We have not actually observed the
+voice system fail on a genuine layout difference (the mobile render that
+prompted all this was a CSS leak, since fixed, not a responsive failure). And the
+artifact that benefits most -- recorded DOM flows -- is itself unbuilt (section
+1's deferred piece). Meanwhile the agentic DOM path already adapts for free (a
+live `dom_snapshot` sees whatever layout is rendered), and `readyWhen` has a
+cheap stopgap: prefer a marker present in both layouts. So building the full
+layout story now would be infrastructure for an unconfirmed problem whose main
+consumer does not exist -- against our own "measure, don't infer". Build it when
+one of these is true: we observe a real layout-driven failure; we build recorded
+flows (where layout-tagging earns its keep); or a product targets mobile
+specifically. Until then this is captured, not committed -- which is what this
+file is for.
