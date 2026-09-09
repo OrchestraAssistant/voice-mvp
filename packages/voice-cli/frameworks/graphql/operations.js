@@ -1,5 +1,6 @@
 import traverse from "@babel/traverse";
 import { parseFile, walk } from "../../core/parse.js";
+import { findDefinition, packageAliases } from "../../core/resolveSymbol.js";
 
 /**
  * GraphQL operations, read from the `gql` documents in the client source.
@@ -61,28 +62,12 @@ const toolName = (name) => name.charAt(0).toLowerCase() + name.slice(1);
 /** The literal text of one quasi (the cooked form, raw as a fallback). */
 const quasiText = (q) => q?.value?.cooked ?? q?.value?.raw ?? "";
 
-/**
- * Reconstruct the runtime document string of a `gql` template.
- *
- * A self-contained template is just its one quasi. An interpolated one --
- * `gql\`query { ...Fields } \${FIELDS}\`` -- is what graphql-tag concatenates at
- * runtime: each `${doc}` becomes that document's source text spliced in place.
- * So this walks the same way, resolving each interpolation to a NAMED gql
- * document in `byName` (the fragments declared in this file). Returns the full
- * text, or null if any interpolation cannot be resolved to a local gql doc --
- * an imported fragment, or an expression that is not one -- because a document
- * we cannot reproduce exactly must not be emitted as callable.
- */
-function reconstruct(quasiNode, byName, seen = new Set()) {
-  let text = quasiText(quasiNode.quasis[0]);
-  for (let i = 0; i < quasiNode.expressions.length; i++) {
-    const expr = quasiNode.expressions[i];
-    if (expr.type !== "Identifier" || !byName.has(expr.name) || seen.has(expr.name)) return null;
-    const piece = reconstruct(byName.get(expr.name), byName, new Set([...seen, expr.name]));
-    if (piece == null) return null;
-    text += piece + quasiText(quasiNode.quasis[i + 1]);
-  }
-  return text;
+/** Is this AST node a `gql`/`graphql` tagged template? Returns its quasi. */
+function gqlQuasi(node) {
+  if (node?.type !== "TaggedTemplateExpression") return null;
+  const tag = node.tag;
+  const name = tag?.type === "Identifier" ? tag.name : tag?.property?.name;
+  return name === "gql" || name === "graphql" ? node.quasi : null;
 }
 
 /**
@@ -122,19 +107,81 @@ export const graphqlOperations = {
   role: "producer",
   describe: "gql`query/mutation Name($v: T) {...}` operation documents",
 
-  run({ srcDir }) {
+  run({ srcDir, root }) {
     const visit = traverse.default ?? traverse;
     const queries = [];
     const actions = [];
     const seen = new Set();
     let endpoint = null; // resolved lazily, only if an operation is found
 
-    const consider = (quasiNode, byName) => {
-      // Reconstruct the full document, inlining any fragments spliced in from
-      // this file. null means an interpolation we could not resolve (an
-      // imported fragment, say) -- then the document cannot be reproduced
-      // faithfully, so it is read but not emitted as callable.
-      const doc = reconstruct(quasiNode, byName);
+    const aliases = packageAliases(root ?? srcDir);
+    // Per-file gql inventory: the named documents (for fast local resolution)
+    // and every document node (as consideration candidates). Cached so a file
+    // referenced as a fragment source is parsed once.
+    const fileCache = new Map();
+    function docsOf(file) {
+      if (fileCache.has(file)) return fileCache.get(file);
+      let ast;
+      try {
+        ast = parseFile(file);
+      } catch {
+        const empty = { byName: new Map(), all: [] };
+        fileCache.set(file, empty);
+        return empty;
+      }
+      const byName = new Map();
+      const all = [];
+      visit(ast, {
+        TaggedTemplateExpression(nodePath) {
+          const quasi = gqlQuasi(nodePath.node);
+          if (!quasi) return;
+          all.push(quasi);
+          const decl = nodePath.parent;
+          if (decl?.type === "VariableDeclarator" && decl.id?.type === "Identifier") byName.set(decl.id.name, quasi);
+        },
+      });
+      const info = { byName, all };
+      fileCache.set(file, info);
+      return info;
+    }
+
+    /** The gql document a name resolves to: local const first, then across files. */
+    function resolveDoc(name, fromFile) {
+      const local = docsOf(fromFile).byName.get(name);
+      if (local) return { quasi: local, file: fromFile };
+      // An imported fragment: follow the import/re-export chain to its definition
+      // -- the same resolver the zod reader uses for cross-package schemas.
+      const def = findDefinition(name, fromFile, aliases);
+      const quasi = def && gqlQuasi(def.node);
+      return quasi ? { quasi, file: def.file } : null;
+    }
+
+    /**
+     * Reconstruct a document's runtime text, inlining every `${FRAGMENT}` the
+     * way graphql-tag does -- resolving each interpolation to its gql document,
+     * local OR imported, and recursing (a fragment defined in its own file
+     * resolves its own imports). Returns null if any interpolation is not a
+     * resolvable gql document, so an operation we cannot reproduce exactly is
+     * never emitted as callable.
+     */
+    function reconstruct(quasiNode, fromFile, seenDocs = new Set()) {
+      let text = quasiText(quasiNode.quasis[0]);
+      for (let i = 0; i < quasiNode.expressions.length; i++) {
+        const expr = quasiNode.expressions[i];
+        if (expr.type !== "Identifier") return null;
+        const key = `${fromFile}#${expr.name}`;
+        if (seenDocs.has(key)) return null; // a fragment cycle
+        const resolved = resolveDoc(expr.name, fromFile);
+        if (!resolved) return null;
+        const piece = reconstruct(resolved.quasi, resolved.file, new Set([...seenDocs, key]));
+        if (piece == null) return null;
+        text += piece + quasiText(quasiNode.quasis[i + 1]);
+      }
+      return text;
+    }
+
+    const consider = (quasiNode, fromFile) => {
+      const doc = reconstruct(quasiNode, fromFile);
       if (!doc) return;
       const parsed = parseOperation(doc);
       if (!parsed) return;
@@ -164,31 +211,7 @@ export const graphqlOperations = {
     };
 
     for (const file of walk(srcDir, (n) => /\.(t|j)sx?$/.test(n))) {
-      let ast;
-      try {
-        ast = parseFile(file);
-      } catch {
-        continue;
-      }
-      // Two passes over the file: first collect every gql document by the const
-      // it is bound to (fragments included), so an operation can inline the ones
-      // it splices; then consider each as a possible operation. A fragment
-      // declared after the operation that uses it still resolves, because the
-      // whole map is built before anything is considered.
-      const gqlNodes = [];
-      const byName = new Map();
-      visit(ast, {
-        TaggedTemplateExpression(nodePath) {
-          const tag = nodePath.node.tag;
-          const tagName = tag?.type === "Identifier" ? tag.name : tag?.property?.name;
-          if (tagName !== "gql" && tagName !== "graphql") return;
-          const quasi = nodePath.node.quasi;
-          gqlNodes.push(quasi);
-          const decl = nodePath.parent;
-          if (decl?.type === "VariableDeclarator" && decl.id?.type === "Identifier") byName.set(decl.id.name, quasi);
-        },
-      });
-      for (const quasi of gqlNodes) consider(quasi, byName);
+      for (const quasi of docsOf(file).all) consider(quasi, file);
     }
     return { queries, actions };
   },

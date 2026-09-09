@@ -231,7 +231,7 @@ an already-found op) · **N** not yet.
 | REST via bare fetch / ky wrappers | N (M) | un-hooked call sites (too scattered to name reliably) |
 | Next Server Actions ("use server") | N | deliberately skipped: bound encrypted action IDs, no stable URL -- DOM tier only |
 | OpenAPI / Swagger JSON spec | Y | **openapi-spec** (paths → typed ops; $ref + allOf resolved) |
-| GraphQL operations (Apollo / urql) | Y | **graphql-operations** + widget `graphql` transport; inlines same-file fragments (transitively). Cross-file fragments & subscriptions deferred |
+| GraphQL operations (Apollo / urql) | Y | **graphql-operations** + widget `graphql` transport; inlines fragments (same-file and imported, across packages, via the symbol resolver). Subscriptions deferred |
 | Supabase / Firebase SDK calls | N (L) | SDK method calls, not routes |
 
 ### Request typing / schema source
@@ -320,11 +320,14 @@ document with the model's arguments as `variables`, unwrapping `data` and
 raising the `errors` array. Built together on purpose -- a producer alone would
 have emitted addressable-but-uncallable ops, the Server-Actions trap. Only
 every emitted GraphQL op is faithfully reproducible; the query document ships in
-the manifest but the catalog projection keeps it out of the prompt. A follow-up
-round taught the producer to **inline same-file fragments** (transitively), so
-an operation that splices in local fragments is reconstructed and emitted rather
-than skipped -- and a **remix-fs-routes** producer read the filename-convention
-routing that Remix and `@react-router/fs-routes` apps use.
+the manifest but the catalog projection keeps it out of the prompt. Follow-up
+rounds taught the producer to **inline fragments** -- first same-file
+(transitively), then imported ones, resolved across files and workspace packages
+through the same symbol resolver zod uses for cross-package schemas -- so an
+operation that splices in shared fragments is reconstructed and emitted rather
+than skipped. Only a fragment that resolves to no gql document on disk leaves
+its operation unemitted. A **remix-fs-routes** producer also landed, reading the
+filename-convention routing Remix and `@react-router/fs-routes` apps use.
 
 The Plane shape that motivated all of this went from **0 routes / 0 actions** to
 a full manifest on a fixture that mirrors it (RR-v7 routes + axios services +
@@ -333,10 +336,8 @@ run against the real source, so that last validation is on a faithful fixture,
 not the app.
 
 ### The next candidates (still captured, not committed)
-- **Cross-file GraphQL fragments / subscriptions** -- same-file fragments are
-  inlined now; a fragment IMPORTED from another module still can't be resolved
-  (it needs the symbol resolver, as zod's cross-package schemas do), so those
-  operations are read but not emitted. Subscriptions are not a request/response.
+- **GraphQL subscriptions** -- skipped, because a subscription is a stream, not
+  a request/response call the widget can make and read once.
 - **RR-v7 / TanStack / Remix static readiness** -- the routing producers give
   navigation; DOM readiness markers for those routes still come only from the
   live tier.

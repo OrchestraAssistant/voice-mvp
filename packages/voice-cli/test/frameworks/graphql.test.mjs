@@ -88,14 +88,41 @@ describe("graphql-operations producer", () => {
     assert.match(q.document, /fragment Base on Task/, "the transitively-referenced fragment was not inlined");
   });
 
-  test("an imported (unresolvable) fragment is NOT emitted -- it can't be reproduced", () => {
+  test("an IMPORTED fragment is resolved across files and inlined", () => {
     const dir = src({
+      "fragments.ts": `import { gql } from "@apollo/client";
+        export const FIELDS = gql\`fragment Fields on Task { id title status }\`;`,
       "op.ts": `import { gql } from "@apollo/client";
         import { FIELDS } from "./fragments";
         export const GET = gql\`query GetTask($id: ID!) { task(id: $id) { ...Fields } } \${FIELDS}\`;`,
     });
-    // FIELDS is imported, not a local gql const, so the document cannot be
-    // faithfully reconstructed and the op is read but not emitted.
+    const q = graphqlOperations.run({ srcDir: dir }).queries.find((x) => x.name === "getTask");
+    assert.ok(q, "cross-file fragment was not resolved");
+    assert.match(q.document, /fragment Fields on Task { id title status }/);
+  });
+
+  test("a fragment imported through a re-export barrel still resolves", () => {
+    const dir = src({
+      "graphql/fragments.ts": `import { gql } from "@apollo/client";
+        export const TASK_FIELDS = gql\`fragment TaskFields on Task { id }\`;`,
+      "graphql/index.ts": `export { TASK_FIELDS } from "./fragments";`,
+      "op.ts": `import { gql } from "@apollo/client";
+        import { TASK_FIELDS } from "./graphql";
+        export const GET = gql\`query GetTask { task { ...TaskFields } } \${TASK_FIELDS}\`;`,
+    });
+    const q = graphqlOperations.run({ srcDir: dir }).queries.find((x) => x.name === "getTask");
+    assert.ok(q, "fragment behind a re-export barrel was not resolved");
+    assert.match(q.document, /fragment TaskFields on Task/);
+  });
+
+  test("a fragment that cannot be found anywhere leaves the op unemitted", () => {
+    const dir = src({
+      "op.ts": `import { gql } from "@apollo/client";
+        import { FIELDS } from "some-unresolvable-pkg";
+        export const GET = gql\`query GetTask($id: ID!) { task(id: $id) { ...Fields } } \${FIELDS}\`;`,
+    });
+    // The import target is not on disk, so the document cannot be reproduced
+    // faithfully and the op is read but not emitted -- honest over broken.
     assert.equal(graphqlOperations.run({ srcDir: dir }).queries.length, 0);
   });
 
