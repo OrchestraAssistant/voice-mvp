@@ -11,14 +11,17 @@
  */
 import { reactRouter } from "./frameworks/react/router.js";
 import { reactRouterConfig } from "./frameworks/react/routerConfig.js";
+import { tanstackRouter } from "./frameworks/tanstack/router.js";
 import { requestHooks } from "./frameworks/react/requestHooks.js";
 import { nextAppRouter, nextPagesRouter } from "./frameworks/next/routes.js";
 import { nextRouteHandlers, nextPagesApi } from "./frameworks/next/api.js";
 import { trpcRouters } from "./frameworks/trpc/router.js";
 import { axiosServices } from "./frameworks/rest/axiosServices.js";
+import { openapiSpec } from "./frameworks/openapi/spec.js";
 import { zodBodies } from "./schema/zod.js";
 import { valibotBodies } from "./schema/valibot.js";
 import { yupBodies } from "./schema/yup.js";
+import { arktypeBodies } from "./schema/arktype.js";
 import { tsTypes } from "./schema/typescript.js";
 import { pageMetadata } from "./schema/pageMetadata.js";
 import { callSites } from "./stages/callSites.js";
@@ -36,6 +39,7 @@ export const STAGES = [
   // Producers: find the operations.
   reactRouter,
   reactRouterConfig,
+  tanstackRouter,
   requestHooks,
   nextAppRouter,
   nextPagesRouter,
@@ -43,6 +47,7 @@ export const STAGES = [
   nextPagesApi,
   trpcRouters,
   axiosServices,
+  openapiSpec,
 
   // Enrichers: fill in what the producers could not see. Zod before
   // TypeScript on purpose -- writing a schema is a statement of intent about
@@ -54,6 +59,7 @@ export const STAGES = [
   // that shares a name is a correlation. Each only fills a body still empty.
   valibotBodies,
   yupBodies,
+  arktypeBodies,
   tsTypes,
   pageMetadata,
   callSites,

@@ -185,9 +185,9 @@ common* SPA-over-REST one, not a Plane peculiarity.
 **Read this table honestly.** The *support* column is authoritative -- it is the
 CLI's own stage report (producers `next-app-router`, `next-pages-router`,
 `next-route-handlers`, `next-pages-api`, `react-router`, `react-router-config`,
-`trpc-routers`, `request-hooks`, `axios-services`; enrichers `zod-bodies`,
-`valibot-bodies`, `yup-bodies`, `typescript-types`, `page-metadata`,
-`call-sites`). The *ranking* within each category is rough ecosystem prevalence,
+`tanstack-router`, `trpc-routers`, `request-hooks`, `axios-services`,
+`openapi-spec`; enrichers `zod-bodies`, `valibot-bodies`, `yup-bodies`,
+`arktype-bodies`, `typescript-types`, `page-metadata`, `call-sites`). The *ranking* within each category is rough ecosystem prevalence,
 and the effort tags (S/M/L) on remaining gaps are estimates. `◆` marks where
 Plane lands. (A rendered, colour-coded version of this lives as a private
 artifact -- regenerate it from this table if the two drift.)
@@ -203,7 +203,8 @@ an already-found op) · **N** not yet.
 | Vite + React SPA / CRA | Y | via react-router producer, *if* JSX routes |
 | React Router v7 (framework) ◆ | Y | **react-router-config** producer (navigation) |
 | Remix (classic, file routes) | N (M) | file-convention routes |
-| TanStack Start / Gatsby / Astro / Redwood | N (L) | own router/build |
+| TanStack Start | ~ | routing covered by **tanstack-router**; the meta-framework's server/build is not |
+| Gatsby / Astro / Redwood | N (L) | own router/build |
 
 ### Routing declaration
 | Option | | Note |
@@ -212,7 +213,9 @@ an already-found op) · **N** not yet.
 | React Router JSX `<Route path element>` | Y | parsed |
 | RR data router `createBrowserRouter([])` | Y | **react-router-config** (object routes, nested children) |
 | RR-v7 `route()/layout()` in routes.ts ◆ | Y | **react-router-config** (helper calls, merged across files) |
-| Remix fs-routes / TanStack Router / Wouter | N (S-M) | |
+| TanStack Router (file or code) | Y | **tanstack-router** (`createFileRoute`/`createRoute`, `$param`→`:param`) |
+| Wouter | ~ | `<Route path>` caught by react-router (JSX); `component` prop name missed |
+| Remix fs-routes (flat files) | N (M) | filename-encoded paths |
 | Hash router | ~ | JSX form detected; hash paths untested |
 | Hand-rolled switch / conditional render | N (L) | not declarative -- hard to recover |
 
@@ -226,7 +229,9 @@ an already-found op) · **N** not yet.
 | REST via axios service classes ◆ | Y | **axios-services** producer (`this.<verb>(url, data)`; TS body via `_inputType`) |
 | REST via bare fetch / ky wrappers | N (M) | un-hooked call sites (too scattered to name reliably) |
 | Next Server Actions ("use server") | N | deliberately skipped: bound encrypted action IDs, no stable URL -- DOM tier only |
-| GraphQL ops / OpenAPI spec / Supabase SDK | N (M-L) | (an OpenAPI spec is a gift -- parse it directly) |
+| OpenAPI / Swagger JSON spec | Y | **openapi-spec** (paths → typed ops; $ref + allOf resolved) |
+| GraphQL operations (Apollo / urql) | N (L) | needs a producer AND a widget graphql transport |
+| Supabase / Firebase SDK calls | N (L) | SDK method calls, not routes |
 
 ### Request typing / schema source
 | Option | | Note |
@@ -235,8 +240,9 @@ an already-found op) · **N** not yet.
 | TypeScript interfaces / types ◆ | Y* | typescript-types: name correlation, **plus an explicit `_inputType` hint** a producer can hand it (resolved across workspace packages, `Partial<T>` unwrapped). *Enriches a found op; still will not create one. |
 | Valibot | Y | **valibot-bodies** (optional/nullish/pipe/picklist) |
 | Yup | Y | **yup-bodies** (`.required()` opt-in, `.oneOf` enum, `object().shape`) |
-| GraphQL schema / OpenAPI schema | N (M) | |
-| ArkType / io-ts / JSON Schema / Prisma types | N (S-M) | ArkType's string DSL is the next cheap adapter |
+| ArkType | Y | **arktype-bodies** (string DSL: `"count?"` key optional, `'a'\|'b'` enum, `[]` array) |
+| GraphQL schema / OpenAPI schema | ~ | OpenAPI request bodies are read by **openapi-spec**; GraphQL SDL is not |
+| io-ts / JSON Schema / Prisma types | N (M) | |
 
 ### Data layer -- refresh after a write
 onAfterAction is generic (the host wires it); a synthetic focus event is the
@@ -293,7 +299,17 @@ each other), and in the registry:
    for the TypeScript enricher (which now resolves it across workspace packages
    and unwraps `Partial<T>`). Unlocks the whole SPA-over-REST class.
 
-Also shipped alongside: **`valibot-bodies`** and **`yup-bodies`** enrichers.
+A second round then widened coverage further, all through the same seam:
+- **`tanstack-router`** -- `createFileRoute('/posts/$postId')` and
+  `createRoute({ path })`, with `$param` normalised to the `:param` the widget's
+  navigation understands. Covers TanStack Router SPAs and TanStack Start routing.
+- **`openapi-spec`** -- when an app ships an OpenAPI/Swagger JSON spec it is the
+  cheapest producer of all: paths, methods, parameters AND request bodies are
+  already written down and typed. Resolves `$ref` and merges `allOf`; drops
+  `readOnly` (response-only) fields. JSON only -- a YAML spec would need a parser
+  dependency the package does not carry.
+- **`valibot-bodies`**, **`yup-bodies`**, **`arktype-bodies`** -- the rest of the
+  validation-schema field, beside `zod-bodies`.
 
 The Plane shape that motivated all of this went from **0 routes / 0 actions** to
 a full manifest on a fixture that mirrors it (RR-v7 routes + axios services +
@@ -302,12 +318,17 @@ run against the real source, so that last validation is on a faithful fixture,
 not the app.
 
 ### The next candidates (still captured, not committed)
-- **GraphQL operations (M-L)** -- `gql` tags + the schema; a large, coherent world.
-- **OpenAPI / Swagger spec (M)** -- when an app ships one, it is the cheapest
-  possible producer: the operations, methods and bodies are already written down.
-- **ArkType (S)** -- the last cheap validation-schema adapter.
-- **RR-v7 static readiness** -- the config producer gives navigation; DOM
-  readiness markers for these routes still come only from the live tier.
+- **GraphQL operations (L)** -- the big remaining gap, and the one that is more
+  than a producer: `gql` documents give the operations and their variables, but
+  calling them needs a **widget graphql transport** (as tRPC needed
+  `transport: "trpc"`). Build the two together, or the operations would be
+  addressable and uncallable -- the reason Server Actions are skipped, not
+  faked.
+- **Remix classic fs-routes (M)** -- filename-encoded paths (`posts.$id.tsx`),
+  the older sibling of the RR-v7 config we already read.
+- **RR-v7 / TanStack static readiness** -- the config producers give navigation;
+  DOM readiness markers for those routes still come only from the live tier.
+- **YAML OpenAPI** -- only if a dependency is acceptable; JSON covers most.
 
 The trigger to build any of these is the same as before: a real app we want that
 needs it.
