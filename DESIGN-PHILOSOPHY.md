@@ -74,3 +74,36 @@ shells that broke a live session: we had removed the third stage entirely.
 The lesson is not that the third stage is a crutch. It is that judgement is a
 real stage of the work, and pretending a machine that cannot judge will
 nonetheless produce a judged result is the actual mistake.
+
+## 4. "Known" API means the call succeeds AND the UI reflects it
+
+We prefer the API path when we trust it: it is one deterministic request, not a
+fragile sequence of clicks. But "the call succeeded" is not the whole of trust.
+An API call changes the server; it does not necessarily change what the user is
+looking at.
+
+Most SPAs hold a client-side cache -- React Query, SWR, Apollo, RTK Query. The
+app's OWN mutations invalidate the relevant keys and refetch, so the UI updates.
+But a mutation WE make out-of-band is invisible to that cache: the server changed
+and the screen did not. A few apps push updates over SSE/WebSocket and would
+reflect it automatically, but that is the exception, not the rule. So a
+successful API call can leave the user staring at stale data -- which, to them,
+looks like the action did nothing.
+
+Two answers, and we already built one:
+
+- **`onAfterAction` is the bridge.** After every action the widget calls
+  `onAfterAction?.()` -- "let the host refresh whatever cache it keeps; it knows,
+  we don't." The developer wires it to their `invalidateQueries()` (or
+  equivalent) and the UI catches up. It is the designed seam, but it depends on
+  the developer wiring it, so it belongs prominently in the setup guide.
+- **The DOM path keeps the UI in sync for free**, because doing the action
+  through the app's own controls fires the app's own handlers, which update its
+  cache the normal way. So this is a genuine case where DOM beats API: the API is
+  faster to DO, but the DOM is what the app NOTICES.
+
+The consequence for the confidence tiers: an operation is fully `known` only when
+its result becomes visible -- the app has `onAfterAction` wired, or an SSE
+channel, or the like. Absent that, a mutation whose outcome the user must SEE is
+a point for the DOM path, even when the API call itself is perfectly specified.
+Trust is end-to-end, not server-deep.

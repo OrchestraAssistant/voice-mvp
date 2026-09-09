@@ -91,3 +91,48 @@ Not the tech -- the architecture above mostly reaches. These:
 Browser-orchestration + read-the-page first (reliable, differentiated,
 low-risk). Blind-DOM acting as the honest rough tier. The dispatcher as the
 manifest handshake. The security model designed up front, as a feature.
+
+---
+
+## 2. Responsive layouts: fork the DOM artifacts, not the manifest
+
+An app renders different DOM at different widths -- a desktop sidebar vs a mobile
+bottom-nav, a visible link vs a hamburger, whole components present in one layout
+and absent in the other. This matters because our artifacts are not all equally
+affected, and the split is the whole design.
+
+**What is layout-INVARIANT:** routes and API operations. `/event-types` is
+`/event-types` at any width; an API call does not change with the viewport. So
+`navigate({path})` and the whole API path work in any layout, untouched. This is
+a real robustness advantage of the API/route surface.
+
+**What is layout-DEPENDENT:** the DOM artifacts -- `readyWhen` markers and DOM
+flows. A testId present on desktop may not exist on mobile; the click sequence to
+do a thing differs. And note the asymmetry: a LIVE `dom_snapshot` adapts (it sees
+whatever is rendered now), so agentic DOM manipulation is layout-robust at
+RUNTIME. What is fragile is the PROBED/RECORDED artifacts, baked at one viewport.
+
+So the plan, when we build the responsive story:
+
+- **Probe both layouts.** The probe already drives a browser at a fixed viewport
+  (1280x900 = desktop, an implicit assumption we have been making). Run a second
+  pass at a mobile viewport (+ mobile UA/touch) and capture markers per
+  breakpoint. Same probe, twice.
+- **Differentiate statically, best-effort.** Responsiveness is written down:
+  Tailwind responsive prefixes (`hidden md:block` = desktop-only, `md:hidden` =
+  mobile-only), `useMediaQuery`/`isMobile` conditional-render branches, and
+  separate `MobileNav`/`DesktopSidebar` components. Static analysis can TAG an
+  element/testId with the layout(s) it appears in. Imperfect (runtime widths,
+  dynamic conditions), but a solid annotation.
+- **Per-layout flows (#3).** A recorded DOM flow is layout-specific -- one
+  recorded on desktop will not replay on mobile. So a flow carries the layout it
+  was recorded for; the widget picks by its current width; and "re-derive from a
+  live snapshot when no recorded flow matches" is the fallback. This is a real
+  constraint on the recorded-flows direction (section 1), not an afterthought.
+- **Layout-TAG the artifacts; do NOT fork the manifest (#4).** The instinct to
+  avoid clogging a layout with things it cannot use is right, but the mechanism
+  is not two manifests. Most of the manifest is invariant (routes, queries,
+  actions); duplicating it per layout would repeat ~90% of it. Only the DOM bits
+  -- `readyWhen`, flows -- are layout-specific, so they carry a layout tag within
+  ONE manifest, and the widget filters those by its runtime width. DRY, and still
+  ships nothing useless to a layout.
