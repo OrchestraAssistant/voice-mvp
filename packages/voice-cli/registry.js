@@ -18,6 +18,7 @@ import { nextRouteHandlers, nextPagesApi } from "./frameworks/next/api.js";
 import { trpcRouters } from "./frameworks/trpc/router.js";
 import { axiosServices } from "./frameworks/rest/axiosServices.js";
 import { openapiSpec } from "./frameworks/openapi/spec.js";
+import { graphqlOperations } from "./frameworks/graphql/operations.js";
 import { zodBodies } from "./schema/zod.js";
 import { valibotBodies } from "./schema/valibot.js";
 import { yupBodies } from "./schema/yup.js";
@@ -49,6 +50,7 @@ export const STAGES = [
   trpcRouters,
   axiosServices,
   openapiSpec,
+  graphqlOperations,
 
   // Enrichers: fill in what the producers could not see. Zod before
   // TypeScript on purpose -- writing a schema is a statement of intent about

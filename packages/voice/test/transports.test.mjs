@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { buildUrl, rest, transportFor, trpc } from "../src/transports.js";
+import { buildUrl, graphql, rest, transportFor, trpc } from "../src/transports.js";
 
 /**
  * The wire format is the part that is easy to get subtly wrong and impossible
@@ -140,6 +140,43 @@ describe("tRPC", () => {
   });
 });
 
+describe("GraphQL", () => {
+  const createTask = {
+    transport: "graphql",
+    endpoint: "/graphql",
+    operationName: "CreateTask",
+    document: "mutation CreateTask($title: String!) { createTask(input: { title: $title }) { id } }",
+    bodyFields: [{ name: "title" }, { name: "priority" }],
+  };
+
+  test("POSTs the document and only the declared variables", () => {
+    const { method, url, body } = graphql.request({ operation: createTask, args: { title: "yoga", priority: "high", sneaky: "x" } });
+    assert.equal(method, "POST");
+    assert.equal(url, "/graphql");
+    assert.equal(body.query, createTask.document);
+    assert.equal(body.operationName, "CreateTask");
+    assert.deepEqual(body.variables, { title: "yoga", priority: "high" }); // sneaky dropped
+  });
+
+  test("no variables means no variables key, and the endpoint defaults", () => {
+    const { url, body } = graphql.request({ operation: { transport: "graphql", document: "query { me { id } }", bodyFields: [] }, args: {} });
+    assert.equal(url, "/graphql");
+    assert.equal("variables" in body, false);
+  });
+
+  test("a 200 with an errors array is a failure, and the message is kept", () => {
+    // GraphQL returns 200 OK on a failed operation, so status alone is a lie.
+    assert.throws(
+      () => graphql.read({ errors: [{ message: "title must not be blank" }] }, { ok: true, status: 200 }),
+      /title must not be blank/,
+    );
+  });
+
+  test("data is unwrapped on success", () => {
+    assert.deepEqual(graphql.read({ data: { createTask: { id: "1" } } }, { ok: true, status: 200 }), { createTask: { id: "1" } });
+  });
+});
+
 describe("choosing one", () => {
   test("no transport means REST, which every older manifest relies on", () => {
     assert.equal(transportFor({ endpoint: "/api/tasks" }), rest);
@@ -148,5 +185,6 @@ describe("choosing one", () => {
 
   test("and a declared one is used", () => {
     assert.equal(transportFor({ transport: "trpc" }), trpc);
+    assert.equal(transportFor({ transport: "graphql" }), graphql);
   });
 });

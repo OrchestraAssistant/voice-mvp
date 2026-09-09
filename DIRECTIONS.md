@@ -187,7 +187,8 @@ CLI's own stage report (producers `next-app-router`, `next-pages-router`,
 `next-route-handlers`, `next-pages-api`, `react-router`, `react-router-config`,
 `tanstack-router`, `trpc-routers`, `request-hooks`, `axios-services`,
 `openapi-spec`; enrichers `zod-bodies`, `valibot-bodies`, `yup-bodies`,
-`arktype-bodies`, `typescript-types`, `page-metadata`, `call-sites`). The *ranking* within each category is rough ecosystem prevalence,
+`arktype-bodies`, `typescript-types`, `page-metadata`, `call-sites`; and
+`graphql-operations`, whose ops ride a dedicated widget `graphql` transport). The *ranking* within each category is rough ecosystem prevalence,
 and the effort tags (S/M/L) on remaining gaps are estimates. `◆` marks where
 Plane lands. (A rendered, colour-coded version of this lives as a private
 artifact -- regenerate it from this table if the two drift.)
@@ -230,7 +231,7 @@ an already-found op) · **N** not yet.
 | REST via bare fetch / ky wrappers | N (M) | un-hooked call sites (too scattered to name reliably) |
 | Next Server Actions ("use server") | N | deliberately skipped: bound encrypted action IDs, no stable URL -- DOM tier only |
 | OpenAPI / Swagger JSON spec | Y | **openapi-spec** (paths → typed ops; $ref + allOf resolved) |
-| GraphQL operations (Apollo / urql) | N (L) | needs a producer AND a widget graphql transport |
+| GraphQL operations (Apollo / urql) | Y | **graphql-operations** producer + widget `graphql` transport (self-contained `gql` docs; fragments/subscriptions deferred) |
 | Supabase / Firebase SDK calls | N (L) | SDK method calls, not routes |
 
 ### Request typing / schema source
@@ -241,7 +242,8 @@ an already-found op) · **N** not yet.
 | Valibot | Y | **valibot-bodies** (optional/nullish/pipe/picklist) |
 | Yup | Y | **yup-bodies** (`.required()` opt-in, `.oneOf` enum, `object().shape`) |
 | ArkType | Y | **arktype-bodies** (string DSL: `"count?"` key optional, `'a'\|'b'` enum, `[]` array) |
-| GraphQL schema / OpenAPI schema | ~ | OpenAPI request bodies are read by **openapi-spec**; GraphQL SDL is not |
+| GraphQL variables | Y | typed by **graphql-operations** from the `$var: Type` list |
+| OpenAPI schema | Y | request bodies read by **openapi-spec** |
 | io-ts / JSON Schema / Prisma types | N (M) | |
 
 ### Data layer -- refresh after a write
@@ -311,6 +313,16 @@ A second round then widened coverage further, all through the same seam:
 - **`valibot-bodies`**, **`yup-bodies`**, **`arktype-bodies`** -- the rest of the
   validation-schema field, beside `zod-bodies`.
 
+A third round added **GraphQL**, the one gap that was more than a producer: the
+**`graphql-operations`** producer reads `gql` operation documents (name, kind,
+typed variables) and the widget gained a **`graphql` transport** that POSTs the
+document with the model's arguments as `variables`, unwrapping `data` and
+raising the `errors` array. Built together on purpose -- a producer alone would
+have emitted addressable-but-uncallable ops, the Server-Actions trap. Only
+self-contained documents are emitted (no `${fragment}` interpolation), so every
+GraphQL op is faithfully reproducible; the query document ships in the manifest
+but the catalog projection keeps it out of the prompt.
+
 The Plane shape that motivated all of this went from **0 routes / 0 actions** to
 a full manifest on a fixture that mirrors it (RR-v7 routes + axios services +
 sibling-package types). Plane itself was pulled from `/library` before a final
@@ -318,17 +330,15 @@ run against the real source, so that last validation is on a faithful fixture,
 not the app.
 
 ### The next candidates (still captured, not committed)
-- **GraphQL operations (L)** -- the big remaining gap, and the one that is more
-  than a producer: `gql` documents give the operations and their variables, but
-  calling them needs a **widget graphql transport** (as tRPC needed
-  `transport: "trpc"`). Build the two together, or the operations would be
-  addressable and uncallable -- the reason Server Actions are skipped, not
-  faked.
+- **GraphQL fragments/subscriptions** -- reassemble an interpolated `gql`
+  document by inlining the fragments it splices, so operations that reference
+  shared fragments become callable too (today they are read but not emitted).
 - **Remix classic fs-routes (M)** -- filename-encoded paths (`posts.$id.tsx`),
   the older sibling of the RR-v7 config we already read.
 - **RR-v7 / TanStack static readiness** -- the config producers give navigation;
   DOM readiness markers for those routes still come only from the live tier.
 - **YAML OpenAPI** -- only if a dependency is acceptable; JSON covers most.
+- **Supabase / Firebase SDK calls** -- SDK method calls, not routes.
 
 The trigger to build any of these is the same as before: a real app we want that
 needs it.

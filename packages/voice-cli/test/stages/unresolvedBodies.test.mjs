@@ -59,4 +59,10 @@ describe("unresolved-bodies enricher", () => {
     unresolvedBodies.run({ actions: [action] });
     assert.equal(action.review, undefined);
   });
+
+  test("a variable-less GraphQL mutation is not flagged -- its inputs are fully declared", () => {
+    const action = { name: "logout", method: "POST", transport: "graphql", bodyFields: [] };
+    unresolvedBodies.run({ actions: [action] });
+    assert.equal(action.review, undefined);
+  });
 });

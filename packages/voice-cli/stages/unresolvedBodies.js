@@ -30,6 +30,11 @@ export const unresolvedBodies = {
     for (const action of actions) {
       const writes = ["POST", "PUT", "PATCH"].includes((action.method ?? "").toUpperCase());
       if (!writes || (action.bodyFields ?? []).length) continue;
+      // GraphQL declares its variables exhaustively in the operation document,
+      // so an empty variable list means "takes nothing", not "we could not read
+      // the body". Flagging it would steer a fully-specified mutation to the
+      // screen for no reason.
+      if (action.transport === "graphql") continue;
 
       const reason = action._inputSchema
         ? `input schema \`${action._inputSchema}\` did not resolve to a z.object({...}) -- look where it is defined (it may be a union, a runtime schema, or re-exported)`

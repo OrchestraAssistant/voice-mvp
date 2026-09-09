@@ -203,7 +203,52 @@ export const trpc = {
   },
 };
 
-export const TRANSPORTS = { rest, trpc };
+/**
+ * GraphQL: one endpoint, POST always, the operation carried as a document.
+ *
+ * Unlike REST and tRPC there is no URL to build -- every operation goes to the
+ * same `/graphql` endpoint, and WHICH operation is decided by the query
+ * document itself. So the manifest carries `document` (the exact gql source the
+ * producer read) and `operationName`, and the model's arguments become the
+ * GraphQL `variables`. `document`/`operationName` never reach the model -- the
+ * catalog projection whitelists what a tool exposes, and they are not on it --
+ * so a large query string costs nothing in the prompt.
+ */
+export const graphql = {
+  request({ operation, args }) {
+    // Only declared variables are sent; anything the model invented is dropped,
+    // exactly as REST does for body fields.
+    const allowed = new Set((operation.bodyFields ?? []).map((f) => f.name));
+    const variables = Object.fromEntries(
+      Object.entries(args ?? {}).filter(([k, v]) => allowed.has(k) && v !== undefined),
+    );
+    return {
+      method: "POST",
+      url: operation.endpoint || "/graphql",
+      body: {
+        query: operation.document,
+        ...(operation.operationName ? { operationName: operation.operationName } : {}),
+        ...(Object.keys(variables).length ? { variables } : {}),
+      },
+    };
+  },
+
+  /**
+   * GraphQL answers 200 OK with an `errors` array on failure, so a caller that
+   * only checks the HTTP status calls a failed mutation a success. The messages
+   * are the fix the model needs, the same reason the tRPC reader keeps them.
+   */
+  read(payload, { ok, status } = { ok: true }) {
+    if (payload?.errors?.length) {
+      const message = payload.errors.map((e) => e?.message).filter(Boolean).join("; ");
+      throw new Error(message || "GraphQL request failed");
+    }
+    if (!ok) throw new Error(`Request failed: ${status}`);
+    return payload?.data ?? payload;
+  },
+};
+
+export const TRANSPORTS = { rest, trpc, graphql };
 
 /** Which transport an operation uses. Absent means REST, which every manifest
  *  written before tRPC existed relies on. */
