@@ -35,7 +35,46 @@
  * declarations land on `*` at specificity 0 inside our own layer, so a host's
  * own Tailwind utilities still outrank them.
  */
+import postcss from "postcss";
+
 const OPENER = "@layer properties{@supports ";
+
+/**
+ * Scope every class selector under `.iv-scope`, so the EXPORTED sheet
+ * (`@yourco/voice/inline.css`, for mount="inline") can never touch a host's own
+ * elements. Its bare Tailwind utilities -- `.hidden`, `.md:flex` -- once collided
+ * with a host app's identical classes in the global namespace and collapsed its
+ * desktop sidebar to a mobile layout. A shadow root would isolate them, but
+ * inline mount has no shadow, so the isolation has to be in the selectors: every
+ * rule becomes `.iv-scope <sel>`, and the widget renders under a `.iv-scope`
+ * element. A host has no `.iv-scope`, so nothing of ours reaches it.
+ *
+ * The shadow-mount copy (the `?inline` string) is NOT scoped -- the shadow root
+ * already isolates it, and this only runs over the extracted dist/voice.css.
+ *
+ * `:root` variables (`--iv-*`, namespaced, non-colliding) and the global at-rules
+ * (`@property`, `@keyframes`) are left alone: they define, not select, and
+ * scoping them would only hide the widget's own tokens from itself.
+ */
+function scopeClasses(css, scope = ".iv-scope") {
+  let root;
+  try {
+    root = postcss.parse(css);
+  } catch {
+    return css; // never corrupt the sheet; unscoped-but-valid beats broken
+  }
+  root.walkRules((rule) => {
+    const parent = rule.parent;
+    // Keyframe steps (`0%`, `from`) are rules but not selectors to scope.
+    if (parent?.type === "atrule" && /(^|-)keyframes$/i.test(parent.name)) return;
+    rule.selectors = rule.selectors.map((sel) => {
+      const s = sel.trim();
+      if (!s || s === ":root" || s.startsWith(":root")) return s;
+      return `${scope} ${s}`;
+    });
+  });
+  return root.toString();
+}
 
 function ungate(css) {
   const start = css.indexOf(OPENER);
@@ -73,8 +112,11 @@ export function tailwindShadowDomProperties() {
       // early in the pipeline to see the final sheet.
       for (const file of Object.values(bundle)) {
         if (file.type !== "asset" || !file.fileName.endsWith(".css")) continue;
-        const source = String(file.source);
-        if (source.includes(OPENER)) file.source = ungate(source);
+        // This is dist/voice.css -- the sheet a host imports for mount="inline".
+        // Ungate the properties block, then scope every class so it cannot reach
+        // the host. The shadow copy (?inline, inlined into the JS) never lands
+        // here, so it stays unscoped and fully isolated by its shadow root.
+        file.source = scopeClasses(ungate(String(file.source)));
       }
     },
   };

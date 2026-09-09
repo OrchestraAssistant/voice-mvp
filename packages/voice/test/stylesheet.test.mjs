@@ -48,6 +48,28 @@ describe("compiled stylesheet", () => {
     assert.ok(base < utilities, "@layer base must be declared before @layer utilities to lose to it");
   });
 
+  test("every utility class in the EXPORTED sheet is scoped under .iv-scope", () => {
+    // The exported sheet (mount="inline") shares the host's global class
+    // namespace, so a bare `.hidden{display:none}` once collapsed a host app's
+    // desktop layout. Scoping every class under `.iv-scope` -- which no host has
+    // -- makes the sheet unable to reach any host element. Guard it: no bare
+    // colliding utility may ship unscoped.
+    // No bare host-colliding rule may ship (true even for a utility the widget
+    // never uses -- there is simply no rule).
+    for (const cls of ["hidden", "flex", "fixed", "block", "grid", "bg-background", "md\\:flex"]) {
+      const bareHit = css.match(new RegExp(`(?<!iv-scope )\\.${cls}\\{`));
+      assert.equal(bareHit, null, `.${cls.replace("\\", "")} must never ship as a bare, host-colliding rule`);
+    }
+    // And the ones the widget DOES use are present, scoped -- proving the
+    // transform ran, not that the sheet is merely empty.
+    assert.ok(css.includes(".iv-scope .hidden"), ".hidden should be scoped, not absent");
+    assert.ok(css.includes(".iv-scope .flex"), ".flex should be scoped, not absent");
+    // Definitions, not selectors, stay global: they don't collide, and scoping
+    // them would hide the widget's own tokens.
+    assert.doesNotMatch(css, /\.iv-scope\s+:root/);
+    assert.doesNotMatch(css, /\.iv-scope\s+@property/);
+  });
+
   test("the components' utilities were actually generated", () => {
     // Tailwind's automatic content detection keys off the build's root, not the
     // stylesheet's, and silently emitted almost nothing when those differed.

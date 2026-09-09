@@ -736,7 +736,18 @@ export function InterpreterBubble({ mount = "shadow", bench = null }) {
     </div>
   );
 
-  if (inline) return widget;
+  // Inline mount renders into the host's light DOM, so the exported sheet is
+  // scoped under `.iv-scope` (see tailwindProperties.js) and the widget must
+  // sit under it. `display:contents` adds no box -- it is only a selector
+  // ancestor -- so a fixed/absolute widget positions exactly as before. The
+  // shadow mount needs none of this: its sheet is isolated by the shadow root.
+  if (inline) {
+    return (
+      <div className="iv-scope" style={{ display: "contents" }}>
+        {widget}
+      </div>
+    );
+  }
 
   return container ? createPortal(widget, container) : null;
 }
