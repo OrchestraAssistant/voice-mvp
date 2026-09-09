@@ -370,37 +370,30 @@ export const zodBodies = {
         }
       }
     }
-    // Roll the field flags up to their action, and add the operation-level
-    // case (3): a write with no readable body at all. This `review` list is a
-    // triage sheet for the human/LLM pass and a hint the dispatcher can read to
-    // prefer the DOM path -- so it stays in the manifest but never reaches the
-    // model (expand strips the field-level flags; the model never sees this
-    // op-level list, which expand does not emit). The transport is left alone:
-    // there is no DOM flow to route to until one exists.
+    // Roll the FIELD flags up to their action -- the case-(2)/(4) marks that
+    // fieldsOf set on individual zod fields (an opaque convention, a truncated
+    // render). These belong to zod alone: only zod's reader looks deep enough
+    // to raise them, and they can only be judged on a body zod itself filled.
+    //
+    // The operation-level "no readable body at all" flag deliberately does NOT
+    // live here any more. Zod runs before the other body enrichers (TypeScript,
+    // Valibot, Yup, ArkType), so a write it leaves empty is often filled a
+    // moment later -- and a flag raised here would say "no input parser" over a
+    // body another stage went on to type. That roll-up moved to the
+    // `unresolved-bodies` enricher, which runs after all of them and so speaks
+    // the truth. This `review` list stays in the manifest but never reaches the
+    // model (expand strips it).
     const flagged = [];
     for (const action of actions) {
       const fieldFlags = (action.bodyFields ?? []).filter((f) => f.review).map((f) => ({ field: f.name, ...f.review }));
-      const writes = ["POST", "PUT", "PATCH"].includes((action.method ?? "").toUpperCase());
-      if (writes && !(action.bodyFields ?? []).length) {
-        // Say WHY the body is empty, so a reviewer knows where to start. The
-        // three cases point at different places: a declared schema that would
-        // not resolve is a symbol to chase; a hook with no schema beside it is a
-        // form to read; no parser at all is the handler itself.
-        const reason = action._inputSchema
-          ? `input schema \`${action._inputSchema}\` did not resolve to a z.object({...}) -- look where it is defined (it may be a union, a runtime schema, or re-exported)`
-          : action._hookName
-            ? `no schema found beside the write hook \`${action._hookName}\` -- read the form that calls it`
-            : "no input parser is declared -- the shape lives only in the handler";
-        fieldFlags.push({ field: null, kind: "unknown", reason });
-      }
       if (fieldFlags.length) {
-        action.review = fieldFlags;
+        action.review = [...(action.review ?? []), ...fieldFlags];
         flagged.push(action.name);
       }
     }
 
     const notes = enriched.length ? [`body fields from Zod: ${enriched.join(", ")}`] : [];
-    if (flagged.length) notes.push(`flagged for review, kept off-prompt: ${flagged.length} action(s) (${flagged.slice(0, 8).join(", ")}${flagged.length > 8 ? ", ..." : ""})`);
+    if (flagged.length) notes.push(`fields flagged for review, kept off-prompt: ${flagged.length} action(s) (${flagged.slice(0, 8).join(", ")}${flagged.length > 8 ? ", ..." : ""})`);
     return { notes };
   },
 };
