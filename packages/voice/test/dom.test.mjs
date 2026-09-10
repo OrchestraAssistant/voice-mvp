@@ -21,7 +21,7 @@ describe("what the agent can see and touch", { concurrency: false }, () => {
     harness = await startHarness();
     page = await browser.newPage();
     await page.goto(harness.url("?mount=shadow"));
-    await page.addScriptTag({ content: `${source}\nwindow.__dom = { snapshot, typeText, click };`, type: "module" });
+    await page.addScriptTag({ content: `${source}\nwindow.__dom = { snapshot, typeText, click, pageContext };`, type: "module" });
     await page.waitForFunction(() => window.__dom);
   });
   after(async () => {
@@ -31,6 +31,22 @@ describe("what the agent can see and touch", { concurrency: false }, () => {
 
   const field = (label) =>
     page.evaluate((wanted) => window.__dom.snapshot().find((e) => e.label === wanted), label);
+
+  test("pageContext reads the page's own name for the L0 live context", async () => {
+    // The cheap orientation read that rides the navigate result: the page's
+    // <title> and its first rendered <h1>, no full snapshot.
+    const ctx = await page.evaluate(() => {
+      document.title = "Field Test";
+      const h = document.createElement("h1");
+      h.textContent = "  Your work  ";
+      document.body.prepend(h);
+      const out = window.__dom.pageContext();
+      h.remove();
+      return out;
+    });
+    assert.equal(ctx.title, "Field Test");
+    assert.equal(ctx.heading, "Your work", "the visible heading is trimmed and returned");
+  });
 
   test("a rich-text editor is visible at all", async () => {
     // It is a <div contenteditable role="textbox">, which matched none of the

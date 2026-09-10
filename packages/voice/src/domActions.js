@@ -511,6 +511,21 @@ async function waitForTarget(want, timeoutMs, pollMs) {
 }
 
 /**
+ * A cheap read of what page this is -- its <title> and main heading. The L0 of
+ * the live-context loop: enough to orient the model ("you are on the Projects
+ * page") without a full interactive snapshot, and it rides the navigate result
+ * rather than a separate conversation item, so there is nothing to evict.
+ */
+export function pageContext() {
+  if (typeof document === "undefined") return {};
+  const title = document.title?.trim() || undefined;
+  // The first <h1> with text -- the page's own name for itself, when it has one.
+  const h1 = Array.from(document.querySelectorAll("h1")).find((el) => isRendered(el) && el.innerText?.trim());
+  const heading = h1?.innerText?.trim().slice(0, 120) || undefined;
+  return prune({ title, heading });
+}
+
+/**
  * Is a readiness marker present? Anywhere in the page, not only among the
  * things you can press.
  *

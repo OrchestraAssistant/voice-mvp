@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { connectRealtimeSession, isUsable, mintSession } from "./realtimeClient.js";
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
-import { planNavigation } from "./routes.js";
+import { planNavigation, matchPattern } from "./routes.js";
 import { transportFor } from "./transports.js";
 import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
@@ -410,10 +410,26 @@ export function VoiceProvider({
         const settled = await dom.waitForPage({ readyWhen: route?.readyWhen });
         const landed = typeof location !== "undefined" ? location.pathname : path;
 
+        // L0 live context: ground the model in where it ACTUALLY landed (which,
+        // for a bounced route, is not where it aimed) -- the matched route's own
+        // description, the params now in the url so the next call reuses them,
+        // and the page's heading. Cheap, and it rides this tool result, so there
+        // is no separate item to evict. Matched against `landed`, not `path`.
+        const here = (manifest.routes ?? []).find((r) => r.path === landed || dom.onPage(r.path, landed));
+        const params = here ? matchPattern(here.path, landed) : null;
+        const { title, heading } = dom.pageContext();
+        const context = {
+          ...(here?.description ? { page: here.description } : {}),
+          ...(here && here.path !== landed ? { route: here.path } : {}),
+          ...(params && Object.keys(params).length ? { params } : {}),
+          ...(heading ? { heading } : title ? { heading: title } : {}),
+        };
+
         return {
           status: "navigated",
           // Where we ended up, which is not always where we aimed.
           path: landed,
+          ...(Object.keys(context).length ? { context } : {}),
           ...(landed !== path ? { asked: path, note: "the app sent us somewhere else" } : {}),
           // Only when it is bad news. A page that came up cleanly says nothing.
           // Three outcomes, not two. A declared trigger that fired is the only
