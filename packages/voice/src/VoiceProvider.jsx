@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { connectRealtimeSession, isUsable, mintSession } from "./realtimeClient.js";
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
-import { resolveRoutePath } from "./routes.js";
+import { planNavigation } from "./routes.js";
 import { transportFor } from "./transports.js";
 import { PALETTES, RIM_MODES, fixedPalettes } from "./palettes.js";
 import * as dom from "./domActions.js";
@@ -363,8 +363,9 @@ export function VoiceProvider({
       if (!manifest) return { error: "Manifest not loaded yet" };
 
       if (name === "navigate") {
-        const path = resolveRoutePath(args, manifest.routes);
-        if (!path) {
+        const currentPath = typeof location !== "undefined" ? location.pathname : "";
+        const plan = planNavigation(args, manifest.routes, currentPath);
+        if (plan.error) {
           // A real message rather than a React Router stack trace. The model
           // retried an identical malformed call three times against the old
           // error, which told it nothing about what was wrong.
@@ -373,6 +374,18 @@ export function VoiceProvider({
             knownRoutes: manifest.routes.map((r) => r.path),
           };
         }
+        if (plan.missing) {
+          // A parameterised route we could not fill from the args or the current
+          // url. Do NOT navigate a pattern with a hole -- the router lands on
+          // not-found, which reads as "went somewhere random". Tell the model
+          // exactly what to resolve; a list query usually returns the id, or it
+          // can ask the user.
+          return {
+            error: `Cannot navigate to ${plan.pattern}: no value for ${plan.missing.join(", ")}. Resolve ${plan.missing.length > 1 ? "them" : "it"} (a list query usually returns the id) or ask the user, then pass it -- e.g. { "path": "${plan.pattern}", "${plan.missing[0]}": "..." }. If the value cannot be found, do it on the SCREEN instead: click the matching link, then dom_snapshot.`,
+            needs: plan.missing,
+          };
+        }
+        const path = plan.path;
         navigate(path);
 
         /**

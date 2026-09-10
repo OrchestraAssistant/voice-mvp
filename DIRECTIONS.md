@@ -359,3 +359,64 @@ not the app.
 
 The trigger to build any of these is the same as before: a real app we want that
 needs it.
+
+---
+
+## 4. Navigation: fill route params from live context, and what is still flat
+
+Workspace/org/tenant-scoped apps (Plane is the archetype) parameterise nearly
+every route -- `/:workspaceSlug/projects`, `/:workspaceSlug/profile/:userId`.
+The manifest ships the PATTERNS; the model has no live value for the params. So
+"take me to my work" used to send `/:workspaceSlug/...` straight to the router,
+which matched nothing and bounced to not-found -- "went somewhere completely
+different." This is framework-agnostic: our producers normalise every dynamic
+segment to `:param`, so a Next `[id]`, a react-router-dom `:id` and Plane's RR8
+route all hit it identically.
+
+### Built (widget, `routes.js` + the navigate handler)
+
+`planNavigation(args, routes, currentPath)` fills a target route's `:params`
+before anything reaches the router, from two sources, args winning:
+
+- **the current URL** -- the `:workspaceSlug` (etc.) the user is already standing
+  in is reused for free, matched by binding `location.pathname` against the
+  manifest route it fits. The model never has to know it.
+- **the model's args** -- a `projectId` it resolved via a list query, passed flat
+  or under `params`.
+
+A param neither source fills is a HOLE, and a path with a hole is **refused, not
+navigated**: the handler returns "no value for `userId` -- resolve it or do it on
+the screen" instead of landing on not-found. Same principle as the probe
+planner's brace check: never send a template literally. This is the general fix
+for the whole class, not a Plane patch.
+
+### Still flat -- the wired/unwired boundary
+
+- **Routes do not tier.** Operations get grouping + `expand({topic})` via the
+  relay catalog (`operations()` = queries + actions only); routes are dumped as
+  a flat list in the base prompt (`tools.js` `routeList`), reading only
+  `path`/`description`. A route's `group` field is silently ignored. So the only
+  lever to keep the navigable set small is PRUNING (`drop`, §skill), not
+  expand-into-topics. Wiring route grouping is a relay (`routeList` → the topic
+  tree) + widget (`expandTopic` include routes) change -- medium, deferred until
+  an app has too many real destinations to prune.
+- **Reachability is prose, not a marker.** Operations render `[screen only]` from
+  `confidence`; a route cannot be marked screen-only structurally -- the "reach
+  by the nav item" steer lives only in the description text. The model reads it;
+  nothing acts on it automatically.
+- **No live screen context (deferred #2).** The model still cannot SEE the page.
+  Filling `:workspaceSlug` from the URL is the cheapest slice of that idea; the
+  full version (a DOM snapshot / screen context on navigate) is deferred for its
+  per-turn token cost -- it lives in the growing conversation, not the cached
+  prefix. When built, the right shape is a cheap navigate-result context (landed
+  URL + resolved params + heading) always, and a full snapshot only on demand or
+  on an unexpected landing.
+
+### The missing-query corollary
+
+Some params are unfillable from ANY source -- Plane's "your work" needs the
+current user's id and no query returns it. Two honest answers, both upstream of
+navigation: the judgement pass adds a `usersMe` query so the id is resolvable, or
+it marks the page "reach by the nav item" and the model clicks it (a DOM tier
+job, which needs the model to see the screen -- back to #2). Param-filling makes
+the reachable routes reachable; it does not invent values that do not exist.
