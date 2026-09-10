@@ -1,6 +1,6 @@
 ---
 name: yourco-voice
-description: Set up and maintain @yourco/voice for an app — generate the manifest from source, probe it against the running app, then run the judgement pass that turns flagged operations into real descriptions and tiers. Use when adding voice control to an app, or when a voice session misbehaves (silent no-ops, wrong argument shapes, a page read before it loaded).
+description: Set up and maintain @yourco/voice for an app — generate the manifest from source, probe it against the running app, then run the judgement pass that turns flagged operations into real descriptions and tiers and makes the app's pages navigable (describe them, prune the ones that are not destinations, note how each is reached). Use when adding voice control to an app, or when a voice session misbehaves (silent no-ops, wrong argument shapes, a page read before it loaded, navigation landing on the wrong page).
 ---
 
 # Using @yourco/voice — generate, probe, judge
@@ -67,7 +67,9 @@ JUDGE. This stage is judgement, done against the app's own source.
 edits would be erased. Write into **`.voice/manifest.overlay.json`**, which is
 merged last and OUTRANKS the generated file. Patches match by identity: routes
 by `path`, queries and actions by `name`. A patch carries only the fields you are
-changing. Re-running `voice-cli` applies the overlay; the probe confirms it.
+changing, and may carry `"drop": true` to REMOVE a route or endpoint that should
+not ship (see pruning, below). Re-running `voice-cli` applies the overlay; the
+probe confirms it.
 
 ### The worklist is already in the manifest
 
@@ -132,6 +134,69 @@ Neither is extractable; both are judgement. The note that closes it:
 ```
 
 Then a fixture WITH `name` verifies through the probe, and the flag is resolved.
+
+### Pages are part of the manifest too
+
+Navigation is half of voice — "take me to X" — and it fails the same way a bad
+action does: the model picks the wrong page, or reaches for one it cannot get to.
+The generator does not FLAG pages (there is no schema to distrust), so they are
+not on the worklist above — but they need the same judgement, and this is where
+you give it.
+
+**Describe every page a person would ask for.** The generator fills a route's
+`description` from the page's own title when it can ("Event types"); replace that
+with a line that says what the page is FOR, in the words a user speaks — what is
+on it and why someone goes there, led by the label the UI uses, so any phrasing
+of the goal lands on it:
+
+```json
+{
+  "routes": [
+    {
+      "path": "/:workspaceSlug/profile/:userId",
+      "description": "Your work: your assigned and created items, your activity and a workload summary — where you check what is on your plate. This is the app's 'Your work' page."
+    }
+  ]
+}
+```
+
+Now "show me my work", "what am I working on" and "my tasks" all land here, where
+"A member's profile" would have caught none of them.
+
+**Say how a parameterised page is reached.** A route like
+`/:workspaceSlug/profile/:userId` has holes only a live value fills. In the
+description, note where each comes from — and flag the ones that CANNOT be
+resolved:
+
+- `:workspaceSlug` — the widget fills it from the current URL; you need say nothing.
+- `:projectId` — the model resolves it; name the query it comes from (`projectsList`).
+- `:userId` for "your work" — **no query returns the current user's id**, so the
+  URL cannot be built. Say so, and that the page is reached by the on-screen nav
+  item rather than by URL. A route the model cannot construct should point it at
+  the screen, not send it guessing.
+
+If a page like that is common, the better fix is upstream: add the missing query
+— a `usersMe` that returns the signed-in user — so the id becomes resolvable and
+the description can name it.
+
+**Prune the routes that are not destinations.** A fresh manifest lists every route
+the framework declares — redirect stubs (`/login`, `/sign-in`), catch-alls (`/*`),
+auth and onboarding screens, framework not-found pages. A person never asks for
+those, and 60 flat routes is 60 wrong turns. Drop them with `drop`:
+
+```json
+{
+  "routes": [
+    { "path": "/*", "drop": true },
+    { "path": "/login", "drop": true },
+    { "path": "/:workspaceSlug/projects/:projectId/settings/*", "drop": true }
+  ]
+}
+```
+
+What is left is the set of pages a user would name. Group the survivors with
+`group`, the same way you group operations (step 4), so the base prompt stays
+small.
 
 ### The honesty rules
 

@@ -42,17 +42,34 @@ export function applyOverlay(manifest, overlayPath) {
   for (const kind of ["routes", "queries", "actions"]) {
     for (const patch of overlay[kind] ?? []) {
       const key = kind === "routes" ? "path" : "name";
+      const list = (manifest[kind] ??= []);
+      const idx = list.findIndex((item) => item[key] === patch[key]);
+
+      // `drop: true` REMOVES a matched item. It is how the overlay prunes a
+      // route that is not a destination -- a redirect stub, a catch-all, an
+      // auth screen -- so the navigable set is the pages a person would ask
+      // for, not 60 flat routes including framework plumbing. Also works on an
+      // endpoint that should not ship. A drop that matches nothing is a no-op
+      // worth reporting, since the path it names has probably changed.
+      if (patch.drop === true) {
+        if (idx === -1) unmatched.push(`${kind} "${patch[key]}" (drop matched nothing)`);
+        else {
+          list.splice(idx, 1);
+          applied.push(`-${singular[kind]} ${patch[key]}`);
+        }
+        continue;
+      }
+
       if (kind !== "routes") named.push(patch.name);
-      const target = (manifest[kind] ??= []).find((item) => item[key] === patch[key]);
-      if (!target) {
+      if (idx === -1) {
         // Not an error: an app whose data layer no detector understands can
         // be described entirely by hand, and that should work.
-        manifest[kind].push(patch);
+        list.push(patch);
         applied.push(`+${singular[kind]} ${patch[key]}`);
         unmatched.push(`${kind} "${patch[key]}"`);
         continue;
       }
-      Object.assign(target, patch);
+      Object.assign(list[idx], patch);
       applied.push(`${singular[kind]} ${patch[key]}`);
     }
   }
