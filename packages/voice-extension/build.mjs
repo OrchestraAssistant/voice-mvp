@@ -25,6 +25,7 @@ const entries = [
   { entryPoints: ["src/background.js"], outfile: "dist/background.js" },
   { entryPoints: ["src/offscreen.js"], outfile: "dist/offscreen.js" },
   { entryPoints: ["src/popup.js"], outfile: "dist/popup.js" },
+  { entryPoints: ["src/permission.js"], outfile: "dist/permission.js" },
 ];
 
 const watch = process.argv.includes("--watch");

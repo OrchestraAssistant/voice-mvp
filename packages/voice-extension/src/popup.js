@@ -14,16 +14,21 @@ const status = document.getElementById("status");
 const send = (kind) =>
   new Promise((resolve) => chrome.runtime.sendMessage({ kind }, (r) => resolve(r ?? {})));
 
-document.getElementById("start").addEventListener("click", async () => {
-  status.textContent = "requesting microphone…";
+async function micGranted() {
   try {
-    // Grant for the extension origin, with this click. Stop the tracks right
-    // away -- we only needed the permission; the offscreen document opens its
-    // own stream against the now-granted permission.
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
-  } catch (err) {
-    status.textContent = `microphone blocked: ${err.message}`;
+    return (await navigator.permissions.query({ name: "microphone" })).state === "granted";
+  } catch {
+    return false; // can't tell -> assume not, send them through the grant flow
+  }
+}
+
+document.getElementById("start").addEventListener("click", async () => {
+  // A popup is the wrong place to PROMPT for the mic (it gets dismissed), so the
+  // grant happens in a tab. Here we only start once it is already granted.
+  if (!(await micGranted())) {
+    status.textContent = "opening a tab to enable the microphone…";
+    await chrome.tabs.create({ url: chrome.runtime.getURL("permission.html") });
+    status.textContent = "grant the mic in the new tab, then reopen this and click Start voice.";
     return;
   }
   status.textContent = "starting the session…";
