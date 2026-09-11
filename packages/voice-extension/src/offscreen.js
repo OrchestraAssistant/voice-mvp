@@ -1,69 +1,76 @@
 /**
  * The session host: mic + Realtime connection, in an offscreen document.
  *
- * One session for the whole browser, with a FIXED, generic toolset -- DOM
- * primitives, tab orchestration, and the three dispatchers (run_query /
- * run_action / expand). It is never re-minted as the user moves between tabs;
- * landing on a manifest page swaps the dispatcher's catalog DATA, not the tools.
- * That is the seam DIRECTIONS §1 describes, and it is why the extension can walk
- * the whole web in one session.
+ * One session for the whole browser, with a fixed, generic toolset. It is never
+ * re-minted as the user moves between tabs; landing on a manifest page swaps the
+ * dispatcher's catalog DATA, not the tools (DIRECTIONS §1's seam).
  *
- * Every tool the model calls is forwarded to the service worker, which routes
- * it to the world that can run it (tab tools here-adjacent; DOM/API in the
- * active tab's content script). This file only owns the audio and the loop.
+ * `connectRealtimeSession` already owns the entire protocol -- it attaches the
+ * mic, plays the model's audio, serialises responses, and runs the tool loop.
+ * The browser connects DIRECTLY to OpenAI with the ephemeral key the relay
+ * mints, so the relay is only needed for the brief mint at the start. All this
+ * file adds is the ONE bridge that makes every tier reachable: a tool the model
+ * calls becomes a message to the service worker, which routes it to the world
+ * that can run it, and the result comes back.
  */
-import { connectRealtimeSession, mintSession } from "../../voice/src/realtimeClient.js";
+import { connectRealtimeSession } from "../../voice/src/realtimeClient.js";
 import { KIND, sendToRuntime } from "./messaging.js";
 
-// The relay that mints Realtime sessions. Unlike the embedded widget (billed to
-// the app developer), the extension's relay/billing is an open question -- see
-// README 'Who pays'. For local testing, point it at the trial relay.
+// The relay that MINTS Realtime sessions (then the browser talks to OpenAI
+// directly). Billing/relay for the extension is an open question -- README.
 const RELAY_URL = "https://interpreter.hub.tailnet:3003";
 
 let session = null;
-let boundManifest = null; // the current tab's manifest, swapped in as the user moves
 
-/**
- * The bridge: a tool the model calls becomes a message to the service worker,
- * which routes it and returns a result we hand back to the session. This is the
- * ONE function that makes every tier reachable from one session.
- */
+// Session-LOCAL tools: realtimeClient has already acted on the side effect
+// (answer_aloud set the modality, end_session armed the hang-up) before calling
+// us; it only needs an acknowledgement back, not routing. dom_highlight and the
+// confirm/cancel tools are UI the extension does not mount yet -- ack them too.
+const LOCAL_ACK = new Set(["answer_aloud", "end_session", "dom_highlight", "confirm_pending_action", "cancel_pending_action"]);
+
+/** The bridge: model tool call -> service worker -> the world that can run it. */
 async function onToolCall(name, args) {
+  if (LOCAL_ACK.has(name)) return { acknowledged: true, ...(args?.because ? { because: args.because } : {}) };
   const result = await sendToRuntime({ kind: KIND.TOOL_CALL, name, args });
   return result ?? { error: "no result" };
 }
 
-/**
- * Start the single session. Minted with a DOM-only baseline manifest so a page
- * that serves nothing still works; a real manifest is swapped in via bindManifest.
- */
+const log = (...a) => console.log("[voice-offscreen]", ...a);
+
+/** Start the single session, minted with the active tab's manifest. */
 async function startSession(manifest) {
   if (session) return;
-  boundManifest = manifest ?? { routes: [], queries: [], actions: [] };
-  const minted = await mintSession({ relayUrl: RELAY_URL, manifest: boundManifest });
-  // TODO(realtime): connectRealtimeSession wires the mic, the data channel and
-  // the tool-call callbacks. Route its tool calls through onToolCall above, and
-  // its audio to this document's WebRTC peer. Signature lives in
-  // packages/voice/src/realtimeClient.js; the embedded widget (VoiceProvider)
-  // is the reference for wiring executeTool -> onToolCall.
-  session = await connectRealtimeSession({
-    minted,
-    manifest: boundManifest,
-    onToolCall, // <- the bridge; the rest of the callback shape is the TODO
-  });
-}
-
-/**
- * Swap the catalog to a new tab's manifest WITHOUT re-minting -- the dispatcher
- * makes this a data change, not a tools change.
- * TODO(realtime): push the new catalog into the live session (a session.update
- * with the new instructions/catalog, or the dispatcher reading `boundManifest`).
- */
-function bindManifest(manifest) {
-  boundManifest = manifest ?? { routes: [], queries: [], actions: [] };
+  try {
+    session = await connectRealtimeSession({
+      relayUrl: RELAY_URL,
+      manifest: manifest ?? { routes: [], queries: [], actions: [] },
+      onToolCall,
+      onStatus: (s) => log("status:", s),
+      onTranscript: (t) => log("transcript:", t?.role, t?.text),
+      onHangUp: () => {
+        log("hang up");
+        session?.stop?.();
+        session = null;
+      },
+    });
+    log("connected -- speak to drive the active tab");
+  } catch (err) {
+    log("failed to connect:", err?.message ?? err);
+    session = null;
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.kind === "start-session") startSession(msg.manifest);
-  if (msg?.kind === "bind-manifest") bindManifest(msg.manifest);
+  if (msg?.kind === "stop-session") {
+    session?.stop?.();
+    session = null;
+  }
+});
+
+// Tell the worker we are alive; it replies with the pending start (if the user
+// already clicked), which avoids the race where start-session is sent before
+// this document's listener is attached.
+sendToRuntime({ kind: "offscreen-ready" }).then((pending) => {
+  if (pending?.start) startSession(pending.manifest);
 });

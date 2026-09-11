@@ -29,25 +29,32 @@ user's auth cookies.
 
 ## What's wired vs. stubbed
 
-**Wired (real):**
+**Wired (real) — v1 drives the active tab by voice:**
+- The Realtime/mic session (`src/offscreen.js`) — `connectRealtimeSession` owns
+  the whole protocol (mic, audio out, response serialisation, the tool loop).
+  The browser connects DIRECTLY to OpenAI with the ephemeral key; the relay is
+  only hit for the brief mint at the start.
+- The tool bridge — every tool the model calls is forwarded offscreen → worker →
+  the world that runs it; session-local tools (answer_aloud/end_session) are
+  acked in place.
 - Tab orchestration — `open/close/switch/navigate/list_tabs` via `chrome.tabs`
-  (`src/tabs.js`). The reliable, deterministic core; build on this first.
-- The message protocol and routing (`src/messaging.js`, `src/background.js`).
-- Manifest probing — `<meta>` tag and `/.well-known/voice/manifest.json`
-  (`src/manifestProbe.js`).
-- The content-script tool executor — DOM tools, API calls with page cookies,
-  `expand`, and route param-fill (`src/content.js`).
+  (`src/tabs.js`). The reliable, deterministic core.
+- Message protocol + routing (`src/messaging.js`, `src/background.js`), with a
+  ready-handshake so the session starts without a load race.
+- Manifest probing — `<meta>` + `/.well-known/voice/manifest.json` — and the
+  content-script tool executor: DOM tools, API calls with page cookies, `expand`,
+  route param-fill (`src/content.js`).
 
-**Stubbed (structured, marked `TODO`):**
-- The Realtime/mic session in `src/offscreen.js` — `connectRealtimeSession`
-  wiring and the catalog-swap-on-tab-change. The embedded `VoiceProvider` is the
-  reference for the tool-call loop.
-- `window.__voice` probing — needs a MAIN-world injection (isolated content
-  scripts can't see the page's JS globals); the meta/well-known paths work now.
-- SPA soft-navigation — content-script `navigate` does a full `location.assign`;
-  an in-app route change needs MAIN-world router access.
-- The visible widget UI (bubble/rim) — reuse `Interpreter`/`useInterpreter` from
-  the package, rendered into an injected shadow root.
+**Not yet:**
+- **Tab tools aren't exposed to the MODEL yet.** The relay mints the session's
+  tool schemas from the manifest (page-driving tools: navigate/dom_*/run_query/
+  run_action/expand); the tab tools are implemented but the model has no schema
+  for them until we add them via `session.update` or a relay change. So v1
+  drives ONE tab; multi-tab orchestration is the next step.
+- No visible widget UI yet (bubble/rim) — reuse `Interpreter`/`useInterpreter`
+  into an injected shadow root. Today it's headless: click the icon and talk.
+- `window.__voice` probing (needs a MAIN-world injection; meta/well-known work).
+- SPA soft-nav — content-script `navigate` does a full `location.assign`.
 
 ## Build & load
 
@@ -56,8 +63,19 @@ npm install          # in this package (esbuild)
 npm run build        # bundles src/ -> dist/
 ```
 Then in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked**
-→ select this directory. Click the toolbar icon on a tab to point the session at
-it.
+→ select this directory. Open a normal web page, **click the toolbar icon** to
+point the session at that tab, grant the mic prompt, and talk — the model drives
+that page (navigate, read, click, run its API if it serves a manifest).
+
+Requirements to actually connect:
+- The **relay must be up at mint time** (`RELAY_URL` in `src/offscreen.js`,
+  default the trial relay). After minting, audio is browser↔OpenAI directly, so
+  a relay that dies mid-call doesn't drop the session.
+- The browser must **trust the relay's cert** and reach it (the hub CA, for the
+  trial relay).
+- Grant the **microphone** permission when Chrome prompts.
+- Watch the offscreen document's console (`chrome://extensions` → the extension →
+  "Inspect views: offscreen.html") for `[voice-offscreen]` status/transcript logs.
 
 ## The two gates (not code — design, per DIRECTIONS §1)
 

@@ -14,6 +14,7 @@ import { KIND, TAB_TOOLS, PAGE_TOOLS, sendToTab } from "./messaging.js";
 import { TAB_HANDLERS } from "./tabs.js";
 
 let drivingTabId = null; // the tab the session is currently acting on
+let pendingStart = null; // { manifest } waiting for the offscreen doc to come up
 
 const OFFSCREEN = "offscreen.html";
 
@@ -52,27 +53,41 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.kind === KIND.MANIFEST) {
     // A content script reported the page's manifest (or null). If this is the
     // tab we are driving, hand it to the session so the dispatcher can swap its
-    // catalog WITHOUT re-minting -- the seam that lets one session walk between
-    // apps. TODO(offscreen): forward to the offscreen session.
+    // catalog WITHOUT re-minting -- the seam that lets one session walk apps.
     if (sender.tab?.id === drivingTabId) {
-      // chrome.runtime.sendMessage({ kind: "bind-manifest", manifest: msg.manifest });
+      chrome.runtime.sendMessage({ kind: "bind-manifest", manifest: msg.manifest }).catch(() => {});
     }
     return false;
   }
-  if (msg?.kind === KIND.ACTIVATE) {
-    startOnTab(sender.tab?.id).then(() => reply({ ok: true }), (err) => reply({ error: String(err?.message ?? err) }));
-    return true;
+  if (msg?.kind === "offscreen-ready") {
+    // The offscreen document attached its listener. Hand it the start the user
+    // already asked for, closing the load race. reply() IS the handshake.
+    const start = pendingStart;
+    pendingStart = null;
+    reply(start ? { start: true, manifest: start.manifest } : { start: false });
+    return false;
   }
 });
 
-/** Point the session at a tab: remember it, ensure the offscreen session exists. */
+/** Point the session at a tab: probe its manifest, ensure the offscreen doc, start. */
 async function startOnTab(tabId) {
   if (tabId == null) return;
   drivingTabId = tabId;
+
+  // The page's manifest lights up the high-fidelity tier; null = DOM-only. Probe
+  // the tab live rather than trusting an earlier report.
+  let manifest = null;
+  try {
+    manifest = (await sendToTab(tabId, { kind: KIND.PROBE }))?.manifest ?? null;
+  } catch {
+    // No content script (a chrome:// page, the store): DOM-only baseline.
+  }
+
+  pendingStart = { manifest };
   await ensureOffscreen();
-  // TODO(offscreen): tell the offscreen document to (re)configure the session
-  // for this tab -- mint if not yet minted (see offscreen.js), else just rebind
-  // the catalog to this tab's manifest.
+  // If the doc was already up, it will not send offscreen-ready again, so push
+  // the start directly; the ready-handshake covers the first-creation race.
+  chrome.runtime.sendMessage({ kind: "start-session", manifest }).catch(() => {});
 }
 
 // Clicking the toolbar icon points the session at the current tab.
