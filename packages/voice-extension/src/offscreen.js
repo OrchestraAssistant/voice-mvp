@@ -45,6 +45,14 @@ async function onToolCall(name, args) {
 
 const log = (...a) => console.log("[voice-offscreen]", ...a);
 
+// The UI lives in the content script (across the process boundary), so the
+// panel's state is streamed to it. Kept here too, so a content script that
+// re-mounts after a navigation can be handed the whole history.
+let uiStatus = "idle";
+const transcripts = [];
+/** Push a UI update toward the content panel (the worker relays it to the tab). */
+const toUI = (msg) => sendToRuntime(msg).catch(() => {});
+
 // Synchronous, so two starts racing before the await (the start-session message
 // AND the ready-handshake both fire on first activation) cannot both connect --
 // which is the double "connected" in the logs, two sessions fighting.
@@ -54,17 +62,25 @@ let starting = false;
 async function startSession(manifest) {
   if (session || starting) return;
   starting = true;
+  uiStatus = "connecting";
+  toUI({ kind: KIND.STATE, status: "connecting" });
   try {
     session = await connectRealtimeSession({
       relayUrl: RELAY_URL,
       manifest: manifest ?? { routes: [], queries: [], actions: [] },
       onToolCall,
-      // Voice-only: there is no text panel here, so every reply must be SPOKEN,
-      // or it goes nowhere. Override the text-by-default heuristic to always
-      // pick audio.
-      replyModality: () => "audio",
-      onStatus: (s) => log("status:", s),
-      onTranscript: (t) => log("transcript:", t?.role, t?.text),
+      onStatus: (s) => {
+        uiStatus = s;
+        log("status:", s);
+        toUI({ kind: KIND.STATE, status: s });
+      },
+      onActivity: (a) => toUI({ kind: KIND.STATE, userSpeaking: a?.userSpeaking, agentBusy: a?.agentBusy }),
+      onTranscript: (t) => {
+        if (!t?.text) return;
+        transcripts.push({ role: t.role, text: t.text });
+        log("transcript:", t.role, t.text);
+        toUI({ kind: KIND.TRANSCRIPT, role: t.role, text: t.text });
+      },
       // The full event stream, so we can see a response being requested and a
       // tool being called (a silent navigate/dom_snapshot has no transcript).
       onEvent: (e) => log("event:", e?.type, e?.name ?? e?.modality ?? "", e?.because ?? ""),
@@ -77,6 +93,8 @@ async function startSession(manifest) {
     log("connected -- speak to drive the active tab");
   } catch (err) {
     log("failed to connect:", err?.message ?? err);
+    uiStatus = "error";
+    toUI({ kind: KIND.STATE, status: "error" });
     session = null;
   } finally {
     starting = false;
@@ -88,6 +106,19 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.kind === "stop-session") {
     session?.stop?.();
     session = null;
+  }
+  // A content-script panel (re)mounted -- hand it the whole current state so it
+  // renders the ongoing conversation, not a blank box.
+  if (msg?.kind === KIND.UI_READY) {
+    toUI({ kind: KIND.SNAPSHOT, status: uiStatus, transcripts });
+  }
+  // The user typed into the panel.
+  if (msg?.kind === KIND.CMD) {
+    if (msg.cmd === "sendText" && msg.text && session) {
+      transcripts.push({ role: "user", text: msg.text });
+      toUI({ kind: KIND.TRANSCRIPT, role: "user", text: msg.text });
+      session.sendTextTurn(msg.text);
+    }
   }
 });
 

@@ -17,6 +17,7 @@ import { expandTopic } from "../../voice/src/catalog.js";
 import { planNavigation } from "../../voice/src/routes.js";
 import { KIND } from "./messaging.js";
 import { probeManifest } from "./manifestProbe.js";
+import { mountPanel } from "./ui.jsx";
 
 let manifest = null;
 
@@ -90,3 +91,8 @@ probeManifest().then((m) => {
   manifest = m;
   chrome.runtime.sendMessage({ kind: KIND.MANIFEST, manifest: m, url: location.href }).catch(() => {});
 });
+
+// The visible panel, re-created on each page load (it holds no session state --
+// it re-subscribes to the offscreen session, which kept running).
+if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", mountPanel, { once: true });
+else mountPanel();

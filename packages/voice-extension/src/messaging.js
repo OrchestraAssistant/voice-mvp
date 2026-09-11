@@ -19,7 +19,20 @@ export const KIND = {
   MANIFEST: "manifest",
   // content -> background: the user clicked the widget / said start on this tab.
   ACTIVATE: "activate-tab",
+
+  // The UI channel: the session lives in the offscreen doc, the panel in the
+  // content script, so its state is streamed across (via the worker).
+  STATE: "ui-state", // offscreen -> content: { status, userSpeaking, agentBusy }
+  TRANSCRIPT: "ui-transcript", // offscreen -> content: { role, text }
+  SNAPSHOT: "ui-snapshot", // offscreen -> content: { status, transcripts } (on (re)mount)
+  UI_READY: "ui-ready", // content -> offscreen: I mounted, send me the current state
+  CMD: "ui-command", // content -> offscreen: { cmd: "sendText" | "start" | "stop", ... }
 };
+
+/** offscreen -> content fire-and-forget UI updates the worker relays to the tab. */
+export const UI_TO_CONTENT = new Set(["ui-state", "ui-transcript", "ui-snapshot"]);
+/** content -> offscreen fire-and-forget UI commands the worker relays. */
+export const UI_TO_OFFSCREEN = new Set(["ui-ready", "ui-command"]);
 
 /**
  * Which world runs a given tool. The split IS the architecture: the browser

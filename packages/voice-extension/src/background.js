@@ -10,7 +10,7 @@
  * (DOM + API + route navigation) go to the active tab's content script; session
  * tools stay in the offscreen document.
  */
-import { KIND, TAB_TOOLS, PAGE_TOOLS, sendToTab } from "./messaging.js";
+import { KIND, TAB_TOOLS, PAGE_TOOLS, UI_TO_CONTENT, UI_TO_OFFSCREEN, sendToTab } from "./messaging.js";
 import { TAB_HANDLERS } from "./tabs.js";
 
 let drivingTabId = null; // the tab the session is currently acting on
@@ -72,6 +72,16 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.kind === KIND.TOOL_CALL) {
     dispatchTool(msg.name, msg.args).then(reply, (err) => reply({ error: String(err?.message ?? err) }));
     return true;
+  }
+  // UI channel relays (fire-and-forget). Session state flows offscreen -> the
+  // driven tab's panel; the panel's commands flow back to the offscreen session.
+  if (UI_TO_CONTENT.has(msg?.kind)) {
+    if (drivingTabId != null) sendToTab(drivingTabId, msg).catch(() => {});
+    return false;
+  }
+  if (UI_TO_OFFSCREEN.has(msg?.kind)) {
+    chrome.runtime.sendMessage(msg).catch(() => {});
+    return false;
   }
   if (msg?.kind === KIND.MANIFEST) {
     // A content script reported the page's manifest (or null). If this is the
