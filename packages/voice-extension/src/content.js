@@ -1,48 +1,92 @@
 /**
- * v1: inject the REAL embedded widget onto any page.
+ * The per-tab DOM/API bridge for the PERSISTENT-session build.
  *
- * The cleanest possible extension: the content script mounts `VoiceProvider` +
- * `Interpreter` -- the same bubble, rim, mic and session the embedded package
- * ships -- into the page. Running it in the page (not a hidden offscreen
- * document) is what makes the microphone work: the user's click on the bubble
- * is the gesture getUserMedia requires, and it prompts for mic against the page
- * the user is looking at. The widget already owns the whole loop -- session,
- * DOM tools, navigate, API calls -- so there is nothing to route.
+ * The session lives in the offscreen document (it survives page navigations);
+ * this content script is the limb that runs in each page, executing the DOM and
+ * API tools the session routes to it and reporting the page's manifest. It is
+ * re-created on every page load -- which is fine, because it holds no session
+ * state; it just reconnects to the one that is already running.
  *
- * The manifest is probed from the page (meta / .well-known); with none, the
- * widget runs its universal DOM tier. The service-worker + offscreen files
- * remain in src/ for the cross-tab, one-persistent-session future (DIRECTIONS
- * §1); this v1 is per-tab, exactly like the embedded widget.
+ * Headless for now (no visible rim): this build exists to prove the session
+ * persists across reloads. The rim is ported on next, re-mounted per page and
+ * driven by the offscreen session's state over messages.
  */
-import React from "react";
-import { createRoot } from "react-dom/client";
-import { VoiceProvider, Interpreter } from "../../voice/dist/voice.js";
+import * as dom from "../../voice/src/domActions.js";
+import { transportFor } from "../../voice/src/transports.js";
+import { expandTopic } from "../../voice/src/catalog.js";
+import { planNavigation } from "../../voice/src/routes.js";
+import { KIND } from "./messaging.js";
 import { probeManifest } from "./manifestProbe.js";
 
-const RELAY_URL = "https://interpreter.hub.tailnet:3003";
+let manifest = null;
 
-let mounted = false;
-async function mount() {
-  if (mounted || !document.body) return;
-  mounted = true;
-
-  const manifest = (await probeManifest()) ?? { routes: [], queries: [], actions: [] };
-
-  const host = document.createElement("div");
-  host.id = "yourco-voice-ext";
-  document.body.appendChild(host);
-
-  createRoot(host).render(
-    React.createElement(
-      VoiceProvider,
-      { manifest, relayUrl: RELAY_URL },
-      React.createElement(Interpreter, null),
-    ),
-  );
+async function perform(operation, args) {
+  const transport = transportFor(operation);
+  const { method, url, body } = transport.request({ operation, args });
+  const res = await fetch(url, {
+    method,
+    credentials: "include", // the user's own session
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  return transport.read(data, { ok: res.ok, status: res.status });
 }
 
-if (document.readyState === "loading") {
-  window.addEventListener("DOMContentLoaded", mount, { once: true });
-} else {
-  mount();
+const opByName = (name) => [...(manifest?.queries ?? []), ...(manifest?.actions ?? [])].find((o) => o.name === name);
+
+async function runTool(name, args = {}) {
+  switch (name) {
+    case "navigate": {
+      const plan = planNavigation(args, manifest?.routes ?? [], location.pathname);
+      if (plan.error) return { error: "no route matched", knownRoutes: (manifest?.routes ?? []).map((r) => r.path) };
+      if (plan.missing) return { error: `no value for ${plan.missing.join(", ")} -- resolve it or do it on screen`, needs: plan.missing };
+      location.assign(plan.path);
+      return { status: "navigated", path: plan.path, context: dom.pageContext() };
+    }
+    case "dom_snapshot":
+      return { elements: dom.snapshot() };
+    case "dom_click":
+      dom.click(args.elementId);
+      return { status: "clicked" };
+    case "dom_type":
+      dom.typeText(args.elementId, args.text);
+      return { status: "typed" };
+    case "expand":
+      return manifest ? (expandTopic(manifest, args.topic) ?? { error: "no such topic" }) : { error: "this page serves no manifest" };
+    case "run_query":
+    case "run_action": {
+      const op = opByName(args.name);
+      if (!op) return { error: `no operation named ${args.name}` };
+      try {
+        return { result: await perform(op, args.args ?? args.items ?? {}) };
+      } catch (err) {
+        return { error: err.message };
+      }
+    }
+    default:
+      return { error: `content script cannot run tool: ${name}` };
+  }
 }
+
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg?.kind === KIND.TOOL_CALL) {
+    runTool(msg.name, msg.args).then(reply, (err) => reply({ error: String(err?.message ?? err) }));
+    return true;
+  }
+  if (msg?.kind === KIND.PROBE) {
+    reply({ kind: KIND.MANIFEST, manifest });
+    return false;
+  }
+});
+
+probeManifest().then((m) => {
+  manifest = m;
+  chrome.runtime.sendMessage({ kind: KIND.MANIFEST, manifest: m, url: location.href }).catch(() => {});
+});

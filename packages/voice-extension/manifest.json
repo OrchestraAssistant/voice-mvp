@@ -1,11 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Voice (any page)",
-  "version": "0.1.0",
-  "description": "The @yourco/voice widget injected onto any page: click the bubble and talk. Binds to a page's manifest when it serves one.",
+  "name": "Voice (persistent)",
+  "version": "0.2.0",
+  "description": "A voice session that lives in the browser, not the page: it survives navigations and full reloads, and binds to a page's manifest when it serves one.",
 
-  "//": "v1 runs the widget in the page (content script), so the mic prompt comes from the user's click. host_permissions covers the cross-origin relay mint + the app's own API. The background/offscreen cross-tab path (DIRECTIONS §1) is kept in src/ but not loaded here.",
+  "//": "The session lives in the offscreen document (survives page loads); the content script is the per-page DOM/API bridge; the popup grants the mic once for the extension origin. tabs/scripting are the browser-orchestration core.",
+  "permissions": ["tabs", "scripting", "offscreen", "storage"],
   "host_permissions": ["<all_urls>"],
+
+  "background": { "service_worker": "dist/background.js", "type": "module" },
+
+  "action": { "default_popup": "popup.html", "default_title": "Voice: start a session on this tab" },
 
   "content_scripts": [
     {

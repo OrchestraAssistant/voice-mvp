@@ -67,6 +67,21 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     reply(start ? { start: true, manifest: start.manifest } : { start: false });
     return false;
   }
+  if (msg?.kind === "start-on-active-tab") {
+    // From the popup, after it granted the mic. Point the session at whatever
+    // tab is in front.
+    chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then(([tab]) => startOnTab(tab?.id))
+      .then(() => reply({ ok: true }), (err) => reply({ error: String(err?.message ?? err) }));
+    return true;
+  }
+  if (msg?.kind === "stop-session") {
+    chrome.runtime.sendMessage({ kind: "stop-session" }).catch(() => {});
+    drivingTabId = null;
+    reply({ ok: true });
+    return false;
+  }
 });
 
 /** Point the session at a tab: probe its manifest, ensure the offscreen doc, start. */
@@ -90,8 +105,8 @@ async function startOnTab(tabId) {
   chrome.runtime.sendMessage({ kind: "start-session", manifest }).catch(() => {});
 }
 
-// Clicking the toolbar icon points the session at the current tab.
-chrome.action.onClicked.addListener((tab) => startOnTab(tab.id));
+// The toolbar icon opens the popup (which grants the mic and sends
+// start-on-active-tab), so there is no onClicked handler here.
 
 // If the driven tab goes away, stop driving it.
 chrome.tabs.onRemoved.addListener((tabId) => {

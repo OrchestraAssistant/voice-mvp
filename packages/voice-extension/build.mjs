@@ -18,9 +18,14 @@ const common = {
   define: { "process.env.NODE_ENV": '"production"' },
 };
 
-// v1 loads only the content script (the widget in the page). background/offscreen
-// are the cross-tab future path -- kept in src/, not built into the shipped v1.
-const entries = [{ entryPoints: ["src/content.js"], outfile: "dist/content.js" }];
+// The persistent build: session in the offscreen document, DOM/API bridge in the
+// content script, the mic granted by the popup, all routed by the worker.
+const entries = [
+  { entryPoints: ["src/content.js"], outfile: "dist/content.js" },
+  { entryPoints: ["src/background.js"], outfile: "dist/background.js" },
+  { entryPoints: ["src/offscreen.js"], outfile: "dist/offscreen.js" },
+  { entryPoints: ["src/popup.js"], outfile: "dist/popup.js" },
+];
 
 const watch = process.argv.includes("--watch");
 
