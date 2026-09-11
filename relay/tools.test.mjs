@@ -348,3 +348,24 @@ describe("what the model is told about routes", () => {
     assert.ok(!payload.includes("callSites"));
   });
 });
+
+describe("a page with no manifest gets the generic, DOM-first prompt", () => {
+  const empty = { routes: [], queries: [], actions: [] };
+
+  test("it does not claim to be an app or a task manager, and points at the DOM", () => {
+    const p = buildInstructions(empty, null);
+    assert.doesNotMatch(p, /task-management/, "asserts a task app onto an unknown page");
+    assert.match(p, /must not assume/, "should tell the model not to assume what the site is");
+    assert.match(p, /dom_snapshot/, "the DOM is the only truth for an unknown page");
+  });
+
+  test("the language directive still applies", () => {
+    assert.match(buildInstructions(empty, LANGUAGES.find((l) => l.code === "es")), /Speak and write in/);
+    assert.doesNotMatch(buildInstructions(empty, null), /Speak and write in/);
+  });
+
+  test("a manifest with operations still gets the app prompt", () => {
+    const app = { routes: [{ path: "/x" }], queries: [{ name: "q" }], actions: [] };
+    assert.match(buildInstructions(app, null), /operations are listed below/);
+  });
+});

@@ -322,7 +322,45 @@ export function resolveLanguage(requested) {
   return { language: match };
 }
 
+/**
+ * The prompt for a page that serves NO manifest -- the extension on the open
+ * web, or an app that generated nothing. The app prompt below asserts "a
+ * web app" with a catalog of operations and tells the model to reach for the
+ * catalog before the DOM; with no catalog that is not just useless but
+ * misleading -- a model told it is in a task app, handed no tools for this
+ * page, and steered away from looking, confabulates task lists onto a
+ * newspaper. Here the only truth is what is on the screen, so the whole prompt
+ * points at the DOM.
+ */
+function genericPageInstructions(language) {
+  return `You are a voice assistant embedded in the web page the user is currently viewing. You can see and control that page on their behalf.
+
+You do NOT know in advance what site or page this is, and you must not assume. Before answering a question about the page or acting on it, call dom_snapshot to see what is actually there -- its headings, controls and text. What you see is the real page in front of the user, whatever kind of site it is.
+
+Your tools:
+- dom_snapshot -- see the interactive elements currently on the page.
+- dom_click / dom_type -- click an element or type into a field, by the id a snapshot gave it.
+- dom_highlight -- draw a ring around an element to point it out.
+- navigate -- go to a path or URL.
+
+Rules:
+1. ACT, don't narrate. If a request maps to a tool, call it -- never describe what you could do. To answer a question about the page, snapshot it and read what is there rather than guessing what the site might be.
+2. Answer in ONE short sentence. The user is looking at the screen.
+3. Never end with an offer of further help -- no "anything else?". Say what happened and stop.
+4. If something fails or no tool fits, say so in one sentence, say WHY, and stop. Do not propose alternatives unless asked.
+5. dom_click and dom_type take a LIST, so one call does the whole job; never stop part-way through a set.
+6. When someone asks WHERE something is, or how to do it themselves, POINT AT IT: dom_snapshot, then dom_highlight, then one short sentence. The ring is the answer; do not also describe the position in words.
+7. When the user dismisses you -- "that's all", "goodbye", "stop listening" -- call end_session and say one short goodbye. Only then.
+8. Your replies are shown as TEXT by default. If your reply carries information they asked for and cannot see -- an answer, a value read off the page -- call answer_aloud in the same turn so it is spoken instead.${
+    language ? `\n\n9. Speak and write in ${language.name}, always.` : ""
+  }`;
+}
+
 export function buildInstructions(manifest, language = null) {
+  // No routes, no operations: nothing the catalog prompt below can truthfully
+  // say. The page is whatever the user is looking at, read through the DOM.
+  const hasApp = (manifest.routes?.length ?? 0) + (manifest.queries?.length ?? 0) + (manifest.actions?.length ?? 0) > 0;
+  if (!hasApp) return genericPageInstructions(language);
 
   // The description when there is one, the component name only as a fallback.
   // A component name is frequently noise -- cal.diy's routes are called things
@@ -333,7 +371,7 @@ export function buildInstructions(manifest, language = null) {
     .join("\n");
   const confirmActions = manifest.actions.filter((a) => a.requiresConfirmation).map((a) => a.name);
 
-  return `You are a voice assistant embedded in a task-management web app. You can see and control the app on the user's behalf using the tools available to you.
+  return `You are a voice assistant embedded in a web app. You can see and control the app on the user's behalf using the tools available to you. Its pages and operations are below; what they are FOR tells you what kind of app it is.
 
 Known pages in this app:
 ${routeList}
