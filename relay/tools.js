@@ -371,7 +371,7 @@ export function buildInstructions(manifest, language = null) {
     .join("\n");
   const confirmActions = manifest.actions.filter((a) => a.requiresConfirmation).map((a) => a.name);
 
-  return `You are a voice assistant embedded in a web app. You can see and control the app on the user's behalf using the tools available to you. Its pages and operations are below; what they are FOR tells you what kind of app it is.
+  return `You are a voice assistant embedded in ${manifest.description || "a web app"}. You can see and control the app on the user's behalf using the tools available to you. Its pages and operations are below; what they are FOR tells you what kind of app it is.
 
 Known pages in this app:
 ${routeList}

@@ -40,7 +40,7 @@ export function runDetectors(detectors, base, roles = STATIC_ROLES) {
       for (const kind of ["routes", "queries", "actions"]) context[kind].push(...(found[kind] ?? []));
       // A stage can hand something to the ones after it -- the overlay names
       // what the exclusion policy must keep, for instance.
-      for (const key of ["named", "include", "uncalled", "excluded"]) {
+      for (const key of ["named", "include", "uncalled", "excluded", "description"]) {
         if (found[key] !== undefined) context[key] = found[key];
       }
     }

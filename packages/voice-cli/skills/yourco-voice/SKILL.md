@@ -135,6 +135,22 @@ Neither is extractable; both are judgement. The note that closes it:
 
 Then a fixture WITH `name` verifies through the probe, and the flag is resolved.
 
+### Say what the app IS
+
+The very first line of the session prompt tells the model what app it is embedded
+in. That is the model's strongest anchor, so it must be TRUE: assert "a
+task-management app" onto a store and the model invents task lists. The generator
+seeds a manifest-level `description` from the app's `package.json`; refine it into
+one line written for the model -- what the app is, in the words a user would use:
+
+```json
+{ "description": "Plane: an issue and project tracker -- projects, work items, cycles and modules." }
+```
+
+A top-level `description` in the overlay outranks the seed. Absent, the prompt
+falls back to a neutral "a web app". Get this right before the pages and
+operations: it frames everything the model reads after it.
+
 ### Pages are part of the manifest too
 
 Navigation is half of voice — "take me to X" — and it fails the same way a bad

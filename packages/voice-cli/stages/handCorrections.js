@@ -47,6 +47,8 @@ export const handCorrections = {
       notes.push(`overrides what a stage found: ${overridden.slice(0, 6).join(", ")}${overridden.length > 6 ? ", ..." : ""}`);
     }
     for (const miss of result.unmatched) notes.push(`${OVERLAY_FILE} describes ${miss}, which no detector found`);
-    return { notes, named: result.named, include: result.include };
+    // Only forward `description` when the overlay actually set one, so a missing
+    // overlay description does not clobber the seed app-meta read from source.
+    return { notes, named: result.named, include: result.include, ...(result.description ? { description: result.description } : {}) };
   },
 };

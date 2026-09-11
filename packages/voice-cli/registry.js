@@ -27,6 +27,7 @@ import { valibotBodies } from "./schema/valibot.js";
 import { yupBodies } from "./schema/yup.js";
 import { arktypeBodies } from "./schema/arktype.js";
 import { tsTypes } from "./schema/typescript.js";
+import { appMeta } from "./stages/appMeta.js";
 import { unresolvedBodies } from "./stages/unresolvedBodies.js";
 import { pageMetadata } from "./schema/pageMetadata.js";
 import { callSites } from "./stages/callSites.js";
@@ -73,6 +74,8 @@ export const STAGES = [
   // Last of the body enrichers: it flags whatever none of them could fill, so
   // it must see the finished bodies. Placed after tsTypes for that reason.
   unresolvedBodies,
+  // Not about operations at all: the app's own one-line identity for the prompt.
+  appMeta,
   pageMetadata,
   callSites,
 

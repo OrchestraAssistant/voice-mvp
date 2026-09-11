@@ -160,7 +160,10 @@ function main() {
     generatedAt: "static-analysis",
     generatedBy: results.filter((r) => !r.skipped && !r.failed).map((r) => r.detector),
   };
-  fs.writeFileSync(outFile, JSON.stringify({ ...stamp, ...manifest }, null, 2));
+  // The app's own one-line identity (app-meta seed, overlay refinement), so the
+  // session prompt says what this app IS instead of the relay assuming it.
+  const appDescription = context.description ? { description: context.description } : {};
+  fs.writeFileSync(outFile, JSON.stringify({ ...stamp, ...appDescription, ...manifest }, null, 2));
 
   console.log(`Wrote manifest: ${outFile}`);
   console.log(`  routes:  ${manifest.routes.length}`);

@@ -369,3 +369,15 @@ describe("a page with no manifest gets the generic, DOM-first prompt", () => {
     assert.match(buildInstructions(app, null), /operations are listed below/);
   });
 });
+
+describe("the app's identity comes from the manifest, not a constant", () => {
+  test("the opening line uses manifest.description when present", () => {
+    const app = { description: "a bakery storefront", routes: [{ path: "/x" }], queries: [{ name: "q" }], actions: [] };
+    assert.match(buildInstructions(app, null), /embedded in a bakery storefront/);
+  });
+  test("it falls back to a neutral 'a web app' when there is no description", () => {
+    const app = { routes: [{ path: "/x" }], queries: [{ name: "q" }], actions: [] };
+    assert.match(buildInstructions(app, null), /embedded in a web app/);
+    assert.doesNotMatch(buildInstructions(app, null), /task-management/);
+  });
+});

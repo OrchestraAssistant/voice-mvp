@@ -86,5 +86,11 @@ export function applyOverlay(manifest, overlayPath) {
       if (dropped) applied.push(`include: kept ${manifest[kind].length} of ${before} ${kind}`);
     }
   }
-  return { applied, unmatched, named, include: overlay.include ?? null };
+  // A top-level `description` in the overlay is the app's identity, written for
+  // the model -- "Plane: an issue and project tracker". It outranks the seed the
+  // generator read from package.json.
+  const description = typeof overlay.description === "string" && overlay.description.trim() ? overlay.description.trim() : null;
+  if (description) applied.push(`app description`);
+
+  return { applied, unmatched, named, include: overlay.include ?? null, description };
 }
