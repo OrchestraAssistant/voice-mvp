@@ -100,7 +100,11 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg?.kind === "stop-session") {
-    chrome.runtime.sendMessage({ kind: "stop-session" }).catch(() => {});
+    // Close the whole offscreen document, not just call session.stop(): tearing
+    // the document down destroys the session, the WebRTC connection and any
+    // in-flight audio at once, so nothing can speak after Stop. The next Start
+    // recreates it. (Guarded: closing when none exists throws.)
+    chrome.offscreen.hasDocument?.().then((has) => has && chrome.offscreen.closeDocument()).catch(() => {});
     drivingTabId = null;
     reply({ ok: true });
     return false;
