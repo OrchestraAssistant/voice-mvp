@@ -1,0 +1,14 @@
+{
+  "name": "@yourco/voice-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The @yourco/voice DOM tier as a browser extension: voice on any page, binding to a page's manifest when it serves one.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0"
+  }
+}

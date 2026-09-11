@@ -1,0 +1,84 @@
+/**
+ * The service worker: the router and the browser-orchestration host.
+ *
+ * It holds no DOM and no mic. Its jobs are: run the tab tools (the only world
+ * with chrome.tabs), route every other tool call to the world that can run it,
+ * own the offscreen document's lifecycle, and remember which tab the session is
+ * currently driving.
+ *
+ * The routing IS the tiered architecture: TAB_TOOLS run here; PAGE_TOOLS
+ * (DOM + API + route navigation) go to the active tab's content script; session
+ * tools stay in the offscreen document.
+ */
+import { KIND, TAB_TOOLS, PAGE_TOOLS, sendToTab } from "./messaging.js";
+import { TAB_HANDLERS } from "./tabs.js";
+
+let drivingTabId = null; // the tab the session is currently acting on
+
+const OFFSCREEN = "offscreen.html";
+
+/** Create the offscreen document that hosts the mic + Realtime session, once. */
+async function ensureOffscreen() {
+  const has = await chrome.offscreen.hasDocument?.();
+  if (has) return;
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN,
+    // USER_MEDIA: the mic. The Realtime WebRTC connection lives here because a
+    // service worker can hold neither a mic nor a long-lived peer connection.
+    reasons: ["USER_MEDIA"],
+    justification: "Holds the microphone and the Realtime voice session.",
+  });
+}
+
+/** Route one tool call to whichever world can run it, and return its result. */
+async function dispatchTool(name, args) {
+  if (TAB_TOOLS.has(name)) {
+    return TAB_HANDLERS[name](args ?? {});
+  }
+  if (PAGE_TOOLS.has(name)) {
+    if (drivingTabId == null) return { error: "no active tab -- click the extension on the tab you want to drive" };
+    return sendToTab(drivingTabId, { kind: KIND.TOOL_CALL, name, args });
+  }
+  return { error: `background cannot route tool: ${name}` };
+}
+
+// Messages from the offscreen session (tool calls) and from content scripts
+// (manifest reports).
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg?.kind === KIND.TOOL_CALL) {
+    dispatchTool(msg.name, msg.args).then(reply, (err) => reply({ error: String(err?.message ?? err) }));
+    return true;
+  }
+  if (msg?.kind === KIND.MANIFEST) {
+    // A content script reported the page's manifest (or null). If this is the
+    // tab we are driving, hand it to the session so the dispatcher can swap its
+    // catalog WITHOUT re-minting -- the seam that lets one session walk between
+    // apps. TODO(offscreen): forward to the offscreen session.
+    if (sender.tab?.id === drivingTabId) {
+      // chrome.runtime.sendMessage({ kind: "bind-manifest", manifest: msg.manifest });
+    }
+    return false;
+  }
+  if (msg?.kind === KIND.ACTIVATE) {
+    startOnTab(sender.tab?.id).then(() => reply({ ok: true }), (err) => reply({ error: String(err?.message ?? err) }));
+    return true;
+  }
+});
+
+/** Point the session at a tab: remember it, ensure the offscreen session exists. */
+async function startOnTab(tabId) {
+  if (tabId == null) return;
+  drivingTabId = tabId;
+  await ensureOffscreen();
+  // TODO(offscreen): tell the offscreen document to (re)configure the session
+  // for this tab -- mint if not yet minted (see offscreen.js), else just rebind
+  // the catalog to this tab's manifest.
+}
+
+// Clicking the toolbar icon points the session at the current tab.
+chrome.action.onClicked.addListener((tab) => startOnTab(tab.id));
+
+// If the driven tab goes away, stop driving it.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === drivingTabId) drivingTabId = null;
+});

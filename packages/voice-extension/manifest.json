@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Voice (any page)",
+  "version": "0.1.0",
+  "description": "The DOM tier of @yourco/voice carried onto any page, binding to a page's manifest when it serves one.",
+
+  "//": "Permissions are the extension's blast radius -- see README 'Trust'. tabs/scripting are the reliable browser-orchestration core; offscreen hosts the mic+Realtime session; activeTab scopes acting to the tab the user pointed at.",
+  "permissions": ["tabs", "scripting", "activeTab", "offscreen", "storage"],
+  "host_permissions": ["<all_urls>"],
+
+  "background": { "service_worker": "dist/background.js", "type": "module" },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "web_accessible_resources": [
+    { "resources": ["dist/inpage.js"], "matches": ["<all_urls>"] }
+  ],
+
+  "action": { "default_title": "Voice: click to start on this tab" },
+
+  "icons": {}
+}
