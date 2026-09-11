@@ -20,7 +20,24 @@ import useMeasure from "react-use-measure";
 // ?inline hands us the *compiled* stylesheet as a string (Tailwind already
 // run over it) so it can be injected into the shadow root, where the host
 // document's CSS cannot reach it and ours cannot leak out.
-import widgetCss from "./styles.css?inline";
+import rawWidgetCss from "./styles.css?inline";
+
+/**
+ * Bake `rem` to `px` before the sheet enters the shadow root.
+ *
+ * A shadow root isolates the cascade but NOT `rem`: a rem always resolves
+ * against the DOCUMENT root's font-size, never the shadow host. Dropped into one
+ * app that is invisible, but the extension carries this widget onto any page,
+ * and a site with `html { font-size: 10px }` (common for rem-math) silently
+ * rescaled the whole widget. Baking to px at the 16px base makes the widget's
+ * size page-independent -- byte-identical on a normal page, no longer distorted
+ * on a weird one. Safe as a plain regex because the compiled sheet carries `rem`
+ * only in declaration values and `@media` conditions, never in a selector (no
+ * arbitrary-value `rem` classes), so there is nothing in a selector to corrupt.
+ * The inline-mount sheet (dist/voice.css) is a separate copy and keeps rem, so a
+ * host that mounts inline still controls scale through its own root.
+ */
+const widgetCss = rawWidgetCss.replace(/(-?\d*\.?\d+)rem\b/g, (_, n) => `${parseFloat(n) * 16}px`);
 
 import { cn } from "@/lib/utils";
 import { useInterpreter } from "./VoiceProvider.jsx";

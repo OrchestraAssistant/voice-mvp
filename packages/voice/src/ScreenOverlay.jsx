@@ -91,6 +91,13 @@ const PINNED = {
   "pointer-events": "none",
   "z-index": "2147483647",
   isolation: "isolate",
+  // Typographic baseline. Shadow DOM lets a host's inherited font-size cross the
+  // boundary, so a page with an unusual root would rescale our `em`s and bare
+  // text; rem is handled separately (baked to px in the shadow sheet). Pinning a
+  // normal base here makes the widget's scale independent of whatever page it is
+  // dropped onto -- which matters most for the extension, on the open web.
+  "font-size": "16px",
+  "line-height": "normal",
 };
 
 /**
