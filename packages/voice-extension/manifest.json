@@ -18,11 +18,5 @@
     }
   ],
 
-  "web_accessible_resources": [
-    { "resources": ["dist/inpage.js"], "matches": ["<all_urls>"] }
-  ],
-
-  "action": { "default_title": "Voice: click to start on this tab" },
-
-  "icons": {}
+  "action": { "default_title": "Voice: click to start on this tab" }
 }
