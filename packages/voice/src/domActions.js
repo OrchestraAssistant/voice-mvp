@@ -168,7 +168,7 @@ function prune(element) {
   return element;
 }
 
-export function snapshot() {
+export function snapshot({ href = false } = {}) {
   registry.clear();
   const elements = Array.from(document.querySelectorAll(SELECTOR)).filter(isRendered);
   return elements.map((el) => {
@@ -200,6 +200,13 @@ export function snapshot() {
       // `offscreen` rather than absent: the agent can scroll, so a thing it
       // cannot currently see is still a thing it can point at or press.
       offscreen: inViewport(el) ? undefined : true,
+      // Where a link goes, so the model can open_url straight to it rather than
+      // synthesising a click that a full-page reload may swallow. Opt-in (`href`)
+      // because it is only useful where there is a browser to drive -- the
+      // extension -- and a page full of links would otherwise add its URLs to
+      // every snapshot the in-page widget resends. http(s) only: a "#", a
+      // "javascript:" or a "mailto:" is not somewhere to navigate.
+      href: href && el.tagName === "A" && /^https?:/i.test(el.href) ? el.href : undefined,
       // An empty field is the normal state of a field, and saying so for every
       // one of them is the single biggest line item in a page of inputs.
       value: value || undefined,

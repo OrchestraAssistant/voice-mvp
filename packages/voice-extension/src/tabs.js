@@ -63,4 +63,29 @@ export async function look_at_screen() {
   }
 }
 
-export const TAB_HANDLERS = { open_tab, close_tab, switch_tab, navigate_tab, list_tabs, look_at_screen };
+/**
+ * Navigate the current tab to a URL -- the deterministic way to follow a link.
+ *
+ * A dom_click on an <a> synthesises a click and hopes the page navigates; on a
+ * site that does a full reload the content script is torn down before its reply
+ * gets back, so the model sees a timeout even though the page moved. This drives
+ * the address bar from the service worker instead (chrome.tabs.update), which
+ * outlives the reload and answers cleanly. It navigates the SAME tab the session
+ * is already driving, so nothing about which tab is in focus changes.
+ *
+ * A bare host ("example.com") gets https:// so the model does not have to.
+ */
+export async function open_url({ url }) {
+  if (!url || typeof url !== "string") return { error: "open_url needs a url" };
+  const target = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab) return { error: "no tab to navigate" };
+  try {
+    const updated = await chrome.tabs.update(tab.id, { url: target });
+    return { status: "navigating", url: updated?.pendingUrl || target };
+  } catch (err) {
+    return { error: `could not open ${target} (${err?.message ?? err})` };
+  }
+}
+
+export const TAB_HANDLERS = { open_tab, close_tab, switch_tab, navigate_tab, list_tabs, look_at_screen, open_url };

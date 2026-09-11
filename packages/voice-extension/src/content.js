@@ -52,7 +52,8 @@ async function runTool(name, args = {}) {
       return { status: "navigated", path: plan.path, context: dom.pageContext() };
     }
     case "dom_snapshot":
-      return { elements: dom.snapshot() };
+      // href on: the extension can open_url straight to a link.
+      return { elements: dom.snapshot({ href: true }) };
     // Both take a LIST (relay declares dom_click{elementIds}, dom_type{items}),
     // and runSteps reports which step failed and why -- the singular el.click()
     // this used to do read args.elementId, which is undefined under the batched

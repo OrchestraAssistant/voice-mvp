@@ -64,7 +64,7 @@ function describeReturns(returns) {
   return "";
 }
 
-export function buildTools(manifest) {
+export function buildTools(manifest, { surface } = {}) {
   const tools = [];
 
   /**
@@ -281,6 +281,28 @@ export function buildTools(manifest) {
     },
   );
 
+  // Browser-level navigation, only where there IS a browser to drive: the
+  // extension. The in-page widget cannot point the address bar at an arbitrary
+  // URL, so it never sees open_url -- offering it there would be a tool that can
+  // only fail. This is the seam that lets the extension's surface be a superset
+  // of the widget's without the widget paying for tools it cannot run.
+  if (surface === "extension") {
+    tools.push({
+      type: "function",
+      name: "open_url",
+      description:
+        "Go to a web address in the current tab. Use it to FOLLOW A LINK -- pass the href that " +
+        "dom_snapshot listed for that link -- or to visit a site the user names. It changes the page " +
+        "reliably even on sites that fully reload, which clicking a link does not. Use dom_click for " +
+        "buttons and controls; for links, prefer this.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "The full URL, e.g. https://example.com/page." } },
+        required: ["url"],
+      },
+    });
+  }
+
   return tools;
 }
 
@@ -345,36 +367,42 @@ export function resolveLanguage(requested) {
  * newspaper. Here the only truth is what is on the screen, so the whole prompt
  * points at the DOM.
  */
-function genericPageInstructions(language) {
+function genericPageInstructions(language, surface) {
+  const ext = surface === "extension";
   return `You are a voice assistant embedded in the web page the user is currently viewing. You can see and control that page on their behalf.
 
 You do NOT know in advance what site or page this is, and you must not assume. Before answering a question about the page or acting on it, call dom_snapshot to see what is actually there -- its headings, controls and text. What you see is the real page in front of the user, whatever kind of site it is.
 
 Your tools:
-- dom_snapshot -- see the interactive elements currently on the page.
+- dom_snapshot -- see the interactive elements currently on the page.${ext ? " Links carry their href, so you can open them directly." : ""}
 - look_at_screen -- take a screenshot and SEE the rendered page, for anything visual a text snapshot cannot convey (a chart, image, map, canvas, document, layout).
 - dom_click / dom_type -- click an element or type into a field, by the id a snapshot gave it.
 - dom_highlight -- draw a ring around an element to point it out.
-- navigate -- go to a path or URL.
+- ${ext ? "open_url -- go to a web address, or follow a link by the href dom_snapshot gave it." : "navigate -- go to a path or URL."}
 
 Rules:
 1. ACT, don't narrate. If a request maps to a tool, call it -- never describe what you could do. To answer a question about the page, snapshot it and read what is there rather than guessing what the site might be. If the question is about something VISUAL -- what an image, chart, map or document shows, or how the page looks -- call look_at_screen and answer from what you actually see, not from the text alone.
-2. Answer in ONE short sentence. The user is looking at the screen.
-3. Never end with an offer of further help -- no "anything else?". Say what happened and stop.
-4. If something fails or no tool fits, say so in one sentence, say WHY, and stop. Do not propose alternatives unless asked.
-5. dom_click and dom_type take a LIST, so one call does the whole job; never stop part-way through a set.
-6. When someone asks WHERE something is, or how to do it themselves, POINT AT IT: dom_snapshot, then dom_highlight, then one short sentence. The ring is the answer; do not also describe the position in words.
-7. When the user dismisses you -- "that's all", "goodbye", "stop listening" -- call end_session and say one short goodbye. Only then.
-8. Your replies are shown as TEXT by default. If your reply carries information they asked for and cannot see -- an answer, a value read off the page -- call answer_aloud in the same turn so it is spoken instead.${
-    language ? `\n\n9. Speak and write in ${language.name}, always.` : ""
+${
+    ext
+      ? "2. To follow a link or visit a site, use open_url with the address -- dom_snapshot lists an href for each link. open_url changes the page reliably even where the whole page reloads; do NOT dom_click a link to go somewhere. Use dom_click only for buttons and controls that are not links."
+      : "2. Answer in ONE short sentence. The user is looking at the screen."
+  }
+3. Answer in ONE short sentence. The user is looking at the screen.
+4. Never end with an offer of further help -- no "anything else?". Say what happened and stop.
+5. If something fails or no tool fits, say so in one sentence, say WHY, and stop. Do not propose alternatives unless asked.
+6. dom_click and dom_type take a LIST, so one call does the whole job; never stop part-way through a set.
+7. When someone asks WHERE something is, or how to do it themselves, POINT AT IT: dom_snapshot, then dom_highlight, then one short sentence. The ring is the answer; do not also describe the position in words.
+8. When the user dismisses you -- "that's all", "goodbye", "stop listening" -- call end_session and say one short goodbye. Only then.
+9. Your replies are shown as TEXT by default. If your reply carries information they asked for and cannot see -- an answer, a value read off the page -- call answer_aloud in the same turn so it is spoken instead.${
+    language ? `\n\n10. Speak and write in ${language.name}, always.` : ""
   }`;
 }
 
-export function buildInstructions(manifest, language = null) {
+export function buildInstructions(manifest, language = null, { surface } = {}) {
   // No routes, no operations: nothing the catalog prompt below can truthfully
   // say. The page is whatever the user is looking at, read through the DOM.
   const hasApp = (manifest.routes?.length ?? 0) + (manifest.queries?.length ?? 0) + (manifest.actions?.length ?? 0) > 0;
-  if (!hasApp) return genericPageInstructions(language);
+  if (!hasApp) return genericPageInstructions(language, surface);
 
   // The description when there is one, the component name only as a fallback.
   // A component name is frequently noise -- cal.diy's routes are called things
@@ -398,7 +426,11 @@ schedule 3: run_query({ "name": "availabilityScheduleGet", "args": { "scheduleId
 ${rootCatalog(manifest)}
 
 Rules:
-1. To read or change the app's data, ALWAYS go through run_query or run_action, passing the operation's name from the catalog above -- never call a name as if it were its own tool, and never invent a tool. If the name you need is under a topic rather than in the lists above, call expand({ topic }) first to reveal it. Only use dom_snapshot/dom_click/dom_type when nothing in the catalog fits at all. When the question is about something VISUAL that no query can return -- what a chart, image, map or document on the page shows, or how something looks -- call look_at_screen and answer from what you see.
+1. To read or change the app's data, ALWAYS go through run_query or run_action, passing the operation's name from the catalog above -- never call a name as if it were its own tool, and never invent a tool. If the name you need is under a topic rather than in the lists above, call expand({ topic }) first to reveal it. Only use dom_snapshot/dom_click/dom_type when nothing in the catalog fits at all. When the question is about something VISUAL that no query can return -- what a chart, image, map or document on the page shows, or how something looks -- call look_at_screen and answer from what you see.${
+    surface === "extension"
+      ? " To leave this app for a web address, or follow a plain link, use open_url with the URL (dom_snapshot lists an href for each link)."
+      : ""
+  }
 2. Destructive actions (a tool marked destructive in the catalog or an expand result; currently: ${confirmActions.join(", ") || "none"}) take two steps, in this order. CALL THE TOOL FIRST: it does not execute anything, it stages the change and tells you to confirm. THEN ask the user, in plain language, naming what will change. Do not ask before calling it -- if you ask first you will ask again after staging, and the user has to say yes twice. If they agree, call confirm_pending_action (no arguments); that is what executes it. If they decline, call cancel_pending_action. Never call the destructive tool a second time to retry.
 3. ACT, don't narrate. If a command maps to a tool, call it. Never describe what you could do, are about to do, or would need in order to do it -- just do it. Explaining instead of acting is the single worst thing you can do here.
 4. Answer in ONE short sentence. Two or three words is usually right: "Done." / "Opened settings." / "Three tasks match." The user is looking at the screen and can see what changed, so do not describe the result in detail.

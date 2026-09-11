@@ -68,6 +68,9 @@ async function startSession(manifest) {
     session = await connectRealtimeSession({
       relayUrl: RELAY_URL,
       manifest: manifest ?? { routes: [], queries: [], actions: [] },
+      // We ARE a browser: this earns open_url (and any later browser tools) from
+      // the relay, which the in-page widget never gets.
+      surface: "extension",
       onToolCall,
       onStatus: (s) => {
         uiStatus = s;

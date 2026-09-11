@@ -84,6 +84,23 @@ describe("the dispatcher and its catalog", () => {
     assert.ok(tools.length < 15, `tool surface is ${tools.length}, not a handful`);
   });
 
+  test("open_url is an extension-only tool, absent for the in-page widget", () => {
+    // The widget cannot point the address bar at an arbitrary URL, so offering
+    // it open_url is offering a tool that can only fail.
+    assert.equal(names.includes("open_url"), false, "the widget must not get open_url");
+    const ext = buildTools(manifest, { surface: "extension" }).map((t) => t.name);
+    assert.ok(ext.includes("open_url"), "the extension must get open_url");
+  });
+
+  test("the extension prompt steers links to open_url; the widget prompt has no such tool", () => {
+    // A bare page (no manifest) is the extension's common case on the open web.
+    const empty = { routes: [], queries: [], actions: [] };
+    const extPrompt = buildInstructions(empty, null, { surface: "extension" });
+    assert.match(extPrompt, /open_url/);
+    assert.match(extPrompt, /href/);
+    assert.doesNotMatch(buildInstructions(empty), /open_url/);
+  });
+
   test("run_action takes a list; run_query does not", () => {
     const run = tools.find((t) => t.name === "run_action");
     assert.deepEqual(run.parameters.required, ["name", "items"]);

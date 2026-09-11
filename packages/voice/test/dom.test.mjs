@@ -48,6 +48,36 @@ describe("what the agent can see and touch", { concurrency: false }, () => {
     assert.equal(ctx.heading, "Your work", "the visible heading is trimmed and returned");
   });
 
+  test("href is opt-in, http(s) only, and never leaks into the widget's snapshot", async () => {
+    // The extension asks for href so it can open_url straight to a link; the
+    // in-page widget does not, so a page full of links never adds its URLs to
+    // every snapshot the widget resends.
+    const links = await page.evaluate(() => {
+      const mk = (href, text) => {
+        const a = document.createElement("a");
+        a.href = href;
+        a.textContent = text;
+        a.id = `probe-${text}`;
+        document.body.appendChild(a);
+        return a;
+      };
+      mk("https://example.com/story", "story");
+      mk("mailto:x@y.z", "mail");
+      const withHref = window.__dom.snapshot({ href: true });
+      const without = window.__dom.snapshot();
+      document.querySelectorAll('[id^="probe-"]').forEach((n) => n.remove());
+      const pick = (list, label) => list.find((e) => e.label === label);
+      return {
+        story: pick(withHref, "story")?.href,
+        mail: pick(withHref, "mail")?.href,
+        storyDefault: pick(without, "story")?.href,
+      };
+    });
+    assert.equal(links.story, "https://example.com/story", "an http link carries its href when asked");
+    assert.equal(links.mail, undefined, "mailto: is not somewhere to navigate");
+    assert.equal(links.storyDefault, undefined, "the default snapshot has no href");
+  });
+
   test("a rich-text editor is visible at all", async () => {
     // It is a <div contenteditable role="textbox">, which matched none of the
     // tags collected before. Asked to fill in a description on cal.diy, the

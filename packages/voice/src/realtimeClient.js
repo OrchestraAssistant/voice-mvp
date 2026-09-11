@@ -116,14 +116,16 @@ export function shortFailure(message = "") {
   return message.length > 120 ? `${message.slice(0, 117)}...` : message;
 }
 
-export async function mintSession({ relayUrl = "", model, language, manifest } = {}) {
+export async function mintSession({ relayUrl = "", model, language, manifest, surface } = {}) {
   const where = `${relayUrl || ""}/voice/session`;
   let res;
   try {
     res = await fetch(where, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, language, manifest }),
+      // `surface` tells the relay which client this is, so the extension is
+      // handed the browser tools (open_url) the in-page widget cannot run.
+      body: JSON.stringify({ model, language, manifest, surface }),
     });
   } catch (err) {
     // No connection at all: nothing listening, DNS, CORS. `fetch` throws a
@@ -188,6 +190,9 @@ export async function connectRealtimeSession({
   // The app's own manifest, forwarded to the relay so the tool list it builds
   // and the one this client executes are the same thing.
   manifest,
+  // Which client this is. "extension" earns the browser tools; omitted for the
+  // in-page widget.
+  surface,
   onEvent,
   // Fires whenever the rim's state could have changed. Derived here because
   // this is the only place that sees the events it is derived from.
@@ -217,7 +222,7 @@ export async function connectRealtimeSession({
   // on a live session, which is why they travel with the mint request rather
   // than a later session.update. The relay validates them -- a browser should
   // not be picking which model the account pays for.
-  const session = isUsable(minted) ? minted : await mintSession({ relayUrl, model, language, manifest });
+  const session = isUsable(minted) ? minted : await mintSession({ relayUrl, model, language, manifest, surface });
   const ephemeralKey = session.key;
   record({
     type: "connected",

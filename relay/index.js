@@ -156,6 +156,12 @@ app.post("/voice/session", async (req, res) => {
   const wantedLanguage = resolveLanguage(req.body?.language);
   if (wantedLanguage.error) return res.status(400).json({ error: wantedLanguage.error });
 
+  // Which client is calling. Only the extension can drive the browser (open a
+  // URL in the tab), so only it is handed the browser tools; anything else is
+  // the in-page widget. Unknown values collapse to the widget rather than
+  // erroring -- a surface it cannot honour is not a reason to refuse a session.
+  const surface = req.body?.surface === "extension" ? "extension" : null;
+
   try {
     const upstream = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
@@ -167,8 +173,8 @@ app.post("/voice/session", async (req, res) => {
         session: {
           type: "realtime",
           model: wantedModel.model,
-          instructions: buildInstructions(manifest, wantedLanguage.language),
-          tools: buildTools(manifest),
+          instructions: buildInstructions(manifest, wantedLanguage.language, { surface }),
+          tools: buildTools(manifest, { surface }),
           tool_choice: "auto",
           audio: {
             output: { voice: "marin" },
