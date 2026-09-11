@@ -9,6 +9,8 @@
     "watch": "node build.mjs --watch"
   },
   "devDependencies": {
-    "esbuild": "^0.23.0"
+    "esbuild": "^0.23.0",
+    "react": "^19",
+    "react-dom": "^19"
   }
 }

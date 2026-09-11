@@ -13,15 +13,14 @@ const common = {
   format: "iife",
   target: "chrome120",
   logLevel: "info",
-  // The extension ships to a browser; keep it small but debuggable.
   sourcemap: true,
+  // The content script bundles React + the widget; give it the production build.
+  define: { "process.env.NODE_ENV": '"production"' },
 };
 
-const entries = [
-  { entryPoints: ["src/content.js"], outfile: "dist/content.js" },
-  { entryPoints: ["src/background.js"], outfile: "dist/background.js" },
-  { entryPoints: ["src/offscreen.js"], outfile: "dist/offscreen.js" },
-];
+// v1 loads only the content script (the widget in the page). background/offscreen
+// are the cross-tab future path -- kept in src/, not built into the shipped v1.
+const entries = [{ entryPoints: ["src/content.js"], outfile: "dist/content.js" }];
 
 const watch = process.argv.includes("--watch");
 

@@ -29,32 +29,27 @@ user's auth cookies.
 
 ## What's wired vs. stubbed
 
-**Wired (real) — v1 drives the active tab by voice:**
-- The Realtime/mic session (`src/offscreen.js`) — `connectRealtimeSession` owns
-  the whole protocol (mic, audio out, response serialisation, the tool loop).
-  The browser connects DIRECTLY to OpenAI with the ephemeral key; the relay is
-  only hit for the brief mint at the start.
-- The tool bridge — every tool the model calls is forwarded offscreen → worker →
-  the world that runs it; session-local tools (answer_aloud/end_session) are
-  acked in place.
-- Tab orchestration — `open/close/switch/navigate/list_tabs` via `chrome.tabs`
-  (`src/tabs.js`). The reliable, deterministic core.
-- Message protocol + routing (`src/messaging.js`, `src/background.js`), with a
-  ready-handshake so the session starts without a load race.
-- Manifest probing — `<meta>` + `/.well-known/voice/manifest.json` — and the
-  content-script tool executor: DOM tools, API calls with page cookies, `expand`,
-  route param-fill (`src/content.js`).
+**v1 (`src/content.js`): the real embedded widget, injected into the page.**
+The content script mounts `VoiceProvider` + `Interpreter` — the same bubble, rim,
+mic and Realtime session the package ships — so the entire loop is reused, not
+re-implemented, and the mic works because the bubble click is the user gesture
+`getUserMedia` requires. The manifest is probed from the page (`<meta>` /
+`.well-known`); with none, the widget runs its universal DOM tier. Per-tab,
+exactly like the embedded widget.
+
+**Kept in `src/` for the cross-tab future (not loaded by v1):** the service
+worker + tab orchestration (`background.js`, `tabs.js`), the offscreen Realtime
+host (`offscreen.js`), and the message protocol (`messaging.js`). That path is
+the *one persistent session across tabs* of DIRECTIONS §1 — it needs the
+offscreen mic-gesture problem solved and the tab tools added to the session
+schema. v1 deliberately sidesteps both by living in the page.
 
 **Not yet:**
-- **Tab tools aren't exposed to the MODEL yet.** The relay mints the session's
-  tool schemas from the manifest (page-driving tools: navigate/dom_*/run_query/
-  run_action/expand); the tab tools are implemented but the model has no schema
-  for them until we add them via `session.update` or a relay change. So v1
-  drives ONE tab; multi-tab orchestration is the next step.
-- No visible widget UI yet (bubble/rim) — reuse `Interpreter`/`useInterpreter`
-  into an injected shadow root. Today it's headless: click the icon and talk.
+- Cross-tab single session + tab orchestration (the `background`/`offscreen` path).
 - `window.__voice` probing (needs a MAIN-world injection; meta/well-known work).
-- SPA soft-nav — content-script `navigate` does a full `location.assign`.
+- SPA hard-nav across origins — the widget's default navigate is history/popstate.
+- The widget injects on every page (`<all_urls>`); per-site activation is a
+  Trust-model follow-up.
 
 ## Build & load
 
@@ -63,9 +58,10 @@ npm install          # in this package (esbuild)
 npm run build        # bundles src/ -> dist/
 ```
 Then in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked**
-→ select this directory. Open a normal web page, **click the toolbar icon** to
-point the session at that tab, grant the mic prompt, and talk — the model drives
-that page (navigate, read, click, run its API if it serves a manifest).
+→ select this directory. Open a normal web page: the **voice bubble appears in
+the corner** (it's the real embedded widget). **Click the bubble**, grant the mic
+prompt, and talk — the model drives that page (navigate, read, click, run its API
+if it serves a manifest). Clicking the bubble is the user gesture the mic needs.
 
 Requirements to actually connect:
 - The **relay must be up at mint time** (`RELAY_URL` in `src/offscreen.js`,
