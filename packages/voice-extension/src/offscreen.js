@@ -59,8 +59,15 @@ async function startSession(manifest) {
       relayUrl: RELAY_URL,
       manifest: manifest ?? { routes: [], queries: [], actions: [] },
       onToolCall,
+      // Voice-only: there is no text panel here, so every reply must be SPOKEN,
+      // or it goes nowhere. Override the text-by-default heuristic to always
+      // pick audio.
+      replyModality: () => "audio",
       onStatus: (s) => log("status:", s),
       onTranscript: (t) => log("transcript:", t?.role, t?.text),
+      // The full event stream, so we can see a response being requested and a
+      // tool being called (a silent navigate/dom_snapshot has no transcript).
+      onEvent: (e) => log("event:", e?.type, e?.name ?? e?.modality ?? "", e?.because ?? ""),
       onHangUp: () => {
         log("hang up");
         session?.stop?.();
