@@ -28,18 +28,32 @@ let session = null;
 // confirm/cancel tools are UI the extension does not mount yet -- ack them too.
 const LOCAL_ACK = new Set(["answer_aloud", "end_session", "dom_highlight", "confirm_pending_action", "cancel_pending_action"]);
 
-/** The bridge: model tool call -> service worker -> the world that can run it. */
+/**
+ * The bridge: model tool call -> service worker -> the world that can run it.
+ * Timed out, because a tool that never comes back (a tab with no content script,
+ * a page that will not answer) would otherwise block the whole turn -- the
+ * "reply arrived minutes later" symptom. A fast error lets the model recover.
+ */
 async function onToolCall(name, args) {
   if (LOCAL_ACK.has(name)) return { acknowledged: true, ...(args?.because ? { because: args.because } : {}) };
-  const result = await sendToRuntime({ kind: KIND.TOOL_CALL, name, args });
+  const result = await Promise.race([
+    sendToRuntime({ kind: KIND.TOOL_CALL, name, args }),
+    new Promise((resolve) => setTimeout(() => resolve({ error: `tool ${name} timed out reaching the page` }), 10000)),
+  ]);
   return result ?? { error: "no result" };
 }
 
 const log = (...a) => console.log("[voice-offscreen]", ...a);
 
+// Synchronous, so two starts racing before the await (the start-session message
+// AND the ready-handshake both fire on first activation) cannot both connect --
+// which is the double "connected" in the logs, two sessions fighting.
+let starting = false;
+
 /** Start the single session, minted with the active tab's manifest. */
 async function startSession(manifest) {
-  if (session) return;
+  if (session || starting) return;
+  starting = true;
   try {
     session = await connectRealtimeSession({
       relayUrl: RELAY_URL,
@@ -57,6 +71,8 @@ async function startSession(manifest) {
   } catch (err) {
     log("failed to connect:", err?.message ?? err);
     session = null;
+  } finally {
+    starting = false;
   }
 }
 

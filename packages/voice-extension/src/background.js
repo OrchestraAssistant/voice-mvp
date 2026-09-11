@@ -31,14 +31,37 @@ async function ensureOffscreen() {
   });
 }
 
+async function activeTabId() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return tab?.id ?? null;
+}
+
 /** Route one tool call to whichever world can run it, and return its result. */
 async function dispatchTool(name, args) {
   if (TAB_TOOLS.has(name)) {
     return TAB_HANDLERS[name](args ?? {});
   }
   if (PAGE_TOOLS.has(name)) {
-    if (drivingTabId == null) return { error: "no active tab -- click the extension on the tab you want to drive" };
-    return sendToTab(drivingTabId, { kind: KIND.TOOL_CALL, name, args });
+    // The tab the session was started on, falling back to whatever is in front
+    // if that one is gone. A page with no content script (chrome://, a blocked
+    // page, a navigation still settling) answers with a clear error rather than
+    // hanging the turn -- and we try the active tab once before giving up.
+    const primary = drivingTabId ?? (await activeTabId());
+    if (primary == null) return { error: "no page tab to act on" };
+    try {
+      return await sendToTab(primary, { kind: KIND.TOOL_CALL, name, args });
+    } catch (err) {
+      const alt = await activeTabId();
+      if (alt != null && alt !== primary) {
+        try {
+          drivingTabId = alt;
+          return await sendToTab(alt, { kind: KIND.TOOL_CALL, name, args });
+        } catch {
+          /* fall through */
+        }
+      }
+      return { error: `could not reach the page (${err.message}); it may be a browser page or still loading` };
+    }
   }
   return { error: `background cannot route tool: ${name}` };
 }
