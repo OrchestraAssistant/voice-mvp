@@ -39,7 +39,7 @@ export const UI_TO_OFFSCREEN = new Set(["ui-ready", "ui-command"]);
  * tools are the reliable, deterministic core (a browser API); the DOM and API
  * tools must run in the page, where the DOM and the auth cookies are.
  */
-export const TAB_TOOLS = new Set(["open_tab", "close_tab", "switch_tab", "list_tabs", "navigate_tab"]);
+export const TAB_TOOLS = new Set(["open_tab", "close_tab", "switch_tab", "list_tabs", "navigate_tab", "look_at_screen"]);
 export const PAGE_TOOLS = new Set([
   "navigate",
   "dom_snapshot",

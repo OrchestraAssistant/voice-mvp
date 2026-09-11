@@ -53,12 +53,20 @@ async function runTool(name, args = {}) {
     }
     case "dom_snapshot":
       return { elements: dom.snapshot() };
-    case "dom_click":
-      dom.click(args.elementId);
-      return { status: "clicked" };
-    case "dom_type":
-      dom.typeText(args.elementId, args.text);
-      return { status: "typed" };
+    // Both take a LIST (relay declares dom_click{elementIds}, dom_type{items}),
+    // and runSteps reports which step failed and why -- the singular el.click()
+    // this used to do read args.elementId, which is undefined under the batched
+    // shape the model is actually told to send, so EVERY click failed with
+    // "stale element id: undefined". The `?? [singular]` keeps the old shape
+    // working too. Identical to the widget's handler, on purpose.
+    case "dom_click": {
+      const ids = args.elementIds ?? [args.elementId];
+      return dom.runSteps(ids.map((elementId) => ({ elementId })));
+    }
+    case "dom_type": {
+      const items = args.items ?? [{ elementId: args.elementId, text: args.text }];
+      return dom.runSteps(items);
+    }
     case "expand":
       return manifest ? (expandTopic(manifest, args.topic) ?? { error: "no such topic" }) : { error: "this page serves no manifest" };
     case "run_query":

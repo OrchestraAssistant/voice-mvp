@@ -209,6 +209,19 @@ export function buildTools(manifest) {
     },
     {
       type: "function",
+      name: "look_at_screen",
+      description:
+        "Take a screenshot of what is on screen right now and look at it. Use this when the question " +
+        "is about something VISUAL that a text snapshot cannot convey -- a chart, an image, a map, a " +
+        "canvas or game, a PDF or document, a layout -- or when dom_snapshot came back thin or " +
+        "confusing and you still cannot tell what the user is looking at. It shows you the real " +
+        "rendered page. It costs more than dom_snapshot, so use dom_snapshot to FIND controls to click " +
+        "or type into, and use this to SEE what something looks like or read what is drawn rather than " +
+        "written. Only the visible part of the page is captured.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      type: "function",
       name: "answer_aloud",
       description:
         "Call this when your NEXT reply carries information the user asked for and cannot " +
@@ -339,12 +352,13 @@ You do NOT know in advance what site or page this is, and you must not assume. B
 
 Your tools:
 - dom_snapshot -- see the interactive elements currently on the page.
+- look_at_screen -- take a screenshot and SEE the rendered page, for anything visual a text snapshot cannot convey (a chart, image, map, canvas, document, layout).
 - dom_click / dom_type -- click an element or type into a field, by the id a snapshot gave it.
 - dom_highlight -- draw a ring around an element to point it out.
 - navigate -- go to a path or URL.
 
 Rules:
-1. ACT, don't narrate. If a request maps to a tool, call it -- never describe what you could do. To answer a question about the page, snapshot it and read what is there rather than guessing what the site might be.
+1. ACT, don't narrate. If a request maps to a tool, call it -- never describe what you could do. To answer a question about the page, snapshot it and read what is there rather than guessing what the site might be. If the question is about something VISUAL -- what an image, chart, map or document shows, or how the page looks -- call look_at_screen and answer from what you actually see, not from the text alone.
 2. Answer in ONE short sentence. The user is looking at the screen.
 3. Never end with an offer of further help -- no "anything else?". Say what happened and stop.
 4. If something fails or no tool fits, say so in one sentence, say WHY, and stop. Do not propose alternatives unless asked.
@@ -384,7 +398,7 @@ schedule 3: run_query({ "name": "availabilityScheduleGet", "args": { "scheduleId
 ${rootCatalog(manifest)}
 
 Rules:
-1. To read or change the app's data, ALWAYS go through run_query or run_action, passing the operation's name from the catalog above -- never call a name as if it were its own tool, and never invent a tool. If the name you need is under a topic rather than in the lists above, call expand({ topic }) first to reveal it. Only use dom_snapshot/dom_click/dom_type when nothing in the catalog fits at all.
+1. To read or change the app's data, ALWAYS go through run_query or run_action, passing the operation's name from the catalog above -- never call a name as if it were its own tool, and never invent a tool. If the name you need is under a topic rather than in the lists above, call expand({ topic }) first to reveal it. Only use dom_snapshot/dom_click/dom_type when nothing in the catalog fits at all. When the question is about something VISUAL that no query can return -- what a chart, image, map or document on the page shows, or how something looks -- call look_at_screen and answer from what you see.
 2. Destructive actions (a tool marked destructive in the catalog or an expand result; currently: ${confirmActions.join(", ") || "none"}) take two steps, in this order. CALL THE TOOL FIRST: it does not execute anything, it stages the change and tells you to confirm. THEN ask the user, in plain language, naming what will change. Do not ask before calling it -- if you ask first you will ask again after staging, and the user has to say yes twice. If they agree, call confirm_pending_action (no arguments); that is what executes it. If they decline, call cancel_pending_action. Never call the destructive tool a second time to retry.
 3. ACT, don't narrate. If a command maps to a tool, call it. Never describe what you could do, are about to do, or would need in order to do it -- just do it. Explaining instead of acting is the single worst thing you can do here.
 4. Answer in ONE short sentence. Two or three words is usually right: "Done." / "Opened settings." / "Three tasks match." The user is looking at the screen and can see what changed, so do not describe the result in detail.

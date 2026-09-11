@@ -601,7 +601,27 @@ export async function connectRealtimeSession({
           } catch (err) {
             result = { error: String(err.message || err) };
           }
-          record({ type: "tool_call", name: call.name, args, result, ms: Date.now() - startedAt });
+
+          // A tool may hand back an IMAGE (a screenshot) alongside its text. A
+          // function_call_output is a STRING, so a data URL packed into it is
+          // just tokens the model cannot see -- the picture has to arrive as its
+          // own input_image conversation item. So it is split off here: the tool
+          // output says a screenshot follows, and the image goes in behind it as
+          // the user's latest content, which the follow-up response then sees.
+          // This is the entire mechanism by which the model gets vision.
+          let image = null;
+          if (result && typeof result === "object" && typeof result.image === "string") {
+            ({ image, ...result } = result);
+          }
+          // The data URL is hundreds of KB; a marker in the record, never the
+          // bytes.
+          record({
+            type: "tool_call",
+            name: call.name,
+            args,
+            result: image ? { ...result, image: "<screenshot injected as input_image>" } : result,
+            ms: Date.now() - startedAt,
+          });
 
           dc.send(
             JSON.stringify({
@@ -609,10 +629,22 @@ export async function connectRealtimeSession({
               item: {
                 type: "function_call_output",
                 call_id: call.call_id,
-                output: JSON.stringify(result ?? {}),
+                output: JSON.stringify(image ? { ...result, screenshot: "attached in the next message" } : (result ?? {})),
               },
             }),
           );
+          if (image) {
+            dc.send(
+              JSON.stringify({
+                type: "conversation.item.create",
+                item: {
+                  type: "message",
+                  role: "user",
+                  content: [{ type: "input_image", image_url: image }],
+                },
+              }),
+            );
+          }
         }
         // The follow-up, where answer_aloud decides the medium. Any turn that
         // arrived mid-flight is folded into this one request rather than queued

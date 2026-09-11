@@ -38,4 +38,29 @@ export async function list_tabs() {
   };
 }
 
-export const TAB_HANDLERS = { open_tab, close_tab, switch_tab, navigate_tab, list_tabs };
+/**
+ * Vision, WITHOUT the debugger banner.
+ *
+ * captureVisibleTab is a plain extension API (it needs only the host permission
+ * we already hold), so this is how the model gets eyes on the page without ever
+ * attaching chrome.debugger -- no "started debugging this browser" infobar. It
+ * can only photograph the visible/active tab, which is exactly the one the user
+ * is looking at, so that is what "look at the screen" means here. JPEG at
+ * quality 55 keeps the data URL (and the vision tokens it becomes) small; a
+ * chrome:// page or the store refuses capture and the model gets a clear error.
+ *
+ * The image is returned under `image` as a data URL; realtimeClient splits that
+ * key out and injects it into the conversation as an input_image item.
+ */
+export async function look_at_screen() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab) return { error: "no visible tab to capture" };
+  try {
+    const image = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 55 });
+    return { image, of: tab.title || tab.url };
+  } catch (err) {
+    return { error: `could not capture the screen (${err?.message ?? err}); it may be a browser page` };
+  }
+}
+
+export const TAB_HANDLERS = { open_tab, close_tab, switch_tab, navigate_tab, list_tabs, look_at_screen };

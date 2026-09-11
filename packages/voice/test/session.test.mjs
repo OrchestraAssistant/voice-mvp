@@ -120,6 +120,35 @@ describe("tool calls", () => {
     assert.equal(transport.ofType("response.create").length, 2, "the reply after the tool was never asked for");
   });
 
+  test("a tool that returns an image injects it as an input_image, not into the text output", async () => {
+    const dataUrl = "data:image/jpeg;base64,/9j/AAAA";
+    const { transport } = await fakeSession({
+      onToolCall: async () => ({ image: dataUrl, of: "the page" }),
+    });
+    transport.server({ type: "input_audio_buffer.committed" });
+    await settle();
+    transport.server(toolCall("look_at_screen"));
+    await settle();
+
+    const created = transport.ofType("conversation.item.create");
+    const output = created.find((m) => m.item.type === "function_call_output");
+    // The tool output is a string and must NOT carry the data URL -- it points
+    // at the image that follows.
+    const parsed = JSON.parse(output.item.output);
+    assert.equal(parsed.image, undefined, "the data URL leaked into the tool output as tokens");
+    assert.equal(parsed.of, "the page");
+
+    // The image arrives as its own input_image user item, which is what the
+    // model can actually see.
+    const imageItem = created.find(
+      (m) => m.item.type === "message" && m.item.content?.[0]?.type === "input_image",
+    );
+    assert.ok(imageItem, "no input_image conversation item was created");
+    assert.equal(imageItem.item.role, "user");
+    assert.equal(imageItem.item.content[0].image_url, dataUrl);
+    assert.equal(transport.ofType("response.create").length, 2, "the reply after look_at_screen was never asked for");
+  });
+
   test("a tool that throws reports the error rather than stalling the turn", async () => {
     const { transport } = await fakeSession({ onToolCall: async () => { throw new Error("no such route"); } });
     transport.server({ type: "input_audio_buffer.committed" });
