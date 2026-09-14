@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { isDestructive } from "../../core/destructive.js";
 import { walk } from "../../core/parse.js";
 
 /**
@@ -97,8 +98,22 @@ function params(operation, spec, pathParams) {
   for (const p of all) {
     if (!p.name || seen.has(`${p.in}:${p.name}`)) continue;
     seen.add(`${p.in}:${p.name}`);
-    if (p.in === "path") out.push({ name: p.name, type: mapType(p.schema), required: true, source: "url" });
-    else if (p.in === "query") out.push({ name: p.name, type: mapType(p.schema), required: !!p.required, source: "query-string" });
+    if (p.in === "path" || p.in === "query") {
+      const type = mapType(p.schema);
+      const field = {
+        name: p.name,
+        type,
+        required: p.in === "path" ? true : !!p.required,
+        source: p.in === "path" ? "url" : "query-string",
+      };
+      // A closed set of values is the whole point of an enum param; dropping it
+      // (fieldsFromSchema keeps it, this did not) showed the model an "enum"
+      // with no members.
+      if (type === "enum" && Array.isArray(p.schema?.enum)) {
+        field.enumValues = p.schema.enum.filter((v) => typeof v === "string");
+      }
+      out.push(field);
+    }
   }
   return out;
 }
@@ -171,7 +186,7 @@ export const openapiSpec = {
           if (method === "get") {
             queries.push(entry);
           } else {
-            actions.push({ ...entry, requiresConfirmation: method === "delete", bodyFields: bodyFields(operation, spec) });
+            actions.push({ ...entry, requiresConfirmation: isDestructive({ method, name: entry.name }), bodyFields: bodyFields(operation, spec) });
           }
         }
       }

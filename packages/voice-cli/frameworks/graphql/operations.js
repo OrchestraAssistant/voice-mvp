@@ -1,4 +1,5 @@
 import traverse from "@babel/traverse";
+import { isDestructive } from "../../core/destructive.js";
 import { parseFile, walk } from "../../core/parse.js";
 import { findDefinition, packageAliases } from "../../core/resolveSymbol.js";
 
@@ -206,7 +207,7 @@ export const graphqlOperations = {
       if (parsed.kind === "query") {
         queries.push(base);
       } else {
-        actions.push({ ...base, requiresConfirmation: /delete|remove|destroy/i.test(parsed.name) });
+        actions.push({ ...base, requiresConfirmation: isDestructive({ name: parsed.name }) });
       }
     };
 

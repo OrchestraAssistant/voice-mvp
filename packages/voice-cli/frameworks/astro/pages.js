@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { isDestructive } from "../../core/destructive.js";
 import path from "node:path";
 import traverse from "@babel/traverse";
 import { firstDir, parseFile, walk } from "../../core/parse.js";
@@ -137,7 +138,7 @@ export const astroPages = {
           params: urlParams.map((p) => ({ name: p, type: "string", required: true, source: "url" })),
         };
         if (method === "GET") queries.push(entry);
-        else actions.push({ ...entry, requiresConfirmation: method === "DELETE", bodyFields: [] });
+        else actions.push({ ...entry, requiresConfirmation: isDestructive({ method, name: entry.name }), bodyFields: [] });
       }
     }
     return { routes, queries, actions };

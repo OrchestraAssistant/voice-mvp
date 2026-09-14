@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isDestructive } from "../../core/destructive.js";
 import traverse from "@babel/traverse";
 import { parseFile, walk } from "../../core/parse.js";
 import { usesTrpc } from "./detect.js";
@@ -215,7 +216,7 @@ export const trpcRouters = {
           ...(proc.inputSchema ? { _inputSchema: proc.inputSchema, _inputSchemaFile: proc.file } : {}),
         };
         if (proc.kind === "query") queries.push(entry);
-        else actions.push({ ...entry, requiresConfirmation: /delete|remove|destroy/i.test(proc.path), bodyFields: [] });
+        else actions.push({ ...entry, requiresConfirmation: isDestructive({ name: proc.path }), bodyFields: [] });
       }
     }
     return { queries, actions };

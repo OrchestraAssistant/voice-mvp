@@ -66,9 +66,13 @@ function urlFrom(node, constants) {
       endpoint += constants[expr.name];
       return;
     }
+    // Past a `?`, an interpolation is a QUERY param, not a required path segment.
+    // `/api/tasks?status=${status}` used to emit `status` as a required url param
+    // with the `?` baked into the path.
+    const inQuery = endpoint.includes("?");
     if (expr.type === "Identifier") {
       endpoint += `{${expr.name}}`;
-      url.push(expr.name);
+      inQuery ? query.add(expr.name) : url.push(expr.name);
       return;
     }
     // `${variables.id}` is at least as common as a bare identifier, because a
@@ -77,7 +81,7 @@ function urlFrom(node, constants) {
     // no way to address anything.
     if (expr.type === "MemberExpression" && !expr.computed && expr.property?.type === "Identifier") {
       endpoint += `{${expr.property.name}}`;
-      url.push(expr.property.name);
+      inQuery ? query.add(expr.property.name) : url.push(expr.property.name);
       return;
     }
     // Anything else is an expression we cannot evaluate. It contributes no

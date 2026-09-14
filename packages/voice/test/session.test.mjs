@@ -332,6 +332,26 @@ describe("a response that failed", () => {
     assert.equal(shortFailure("The model is overloaded."), "The model is overloaded.");
   });
 
+  test("stop() during the retry window cancels the pending retry", async () => {
+    // The retry setTimeout was untracked, so stopping the session left it to
+    // fire on a closed channel -- an uncaught InvalidStateError, and state
+    // mutated after teardown.
+    const { session, transport } = await fakeSession();
+    const failed = {
+      type: "response.done",
+      response: {
+        status: "failed",
+        status_details: { type: "failed", error: { code: "rate_limit_exceeded", message: "Please try again in 0.1s." } },
+        output: [],
+      },
+    };
+    await transport.play([failed]);
+    const before = transport.ofType("response.create").length;
+    session.stop(); // within the ~350ms retry window
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(transport.ofType("response.create").length, before, "the retry fired after stop()");
+  });
+
   test("it retries once, after the delay the error asked for", async () => {
     // Once and not twice: the common cause names a delay and honouring it is
     // the whole remedy, but a widget that keeps quietly retrying is one that

@@ -31,8 +31,12 @@ function jsonType(node) {
       // A union of string literals is an enum, which is worth keeping: it
       // tells the model exactly which values are legal.
       const literals = node.types.filter((t) => t.type === "TSLiteralType" && t.literal?.type === "StringLiteral");
-      if (literals.length && literals.length >= node.types.length - 1) return "enum";
-      const first = node.types.find((t) => !["TSNullKeyword", "TSUndefinedKeyword"].includes(t.type));
+      const nonNullish = node.types.filter((t) => !["TSNullKeyword", "TSUndefinedKeyword"].includes(t.type));
+      // An enum only when EVERY non-nullish member is a string literal. The old
+      // `>= length - 1` tolerated one arbitrary non-literal, so `"a" | "b" |
+      // boolean` became an enum of ["a","b"] and silently dropped boolean.
+      if (literals.length && literals.length === nonNullish.length) return "enum";
+      const first = nonNullish[0];
       return jsonType(first);
     }
     case "TSLiteralType": return typeof node.literal?.value === "boolean" ? "boolean" : "string";
@@ -58,7 +62,9 @@ function membersOf(typeNode) {
     .map((m) => {
       const annotation = m.typeAnnotation?.typeAnnotation;
       const type = jsonType(annotation);
-      const values = enumValues(annotation);
+      // Only when it is actually an enum: a mixed union like `"a" | "b" | boolean`
+      // is typed "string", and must not also carry a closed set that omits boolean.
+      const values = type === "enum" ? enumValues(annotation) : undefined;
       return {
         name: m.key.name ?? m.key.value,
         // `?:` is the whole optionality story in a type, and it is exact

@@ -11,7 +11,11 @@
  * written for `/availability/:schedule`, which is a different screen with
  * different controls.
  */
-const PARAM = /^(:.+|\[.+\])$/;
+// `:x` / `[x]` (incl. `[...x]`) are params; `*` and `$` are catch-all splats that
+// route producers emit (next/routes.js, tanstack). Without the splats a catch-all
+// like `/docs/*` read as a CONCRETE path, so readiness probed the literal URL
+// `/docs/*` -- and this disagreed with core/probe.js, which already skips them.
+const PARAM = /^(:.+|\[.+\]|\*|\$)$/;
 
 export function isPattern(path) {
   return String(path).split("/").some((segment) => PARAM.test(segment));

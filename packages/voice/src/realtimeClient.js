@@ -267,6 +267,10 @@ export async function connectRealtimeSession({
   // off the goodbye the same rule asked for.
   let hangUpBecause = null;
   let hangUpTimer = null;
+  // The rate-limit retry below is deferred; tracked so stop() can cancel it. An
+  // untracked retry fired after the user stopped, calling dc.send on a closed
+  // channel (uncaught InvalidStateError) and mutating state after teardown.
+  let retryTimer = null;
 
   // Only one response can be in flight per conversation. Asking for a second
   // is `conversation_already_has_active_response`, which arrives as an async
@@ -542,7 +546,7 @@ export async function connectRealtimeSession({
           responseRetried = true;
           // The server told us how long. Rounded up, because coming back a
           // few milliseconds early spends the retry on the same refusal.
-          setTimeout(() => requestResponse(), Math.ceil(wait * 1000) + 250);
+          retryTimer = setTimeout(() => requestResponse(), Math.ceil(wait * 1000) + 250);
           return;
         }
         onTranscript?.({ role: "assistant", text: shortFailure(message) });
@@ -672,6 +676,7 @@ export async function connectRealtimeSession({
   return {
     stop() {
       clearTimeout(hangUpTimer);
+      clearTimeout(retryTimer);
       hangUpBecause = null;
       userSpeaking = false;
       audioPlaying = false;

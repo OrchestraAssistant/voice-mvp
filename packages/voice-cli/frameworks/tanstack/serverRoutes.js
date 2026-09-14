@@ -1,4 +1,5 @@
 import traverse from "@babel/traverse";
+import { isDestructive } from "../../core/destructive.js";
 import { parseFile, walk } from "../../core/parse.js";
 
 /**
@@ -133,7 +134,7 @@ export const tanstackServerRoutes = {
               params: params.map((p) => ({ name: p, type: "string", required: true, source: "url" })),
             };
             if (method === "GET") queries.push(entry);
-            else actions.push({ ...entry, requiresConfirmation: method === "DELETE", bodyFields: [] });
+            else actions.push({ ...entry, requiresConfirmation: isDestructive({ method, name: entry.name }), bodyFields: [] });
           }
         },
       });

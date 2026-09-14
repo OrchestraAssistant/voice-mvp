@@ -1,4 +1,5 @@
 import traverse from "@babel/traverse";
+import { isDestructive } from "../../core/destructive.js";
 import { parseFile, walk } from "../../core/parse.js";
 
 /**
@@ -143,7 +144,7 @@ function operationFromCall(call, { methodName, params, className }) {
     kind: "action",
     entry: {
       ...base,
-      requiresConfirmation: method === "DELETE" || /delete|remove|destroy/i.test(methodName),
+      requiresConfirmation: isDestructive({ method, name: methodName }),
       bodyFields: [],
       ...(inputType?.name ? { _inputType: inputType.name, _inputPartial: inputType.partial } : {}),
     },

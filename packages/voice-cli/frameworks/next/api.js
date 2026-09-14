@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isDestructive } from "../../core/destructive.js";
 import traverse from "@babel/traverse";
 import { firstDir, parseFile, walk } from "../../core/parse.js";
 import { isNextApp, NEXT_INFRASTRUCTURE } from "./detect.js";
@@ -49,8 +50,12 @@ function nameFrom(endpoint, method) {
     .replace(/[^a-zA-Z0-9-]/g, "")
     .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
     .replace(/-/g, "");
+  // `/api` itself has no segment after the filter, so camel is empty. Fall back
+  // to "root" (astro/tanstack already do) -- otherwise a GET /api handler got the
+  // empty tool name "", and several root handlers collided on it.
+  const base = camel || "root";
   const verb = WRITE_VERBS[method];
-  return verb ? verb + camel.charAt(0).toUpperCase() + camel.slice(1) : camel;
+  return verb ? verb + base.charAt(0).toUpperCase() + base.slice(1) : base;
 }
 
 /** searchParams.get("status") -- the one query parameter a handler declares. */
@@ -62,7 +67,9 @@ function searchParams(ast, visit) {
       if (
         callee.type === "MemberExpression" &&
         callee.property?.name === "get" &&
-        /searchParams|query/i.test(callee.object?.name ?? callee.object?.property?.name ?? "") &&
+        // Only a real `searchParams.get()` (bare, or `url.searchParams.get()`).
+        // Matching /query/i too injected a phantom param from any `queryCache.get(...)`.
+        /^searchParams$/.test(callee.object?.name ?? callee.object?.property?.name ?? "") &&
         nodePath.node.arguments[0]?.type === "StringLiteral"
       ) {
         names.add(nodePath.node.arguments[0].value);
@@ -85,7 +92,7 @@ function entryFor({ method, endpoint, urlParams, queryParams, source }) {
   };
   return method === "GET"
     ? { kind: "queries", entry: base }
-    : { kind: "actions", entry: { ...base, requiresConfirmation: method === "DELETE", bodyFields: [] } };
+    : { kind: "actions", entry: { ...base, requiresConfirmation: isDestructive({ method, name: base.name }), bodyFields: [] } };
 }
 
 export const nextRouteHandlers = {

@@ -109,4 +109,23 @@ describe("openapi-spec producer", () => {
     assert.ok(names.includes("petsListAll"), `operationId not normalised: ${names}`);
     assert.ok(names.includes("cById"), `fallback name missing: ${names}`);
   });
+
+  test("an enum QUERY parameter keeps its values (not just body fields)", () => {
+    const spec = JSON.stringify({
+      openapi: "3.0.0",
+      paths: {
+        "/pets": {
+          get: {
+            operationId: "listPets",
+            parameters: [{ name: "status", in: "query", schema: { type: "string", enum: ["available", "sold"] } }],
+          },
+        },
+      },
+    });
+    const { queries } = openapiSpec.run({ srcDir: src({ "openapi.json": spec }) });
+    const status = queries.find((q) => q.name === "listPets").params.find((p) => p.name === "status");
+    assert.equal(status.type, "enum");
+    assert.deepEqual(status.enumValues, ["available", "sold"]);
+  });
+
 });
