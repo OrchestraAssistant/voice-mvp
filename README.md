@@ -121,6 +121,78 @@ Your app also has to reach the relay. Same-origin is simplest -- proxy
 over TLS cannot call an `http://` relay without being blocked as mixed
 content. Otherwise pass `relayUrl`.
 
+### Securing the relay
+
+The relay mints tokens billed to your OpenAI account, so an exposed
+`/voice/session` is an open, billable proxy. It runs open on localhost (and
+prints an `UNPROTECTED` warning at startup); before you expose it, set:
+
+- `VOICE_RELAY_SECRET` — the real lock. Requires a shared secret (as
+  `Authorization: Bearer …` or `X-Voice-Secret`) on `/voice/session` and
+  `/voice/log`. Have your app's OWN backend inject it where it proxies `/voice`,
+  so the secret never reaches the browser — a secret shipped to the page is not
+  a secret.
+- `VOICE_ALLOWED_ORIGINS` — comma-separated origins allowed cross-origin.
+
+A per-client rate limit (`VOICE_RATE_LIMIT`, default 30/min; `VOICE_RATE_WINDOW_MS`)
+and a request-body cap (`VOICE_MAX_BODY`, default `256kb`) are always on; behind
+a TLS proxy set `VOICE_TRUST_PROXY=1` so the limiter sees the real client.
+
+## What the CLI understands
+
+`voice-cli` reads your source statically — no build, no running app. Each
+detector fires only when it recognises its pattern, so they compose: a Next app
+on tRPC with Zod, or a React-Router SPA on axios with plain TypeScript types,
+both come out as one manifest. Anything no detector sees falls through to the
+**DOM tier** at runtime (snapshot → click/type), so an unrecognised stack still
+works — just without the typed shortcuts. Every stage that fired, and every one
+that found nothing and why, is printed on each run.
+
+"Verified on" names a real open-source app the detector was run against in a
+coverage sweep; "fixture" means it is covered by tests but has not yet had a
+real-app run.
+
+**Routing**
+
+| stack | detector | verified on |
+|---|---|---|
+| React Router (`<Route>` JSX) | `react-router` | twenty |
+| React Router v7 config / `createBrowserRouter([...])` | `react-router-config` | plane |
+| TanStack Router (`createFileRoute` / `createRoute`) | `tanstack-router` | fixture |
+| Remix file-system routes | `remix-fs-routes` | fixture |
+| Astro pages | `astro-pages` | fixture |
+| Next.js App Router & Pages Router | `next-app-router`, `next-pages-router` | cal.com |
+
+**API & data layer**
+
+| stack | detector | verified on |
+|---|---|---|
+| tRPC routers | `trpc-routers` | cal.com |
+| REST via axios service classes | `axios-services` | plane |
+| GraphQL operations (`gql` tagged templates, cross-file fragments inlined) | `graphql-operations` | twenty |
+| OpenAPI / Swagger JSON spec | `openapi-spec` | fixture |
+| React data hooks (`useQuery`/`useMutation` + a fetch helper) | `request-hooks` | fixture |
+| Next route handlers & Pages API | `next-route-handlers`, `next-pages-api` | cal.com |
+| TanStack Start server routes (`createAPIFileRoute`) | `tanstack-server-routes` | fixture |
+
+**Request bodies & typing** — fills in what an operation accepts
+
+| source | enricher | verified on |
+|---|---|---|
+| Zod schemas | `zod-bodies` | cal.com |
+| TypeScript types / interfaces (incl. `Partial<T>`, cross-package) | `typescript-types` | plane |
+| Valibot / Yup / ArkType schemas | `valibot-bodies`, `yup-bodies`, `arktype-bodies` | fixture |
+
+A body the source types as `any` cannot be read: the CLI says so and steers that
+operation to the screen rather than inventing its fields — honest over hopeful.
+
+**Known limit — large apps.** A freshly generated manifest lists every operation
+in the session prompt, which is fine into the low hundreds but grows the prefix
+paid on the first response of each turn. A very large app (300+ operations, ~20k
+tokens) is better hand-grouped in `manifest.overlay.json` — an `include` list,
+or `group` paths that move niche tools behind `expand` — until automatic grouping
+lands. Small and mid-size apps need none of this.
+
 ## Run it
 
 ```bash

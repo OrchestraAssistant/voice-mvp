@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import fetch from "node-fetch";
 import { buildTools, buildInstructions, resolveModel, resolveLanguage, validateManifest, MODELS, LANGUAGES } from "./tools.js";
 import { listSessions, readSession, priceEvents } from "./observer.js";
+import { corsOptionsFor, makeSecretGuard, makeRateLimiter, safeUpstreamMessage } from "./security.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,9 +40,41 @@ const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 const LOGGING = process.env.VOICE_LOG === "1";
 const LOG_DIR = process.env.VOICE_LOG_DIR || path.resolve(__dirname, "logs");
 
+// --- Security baseline (eval C1/H1/M4); all env-gated, see security.js ---
+// Minting a token spends the owner's OpenAI quota, so an open /voice/session is
+// an open billable proxy. Dev runs wide open with a warning; a hosted relay sets
+// these and locks down with no code change.
+const ALLOWED_ORIGINS = (process.env.VOICE_ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const RELAY_SECRET = process.env.VOICE_RELAY_SECRET || null;
+const MAX_BODY = process.env.VOICE_MAX_BODY || "256kb"; // H1: an explicit manifest cap, not the incidental 100kb default
+const requireSecret = makeSecretGuard(RELAY_SECRET);
+const limiter = makeRateLimiter({
+  max: Number(process.env.VOICE_RATE_LIMIT || 30),
+  windowMs: Number(process.env.VOICE_RATE_WINDOW_MS || 60_000),
+});
+setInterval(() => limiter.sweep(), 60_000).unref();
+
 const app = express();
-app.use(cors());
-app.use(express.json());
+// Behind a TLS-terminating proxy, opt in so req.ip is the real client (for the
+// rate limiter) rather than the proxy. Off by default: trusting the header
+// blindly would let a client spoof its way past the limit.
+if (process.env.VOICE_TRUST_PROXY) app.set("trust proxy", process.env.VOICE_TRUST_PROXY);
+app.use(cors(corsOptionsFor(ALLOWED_ORIGINS)));
+app.use(express.json({ limit: MAX_BODY }));
+// A body over the cap (H1) throws before any route; answer with clean JSON.
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large") return res.status(413).json({ error: `Request body exceeds ${MAX_BODY}.` });
+  if (err) return res.status(400).json({ error: "Malformed request." });
+  next();
+});
+
+if (!RELAY_SECRET && !ALLOWED_ORIGINS.length) {
+  console.warn(
+    "[relay] UNPROTECTED: no VOICE_RELAY_SECRET and no VOICE_ALLOWED_ORIGINS. " +
+      "/voice/session will mint tokens billed to your OpenAI account for any caller. " +
+      "Fine for localhost; set one before exposing this relay.",
+  );
+}
 
 // What the widget is allowed to offer in its settings. Served rather than
 // hard-coded in the client so the list is the relay's to control: a browser
@@ -96,7 +129,7 @@ function sweepSessions(now = Date.now()) {
 
 if (LOGGING) setInterval(sweepSessions, 30_000).unref();
 
-app.post("/voice/log", (req, res) => {
+app.post("/voice/log", requireSecret, (req, res) => {
   if (!LOGGING) return res.status(404).json({ error: "Logging is off. Start the relay with VOICE_LOG=1." });
   const { logId, events } = req.body ?? {};
   if (!logId || !Array.isArray(events)) return res.status(400).json({ error: "Expected { logId, events[] }" });
@@ -139,7 +172,7 @@ if (LOGGING) {
 // session-scoped. It is built from the manifest the caller sends, which is the
 // same object the widget uses to execute those tools. One object, one commit,
 // no way for the two to disagree.
-app.post("/voice/session", async (req, res) => {
+app.post("/voice/session", limiter.middleware, requireSecret, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(500).json({ error: "OPENAI_API_KEY is not set on the relay." });
   }
@@ -210,8 +243,10 @@ app.post("/voice/session", async (req, res) => {
 
     const data = await upstream.json();
     if (!upstream.ok) {
+      // Log the full body server-side; return only a bounded human message, so
+      // org ids and internal fields do not reach the caller (M4).
       console.error("OpenAI client_secrets error:", data);
-      return res.status(upstream.status).json(data);
+      return res.status(upstream.status).json({ error: safeUpstreamMessage(data) });
     }
     // A handle the client can attach its log to, so a transcript can be tied
     // back to the session config that produced it -- which model answered,
@@ -242,7 +277,7 @@ app.post("/voice/session", async (req, res) => {
     res.json({ ...data, logId, logging: LOGGING });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: "The relay could not create a session." });
   }
 });
 
