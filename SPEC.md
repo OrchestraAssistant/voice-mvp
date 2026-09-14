@@ -30,9 +30,12 @@ anywhere, less reliable, and blind between calls: the model sees nothing of
 the page unless it explicitly calls `dom_snapshot`, which returns a JSON list
 of visible interactive elements — never pixels.
 
-**Tier 2 — the manifest.** Named, typed actions derived from the app's source
-(`action_createTask`, `query_tasks`). Fast and reliable, because they call
-the app's real endpoints rather than improvising clicks.
+**Tier 2 — the manifest.** Named operations derived from the app's source,
+reached through a small, fixed dispatcher — `run_query`/`run_action` call an
+operation by name and `expand` reveals a topic's operations on demand — rather
+than one typed tool per operation (177 typed tools was ~15k tokens of prompt
+prefix on every turn and rate-limited a live session). Fast and reliable,
+because they call the app's real endpoints rather than improvising clicks.
 
 The model is instructed to prefer Tier 2 and fall back to Tier 1. A **Tier 3**
 (the host registering real backend endpoints directly, bypassing the browser)
@@ -56,7 +59,7 @@ Data flow for one spoken command:
               │  emits function_call
               ▼
        widget executes it
-        ├─ query_*/action_*  → fetch() the app's own API
+        ├─ run_query/run_action → fetch() the app's own API (by operation name)
         ├─ dom_*             → operate the live DOM
         └─ navigate          → host's router
               │  result JSON
@@ -119,17 +122,18 @@ corrections; there is no merge step. This is a known rough edge (see README).
 
 `relay/index.js`, one job: mint an ephemeral OpenAI Realtime session.
 
-- `POST /voice/session` — reads the manifest, builds the tool list and system
-  instructions, calls `https://api.openai.com/v1/realtime/client_secrets`
-  with `OPENAI_API_KEY`, returns the ephemeral token.
-- `GET /voice/manifest` — serves the manifest to the widget.
+- `POST /voice/session` — takes the manifest the page sends (the relay holds no
+  manifest of its own), builds the tool list and system instructions from it,
+  calls `https://api.openai.com/v1/realtime/client_secrets` with
+  `OPENAI_API_KEY`, and returns the ephemeral token.
 
-Two reasons it is server-side and not in the browser:
-
-1. `OPENAI_API_KEY` never reaches a client.
-2. **The tool list and confirmation policy are attached here**, so a tampered
-   browser cannot redefine its own tools or drop a `requiresConfirmation`
-   flag. The server is authoritative about what the agent may do.
+It is server-side, not in the browser, so `OPENAI_API_KEY` never reaches a
+client. The tool list and instructions are built here too — but the confirmation
+gate is **not** enforced here; it lives in the widget (§6), and the relay only
+marks an action "destructive" in the prompt. Minting spends the owner's quota,
+so `/voice/session` is guardable with a shared secret, an origin allowlist and a
+rate limit (README, "Securing the relay"); it runs open on localhost with a
+startup warning.
 
 Model defaults to `gpt-realtime`; input transcription `gpt-live-transcribe`.
 After minting, the browser negotiates WebRTC directly with
@@ -137,18 +141,26 @@ After minting, the browser negotiates WebRTC directly with
 
 ## 6. Tool surface
 
-Built by `relay/tools.js` from the manifest, plus fixed primitives:
+Built by `relay/tools.js`. Operations are DATA reached through a fixed
+dispatcher, not one typed tool each, so the surface stays a handful whatever the
+app's size:
 
 | tool | kind | notes |
 |---|---|---|
-| `query_<name>` | Tier 2 read | safe, auto-runs |
-| `action_<name>` | Tier 2 write | may require confirmation |
+| `run_query({name, args})` | Tier 2 read | calls a query by its catalog name |
+| `run_action({name, items})` | Tier 2 write | calls an action; `items` is a list (one call, many changes); may stage for confirmation |
+| `expand({topic})` | catalog | reveals a topic's operations when the catalog shows only its name |
 | `navigate(path)` | routing | host's `navigate`, or `pushState` fallback |
 | `dom_snapshot()` | Tier 1 | JSON list of visible interactive elements |
-| `dom_click(elementId)` | Tier 1 | ids come from the last snapshot |
-| `dom_type(elementId, text)` | Tier 1 | native-setter trick so React sees it |
+| `dom_click({elementIds})` | Tier 1 | a list; ids come from the last snapshot |
+| `dom_type({items})` | Tier 1 | a list of `{elementId, text}`; native-setter trick so React sees it |
+| `dom_highlight(elementId)` | Tier 1 | rings an element without pressing it |
+| `answer_aloud` / `end_session` | session | speak the next reply / hang up |
 | `confirm_pending_action()` | gate | executes the staged destructive action |
 | `cancel_pending_action()` | gate | discards it |
+
+The extension build adds browser tools (`open_url`, `look_at_screen`) via a
+`surface` flag on the mint; the in-page widget never sees them.
 
 ### The confirmation gate
 
@@ -213,7 +225,7 @@ holding})`.
 
 ## 9. Host isolation
 
-The widget renders into a **closed shadow root** on `<body>` via
+The widget renders into an **open shadow root** on `<body>` via
 `ScreenOverlay`, not the host's React tree, because a host's ordinary
 `button {}` / `form {}` rules otherwise reach in and win. `ScreenOverlay`
 also pins its host element with inline `!important`, promotes into the top
@@ -221,9 +233,9 @@ layer via the popover API, and re-attaches if the host wipes `<body>`.
 
 Consequences to know before touching it:
 
-- Events **retarget** to the overlay host, and a *closed* root also truncates
-  `composedPath()` — so "is this click inside us?" is answered by
-  `event.target === overlayHost`, nothing else works.
+- Events **retarget** to the overlay host at the boundary, so "is this click
+  inside us?" is answered with `event.composedPath().includes(el)` — the path
+  crosses an *open* root, and would be truncated by a closed one.
 - `pointer-events: none` is pinned on the host so the rim never eats clicks;
   interactive subtrees opt back in with `pointer-events: auto`.
 - Inherited properties (`color`, `font`) still cross the boundary.
@@ -235,5 +247,5 @@ so the difference stays demonstrable (`/` vs `/?mount=inline`).
 
 Deliberately out of scope so far: the exploration crawler (navigation graph
 built by driving the app), React fiber/state introspection, Tier 3 direct API
-hooks, and a real control plane (the relay reads the manifest off disk — no
-versioning, rollback, tenancy or `push`).
+hooks, and a real control plane for the manifest contract (it travels with each
+session now, but has no schema version, rollback, tenancy or `push`).
