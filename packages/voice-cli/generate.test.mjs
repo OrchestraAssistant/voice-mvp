@@ -488,6 +488,29 @@ describe("tRPC procedures, which have no URLs in the source", () => {
     assert.ok(!m.actions.some((a) => a.name === "delete"));
   });
 
+  test("routers are found whether written router(), t.router(), or createTRPCRouter()", () => {
+    // Only a bare `router(` was matched before, so a stock `t.router({...})` or
+    // `createTRPCRouter({...})` app yielded ZERO procedures -- and the empty
+    // result sent the search walking up into parent directories to look for them.
+    const root = trpcApp({
+      "server/routers.ts": `
+        export const scheduleRouter = createTRPCRouter({
+          update: authedProcedure.input(ZUpdateScheduleInput).mutation(async () => {}),
+        });
+        export const availabilityRouter = t.router({
+          list: authedProcedure.query(async () => {}),
+          schedule: scheduleRouter,
+        });`,
+    });
+    run(root, ["."]);
+    const m = JSON.parse(readFileSync(join(root, ".voice/manifest.json"), "utf8"));
+    assert.ok(m.queries.some((q) => q.name === "availabilityList"), "t.router() procedures were not found");
+    assert.ok(
+      m.actions.some((a) => a.endpoint === "/api/trpc/availability/schedule.update"),
+      "createTRPCRouter() nested procedures were not found",
+    );
+  });
+
   test("a procedure names its own input schema, so nothing is guessed", () => {
     // The producer KNOWS: `.input(ZUpdateScheduleInput)` says exactly which
     // schema describes the body. That beats matching on a shared name.

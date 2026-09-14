@@ -38,7 +38,10 @@ function unwrap(node) {
   let required = true;
   while (node?.type === "CallExpression" && node.callee?.type === "MemberExpression") {
     const method = node.callee.property?.name;
-    if (method === "optional" || method === "nullish") required = false;
+    // .default(x) and .catch(x) both supply a value when the input is absent or
+    // invalid, so the field is NOT required -- telling the model it must always
+    // send a defaulted field is how "change one setting" overwrites the rest.
+    if (method === "optional" || method === "nullish" || method === "default" || method === "catch") required = false;
     if (node.callee.object?.name === "z") return { base: node, required };
     if (node.callee.object?.type === "CallExpression") {
       node = node.callee.object;
@@ -230,7 +233,14 @@ function datePaths(node, prefix = [], depth = 0) {
 
 function fieldsOf(objectExpression) {
   return objectExpression.properties.map((prop) => {
-    const name = prop.key.name || prop.key.value;
+    // A SpreadElement (`z.object({ ...Base.shape, title: ... })`) has no `.key`;
+    // reading `.key.name` off it threw, and because run() calls fieldsOf on
+    // EVERY z.object in the tree, one spread anywhere wiped out all Zod body
+    // extraction for the whole app. Skip what has no readable key -- the spread's
+    // own fields go unread (an honest partial) rather than taking the rest down
+    // with them. datePaths already guards its keys the same way.
+    const name = prop.key?.name ?? prop.key?.value;
+    if (name == null) return null;
     const { base, required } = unwrap(prop.value);
     let type = "string";
     let enumValues;
@@ -257,7 +267,7 @@ function fieldsOf(objectExpression) {
       ...(dates.length ? { dates } : {}),
       ...(review ? { review } : {}),
     };
-  });
+  }).filter(Boolean);
 }
 
 // Exported for tests; the enricher above is the only production caller.

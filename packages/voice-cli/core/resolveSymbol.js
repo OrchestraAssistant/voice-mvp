@@ -112,6 +112,7 @@ export function findDefinition(name, startFile, aliases, seen = new Set()) {
 
   let localInit = null;
   let hop = null; // { spec, orig } to follow when there is no local definition
+  const stars = []; // `export * from "spec"` barrels, followed only as a fallback
 
   for (const node of ast.program.body) {
     // export const NAME = ...   /   const NAME = ...
@@ -135,12 +136,24 @@ export function findDefinition(name, startFile, aliases, seen = new Set()) {
         }
       }
     }
+    // export * from "spec" -- lists no specifiers, so the block above skipped it
+    // entirely. Collect the barrels; they are followed only if nothing else hits.
+    if (node.type === "ExportAllDeclaration" && node.source?.value) stars.push(node.source.value);
   }
 
   if (localInit) return { file: startFile, node: localInit };
   if (hop) {
     const next = resolveSpecifier(hop.spec, startFile, aliases);
     if (next) return findDefinition(hop.orig, next, aliases, seen);
+  }
+  // A name found neither locally nor via a named re-export may still come through
+  // an `export * from "./x"` barrel. Follow each in turn; `seen` guards cycles.
+  // Barrels dominate large monorepos, and skipping them returned null -- empty
+  // bodyFields, and the model left to guess the shape.
+  for (const spec of stars) {
+    const next = resolveSpecifier(spec, startFile, aliases);
+    const found = next && findDefinition(name, next, aliases, seen);
+    if (found) return found;
   }
   return null;
 }

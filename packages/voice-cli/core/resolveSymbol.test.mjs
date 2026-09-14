@@ -51,6 +51,28 @@ describe("cross-package symbol resolution", () => {
     rmSync(mono, { recursive: true, force: true });
   });
 
+  test("a symbol is followed through an `export *` barrel", () => {
+    // `export * from "./x"` lists no specifiers, so the resolver skipped it and
+    // returned null -- a schema surfaced through a star barrel (the monorepo
+    // norm) left its action's bodyFields empty and the model guessing.
+    const mono = mkdtempSync(join(tmpdir(), "star-"));
+    mkdirSync(join(mono, "packages", "features", "services"), { recursive: true });
+    writeFileSync(join(mono, "packages", "features", "package.json"), JSON.stringify({ name: "@acme/features" }));
+    writeFileSync(join(mono, "packages", "features", "services", "Schedule.ts"),
+      'import { z } from "zod";\nexport const ZUpdate = z.object({ scheduleId: z.number() });\n');
+    // a STAR barrel, not a named re-export
+    writeFileSync(join(mono, "packages", "features", "index.ts"), 'export * from "./services/Schedule";\n');
+    mkdirSync(join(mono, "apps", "web", "src"), { recursive: true });
+    const routerFile = join(mono, "apps", "web", "src", "router.ts");
+    writeFileSync(routerFile, 'import { ZUpdate } from "@acme/features";\nexport const r = ZUpdate;\n');
+
+    const aliases = packageAliases(join(mono, "apps", "web"));
+    const def = findDefinition("ZUpdate", routerFile, aliases);
+    assert.ok(def, "did not resolve through the export * barrel");
+    assert.match(def.file, /services\/Schedule\.ts$/);
+    rmSync(mono, { recursive: true, force: true });
+  });
+
   test("an unresolvable symbol is null, not a throw", () => {
     const { mono, routerFile, appRoot } = fixture();
     const aliases = packageAliases(appRoot);

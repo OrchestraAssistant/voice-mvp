@@ -100,3 +100,30 @@ describe("dates are extracted below the old cap (case 1 correctness)", () => {
     assert.deepEqual(f.dates, [["at"]]);
   });
 });
+
+describe("spreads and defaults (eval-fixes regressions)", () => {
+  test("a spread property does not crash extraction; readable siblings survive", () => {
+    // `z.object({ ...Base.shape, title })` -- a SpreadElement has no .key, and
+    // reading .key.name off it threw. Because run() calls fieldsOf on EVERY
+    // z.object in the tree, one spread anywhere wiped out all Zod bodies for the
+    // whole app. The spread is now skipped and the named fields remain.
+    const names = fields(
+      "const S = z.object({ ...Base.shape, title: z.string(), count: z.number() })",
+    ).map((f) => f.name);
+    assert.deepEqual(names, ["title", "count"]);
+  });
+
+  test(".default() marks a field optional, not required", () => {
+    // A defaulted field has a fallback, so the model must not be told it MUST
+    // send it -- that is how changing one setting overwrites the rest.
+    assert.equal(field("const S = z.object({ theme: z.string().default('dark') })", "theme").required, false);
+  });
+
+  test(".catch() marks a field optional, not required", () => {
+    assert.equal(field("const S = z.object({ mode: z.enum(['a','b']).catch('a') })", "mode").required, false);
+  });
+
+  test("a plain field is still required", () => {
+    assert.equal(field("const S = z.object({ title: z.string() })", "title").required, true);
+  });
+});

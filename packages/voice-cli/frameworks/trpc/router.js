@@ -39,7 +39,17 @@ function collectRouters(srcDir, visit) {
       VariableDeclarator(nodePath) {
         const { id, init } = nodePath.node;
         if (id.type !== "Identifier") return;
-        if (init?.type !== "CallExpression" || init.callee?.name !== "router") return;
+        if (init?.type !== "CallExpression") return;
+        // Match `router({...})`, `t.router({...})` (a MemberExpression callee --
+        // the most common style), and the `createTRPCRouter`/`createRouter`
+        // factory names. Only the bare `router(` was matched before, so a stock
+        // `t.router({...})` app yielded ZERO routers, and the empty result then
+        // sent the search walking up into parent directories looking for them.
+        const callee = init.callee;
+        const isRouterCall =
+          (callee?.type === "Identifier" && /^(router|createTRPCRouter|createRouter)$/.test(callee.name)) ||
+          (callee?.type === "MemberExpression" && callee.property?.name === "router");
+        if (!isRouterCall) return;
         if (init.arguments[0]?.type !== "ObjectExpression") return;
         routers.set(id.name, { node: init.arguments[0], file });
       },

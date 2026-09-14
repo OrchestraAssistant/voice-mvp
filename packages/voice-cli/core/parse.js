@@ -18,7 +18,16 @@ export function parseFile(filePath) {
 /** Every file under `dir` matching `test`, recursively. Skips the usual noise. */
 export function walk(dir, test, out = []) {
   if (!fs.existsSync(dir)) return out;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // An unreadable directory (permissions, a broken symlink) skips rather than
+    // crashing the whole scan -- reachable when a search walks above the project
+    // root into system directories like /etc/ssl/private.
+    return out;
+  }
+  for (const entry of entries) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, test, out);
