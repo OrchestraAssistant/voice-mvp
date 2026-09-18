@@ -186,12 +186,15 @@ real-app run.
 A body the source types as `any` cannot be read: the CLI says so and steers that
 operation to the screen rather than inventing its fields — honest over hopeful.
 
-**Known limit — large apps.** A freshly generated manifest lists every operation
-in the session prompt, which is fine into the low hundreds but grows the prefix
-paid on the first response of each turn. A very large app (300+ operations, ~20k
-tokens) is better hand-grouped in `manifest.overlay.json` — an `include` list,
-or `group` paths that move niche tools behind `expand` — until automatic grouping
-lands. Small and mid-size apps need none of this.
+**Large apps.** The session prompt lists every *root* operation, so its size
+tracks how many operations sit at the root. Small and mid apps keep everything
+at root — immediately callable, the deliberate default. Above a budget, the
+generator's **grouping pass** clusters operations into topics by entity (read
+from the name), moving the long tail behind `expand` and leaving the base prompt
+a handful of lines; measured, this cut a 329-operation app from ~20k to ~7k
+tokens of prefix and a 310-operation one from ~11k to ~6k, with no hand-tuning.
+You can still override it in `manifest.overlay.json` — a hand-written `group`
+path or an `include` list is respected as the floor.
 
 ## Run it
 
