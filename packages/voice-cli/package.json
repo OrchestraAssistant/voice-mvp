@@ -1,8 +1,12 @@
 {
   "name": "@yourco/voice-cli",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Static-analysis extractor: turns a React app's source into .voice/manifest.json",
-  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OrchestraAssistant/voice-mvp.git",
+    "directory": "packages/voice-cli"
+  },
   "type": "module",
   "bin": {
     "voice-cli": "./generate.js",
@@ -13,24 +17,9 @@
     "generate": "node generate.js",
     "test": "node --test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "license": "UNLICENSED",
   "dependencies": {
     "@babel/parser": "^8.0.4",
     "@babel/traverse": "^8.0.4"
-  },
-  "files": [
-    "generate.js",
-    "probe.js",
-    "skill.js",
-    "registry.js",
-    "core",
-    "frameworks",
-    "schema",
-    "stages",
-    "browsers",
-    "skills",
-    "MANIFEST-FEATURES.md"
-  ]
+  }
 }

@@ -45,10 +45,30 @@ build setup, and it's what caught the CSS-collision bug in DESIGN-CHOICES §1.
 
 ## Installing it in your app
 
+Not on npm yet, and `npm install github:OrchestraAssistant/voice-mvp` won't work
+— this is a workspace monorepo, so that grabs the private root, not the packages.
+Install the two **tarballs** instead. They're pre-built (`dist` is bundled), so
+the host needs no build step and no Tailwind:
+
 ```bash
-npm install @yourco/voice
-npx @yourco/voice-cli src .voice     # your source dir -> a manifest
+# from a GitHub Release (shareable, no clone):
+npm install \
+  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.0/yourco-voice-0.1.0.tgz \
+  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.0/yourco-voice-cli-0.1.0.tgz
+
+# or from local tarballs, built in this repo with `npm run pack:all`:
+npm install ./yourco-voice-0.1.0.tgz ./yourco-voice-cli-0.1.0.tgz
 ```
+
+Then generate a manifest from your source:
+
+```bash
+npx voice-cli src .voice     # your source dir -> .voice/manifest.json
+```
+
+Maintainers: `npm run pack:all` writes both tarballs to `pkg/` (`@yourco/voice`
+builds its `dist` on pack). Attach those two files to a GitHub Release named
+`v0.1.0` and the URL install above works for anyone.
 
 Mount it once, wherever your other providers live. It is a leaf, not a
 wrapper -- nothing of yours needs to be inside the provider, because the only
