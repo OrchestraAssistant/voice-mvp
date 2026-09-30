@@ -50,3 +50,9 @@ export { ListeningGlow } from "./ListeningGlow.jsx";
 export { Spotlight } from "./Spotlight.jsx";
 export { isListening, rimState } from "./listening.js";
 export { PALETTES, SWATCHES } from "./palettes.js";
+
+// Providers -- the swappable voice-to-action pipeline (see PROVIDERS.md).
+// `openaiRealtime()` is the reference provider; implement the same contract
+// (a { id, capabilities, connect } object) to bring your own architecture.
+export { openaiRealtime } from "./providers/openaiRealtime.js";
+export { toolCatalog, validateProvider, REALTIME_CAPABILITIES } from "./providers/contract.js";
