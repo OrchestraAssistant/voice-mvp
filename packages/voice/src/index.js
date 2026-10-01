@@ -55,7 +55,11 @@ export { PALETTES, SWATCHES } from "./palettes.js";
 // `openaiRealtime()` is the reference provider; implement the same contract
 // (a { id, capabilities, connect } object) to bring your own architecture.
 export { openaiRealtime } from "./providers/openaiRealtime.js";
-// A cascade reference: NVIDIA Parakeet (STT) + JEV (decision) + a text model + TTS,
-// all injected (BYOK). Proves the contract on a second, non-integrated stack.
+// Cascade providers: STT + JEV (decision) + a text model + TTS, all injected
+// (BYOK). parakeetJev runs STT on your server; moonshineJev runs it in the
+// browser (pair it with moonshineStt). Both are the same loop (jevCascade).
 export { parakeetJev } from "./providers/parakeetJev.js";
+export { moonshineJev } from "./providers/moonshineJev.js";
+export { jevCascade } from "./providers/jevCascade.js";
+export { moonshineStt } from "./providers/moonshineStt.js";
 export { toolCatalog, validateProvider, REALTIME_CAPABILITIES } from "./providers/contract.js";
