@@ -25,7 +25,8 @@ export function moonshineStt(options = {}) {
   const {
     loadTransformers,
     model = "onnx-community/moonshine-base-ONNX",
-    device = "webgpu",
+    device = "auto", // "auto" probes for a real WebGPU adapter, else falls back to wasm
+
     silenceMs = 700,
     threshold = 0.012,
     maxTurnMs = 20000,
@@ -52,7 +53,23 @@ export function moonshineStt(options = {}) {
       throw new Error('moonshineStt needs { loadTransformers: () => import("@huggingface/transformers") } -- install it in your app and pass the import.');
     }
     const t = await loadTransformers();
-    transcriber = await t.pipeline("automatic-speech-recognition", model, { device });
+
+    // Resolve the device. "auto" uses WebGPU only if a real adapter is reachable
+    // -- navigator.gpu can exist while requestAdapter() returns null (no flag, no
+    // hardware), which is the "Failed to get GPU adapter" error. Fall back to wasm,
+    // which runs everywhere.
+    let dev = device;
+    if (dev === "auto") {
+      dev = "wasm";
+      try { if (navigator.gpu && (await navigator.gpu.requestAdapter())) dev = "webgpu"; } catch { /* wasm */ }
+    }
+    try {
+      transcriber = await t.pipeline("automatic-speech-recognition", model, { device: dev });
+    } catch (err) {
+      if (dev === "wasm") throw err;
+      handlers.onStatus?.("webgpu failed, retrying on wasm");
+      transcriber = await t.pipeline("automatic-speech-recognition", model, { device: "wasm" });
+    }
     return transcriber;
   }
 
