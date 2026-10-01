@@ -250,14 +250,35 @@ The relay ships **inside** `@yourco/voice-openai`, not the core.
 
 ---
 
+## Reference: the Parakeet + JEV cascade provider
+
+`providers/parakeetJev.js` is a second, non-integrated provider that proves the
+contract on a different stack: **NVIDIA Parakeet** (STT) + **JEV** (routing &
+closed-set decisions) + a small **text model** (free-text args and spoken
+replies) + **TTS**. Every service is an injected client, so keys live in the
+dev's broker:
+
+```js
+parakeetJev({ stt, evaluate, generateText, tts })
+```
+
+Its decision engine (`providers/jevDecide.js`) is the JEV cascade in practice:
+two cheap closed-set `evaluate()` calls route the turn and pick the operation and
+its enum/boolean args; a **required free-text/number/date arg** returns
+`needsText` (derived from the chosen op's manifest params, *not* from asking JEV),
+and the provider fills it with `generateText`. That is the split the whole design
+turns on — JEV for the closed-set majority, a text model only for the free-text
+slots. "delete the groceries task" lands in the `generateText` branch; "switch to
+dark mode" and "turn on notifications" are pure JEV choices.
+
 ## Status
 
-- **Shipped:** the contract (`packages/voice/src/providers/contract.js`) and the
-  reference **`openaiRealtime`** provider (`providers/openaiRealtime.js`),
-  wrapping the existing realtime client + relay mint.
+- **Shipped:** the contract, the reference **`openaiRealtime`** provider, and the
+  **`parakeetJev`** cascade reference + its JEV decision engine (tested with
+  injected fakes — the real Parakeet/JEV/TTS services are the dev's to wire).
 - **Next:** route the core `VoiceProvider` component through the provider as its
   single path (today it still calls the realtime client directly). That is the
   `VoiceProvider` god-component refactor — it is heavily source-asserted in tests,
   so it moves deliberately, converting those tests to behavioural as it goes.
-- **Then:** the first non-OpenAI provider (`@yourco/voice-cascade`), which also
-  proves the tool-schema projection and capability negotiation on a second stack.
+- **Then:** graduate the providers to their own packages (`@yourco/voice-openai`,
+  `@yourco/voice-parakeet-jev`) per the split above.

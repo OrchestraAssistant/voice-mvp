@@ -55,4 +55,7 @@ export { PALETTES, SWATCHES } from "./palettes.js";
 // `openaiRealtime()` is the reference provider; implement the same contract
 // (a { id, capabilities, connect } object) to bring your own architecture.
 export { openaiRealtime } from "./providers/openaiRealtime.js";
+// A cascade reference: NVIDIA Parakeet (STT) + JEV (decision) + a text model + TTS,
+// all injected (BYOK). Proves the contract on a second, non-integrated stack.
+export { parakeetJev } from "./providers/parakeetJev.js";
 export { toolCatalog, validateProvider, REALTIME_CAPABILITIES } from "./providers/contract.js";
