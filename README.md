@@ -158,6 +158,31 @@ A per-client rate limit (`VOICE_RATE_LIMIT`, default 30/min; `VOICE_RATE_WINDOW_
 and a request-body cap (`VOICE_MAX_BODY`, default `256kb`) are always on; behind
 a TLS proxy set `VOICE_TRUST_PROXY=1` so the limiter sees the real client.
 
+### Host it in your own app (no separate relay)
+
+You don't need to run the relay standalone. Its mint logic is a framework-agnostic
+`(Request) => Response` handler (`relay/mintHandler.js`), so you can mount it as a
+route in your own backend — the OpenAI key lives there, and the route sits behind
+your app's existing auth:
+
+```ts
+// Next.js App Router — app/api/voice/session/route.ts
+import { createVoiceSessionHandler } from ".../relay/mintHandler.js";
+export const POST = createVoiceSessionHandler(); // reads OPENAI_API_KEY from env
+```
+
+```js
+// Express
+import { createVoiceSessionHandler, toExpressHandler } from ".../relay/mintHandler.js";
+app.post("/api/voice/session", express.json(), toExpressHandler(createVoiceSessionHandler()));
+```
+
+Then point the widget at that route (same-origin `/api/voice`, or `relayUrl`). For
+a single app this beats a standalone relay — same origin, your own auth gating the
+route, one deploy. The standalone `relay/` stays the reference and the multi-tenant
+option (one service for many apps), where the `security.js` guards earn their keep.
+The same pattern is how a JEV/cascade broker would mount too; see PROVIDERS.md.
+
 ## What the CLI understands
 
 `voice-cli` reads your source statically — no build, no running app. Each
