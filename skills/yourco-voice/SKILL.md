@@ -101,11 +101,13 @@ Those are your list. Everything else the machine already knows well enough.
    NATURAL call a model would make, run `voice-probe --writes --effects fx.json`,
    and read the verdict. A `2xx` that changed nothing means the description must
    name the load-bearing field. A verified change earns the operation `known`.
-4. **Assign a `group` (tier).** A fresh manifest has everything at the root, so it
-   all ships in the base prompt. Move niche operations down into `group` paths
-   (`["availability","schedule"]`) so the base prompt lists ~20 things a person
-   would actually speak, and the rest are an `expand` away. Give each topic a
-   one-line entry in `groups`.
+4. **Refine the grouping, if needed.** A large app is already grouped for you: the
+   generator clusters operations into topics by entity (read from their names) so
+   the base prompt stays small — a 300-operation app drops from ~20k to ~7k tokens,
+   everything still reachable via `expand`. Touch `group` by hand only to improve on
+   that — clearer topic names, a deliberate tier (`["availability","schedule"]`) — or
+   to group a mid-size app the auto-pass left at root. An overlay `group` is the
+   floor and is always respected. Give a topic a one-line entry in `groups`.
 
 ### The worked example (cal.diy, and why this stage exists)
 
