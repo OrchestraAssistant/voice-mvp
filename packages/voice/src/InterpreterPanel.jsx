@@ -32,17 +32,22 @@ export function InterpreterPanel() {
     setMode,
     holdStart,
     holdEnd,
+    capabilities,
   } = useInterpreter();
   const [textInput, setTextInput] = useState("");
   const live = transport === "ready" && micAttached;
   const rim = useRimTuning(); // TEMPORARY
+
+  // Only the modes the live engine supports -- a cascade that cannot hold a
+  // turn offers continuous only, so push-to-talk never appears as a dead button.
+  const modes = MODES.filter((m) => m.id === "continuous" || capabilities.pushToTalk);
 
   const holdLabel = mode === "ptt" ? (holding ? "Listening..." : "Hold to talk") : holding ? "Muted" : "Hold to mute";
 
   return (
     <div className="interpreter-panel">
       <div className="mode-selector">
-        {MODES.map((m) => (
+        {modes.map((m) => (
           <button
             key={m.id}
             className={mode === m.id ? "mode-active" : ""}
@@ -106,21 +111,23 @@ export function InterpreterPanel() {
         ))}
       </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (textInput.trim()) sendText(textInput.trim());
-          setTextInput("");
-        }}
-      >
-        <input
-          aria-label="Type a voice command for testing"
-          placeholder="Or type a command to test without a mic..."
-          value={textInput}
-          onChange={(e) => setTextInput(e.target.value)}
-        />
-        <button type="submit">Send</button>
-      </form>
+      {capabilities.textInput && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (textInput.trim()) sendText(textInput.trim());
+            setTextInput("");
+          }}
+        >
+          <input
+            aria-label="Type a voice command for testing"
+            placeholder="Or type a command to test without a mic..."
+            value={textInput}
+            onChange={(e) => setTextInput(e.target.value)}
+          />
+          <button type="submit">Send</button>
+        </form>
+      )}
 
       {/* TEMPORARY -- rim geometry tuning, see rimTuningDev.js. At the bottom
           so it doesn't read as part of the voice controls. The rim only

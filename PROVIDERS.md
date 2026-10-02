@@ -214,6 +214,49 @@ transport work unchanged — because none of them ever knew which provider they 
 
 ---
 
+## Offering a choice of engines
+
+A provider is just an object, so a *list* of them is a list the user can pick
+from — the same control surface as the model picker, one level up. Pass the
+engines the app has wired; the widget shows them in Settings and the user
+switches live:
+
+```jsx
+<VoiceProvider
+  manifest={manifest}
+  providers={[
+    { label: "OpenAI Realtime",        provider: openaiRealtime({ relayUrl }) },
+    { label: "On-device (Moonshine)",  provider: moonshineJev({ stt: moonshineStt(), evaluate, generateText }) },
+  ]}
+>
+  <Interpreter/>
+</VoiceProvider>
+```
+
+Three things make this well-behaved, and they are why it is a list of providers
+and not a list of model strings:
+
+- **The app offers, the user picks.** Each engine needs its own server half
+  wired (a relay for Realtime, a JEV/STT broker for the cascade), so the dev
+  decides what is *available* — you cannot offer an engine you have not keyed.
+  The user chooses among the available ones. (`providers` and the singular
+  `provider` are the same prop at list length 0 and 1; omit both for the default
+  single realtime engine.)
+- **A switch is a reconnect, and the credential is dropped.** Unlike model or
+  language — parameters to *one* engine — an engine is a whole implementation, so
+  changing it tears the session down and builds the new one. A minted Realtime
+  key means nothing to a JEV broker, so it is discarded on the switch.
+- **The controls follow `capabilities`.** Switch to an engine that cannot
+  push-to-talk and the PTT/PTNT modes disappear; switch to one with no relay
+  model list and the Model/Language rows go with it. A weaker engine shows fewer
+  controls, never dead ones.
+
+A model is a string you pass to Realtime; an engine is the pipeline itself. So
+the Realtime model/language pickers are *sub-options of that one engine*, shown
+only while it is live.
+
+---
+
 ## Package split
 
 Modelled on the AI SDK (`ai` + `@ai-sdk/*`):
@@ -273,12 +316,13 @@ dark mode" and "turn on notifications" are pure JEV choices.
 
 ## Status
 
-- **Shipped:** the contract, the reference **`openaiRealtime`** provider, and the
-  **`parakeetJev`** cascade reference + its JEV decision engine (tested with
-  injected fakes — the real Parakeet/JEV/TTS services are the dev's to wire).
-- **Next:** route the core `VoiceProvider` component through the provider as its
-  single path (today it still calls the realtime client directly). That is the
-  `VoiceProvider` god-component refactor — it is heavily source-asserted in tests,
-  so it moves deliberately, converting those tests to behavioural as it goes.
-- **Then:** graduate the providers to their own packages (`@yourco/voice-openai`,
+- **Shipped:** the contract; the reference **`openaiRealtime`** provider; the
+  **`parakeetJev`** / **`moonshineJev`** cascade references + their JEV decision
+  engine (tested with injected fakes — the real Parakeet/JEV/TTS/STT services are
+  the dev's to wire); and the core `VoiceProvider` **routed through the provider
+  contract as its single path** — `warm`/`connect`/`mint` all go through the
+  active provider, so `provider`/`providers` select the engine and a live
+  **engine picker** switches among several (capability-adaptive controls, driven
+  in-browser by `test/providers-ui.test.mjs`).
+- **Next:** graduate the providers to their own packages (`@yourco/voice-openai`,
   `@yourco/voice-parakeet-jev`) per the split above.

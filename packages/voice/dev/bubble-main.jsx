@@ -5,6 +5,7 @@ import { InterpreterBubble } from "../src/InterpreterBubble.jsx";
 import { ListeningGlow } from "../src/ListeningGlow.jsx";
 import { Interpreter } from "../src/Interpreter.jsx";
 import * as dom from "../src/domActions.js";
+import { fakeProviders } from "./fake-providers.js";
 
 // The harness's own instance of the DOM tools, so a check driven from outside
 // the page acts on the SAME module the components subscribe to. Importing
@@ -106,9 +107,15 @@ const MANIFEST = {
 // point: the assembled component must produce what a host would have built.
 const ASSEMBLED = params.has("assembled");
 
+// ?providers=multi offers two engines with different capabilities (see
+// fake-providers.js), so the engine picker and the capability-adaptive controls
+// can be driven with no relay. Omitted, the widget gets its usual single
+// realtime provider, which is the default behaviour.
+const PROVIDERS = params.get("providers") === "multi" ? fakeProviders() : undefined;
+
 createRoot(document.getElementById("widget-mount")).render(
   <StrictMode>
-    <VoiceProvider relayUrl={RELAY} manifest={MANIFEST}>
+    <VoiceProvider relayUrl={RELAY} manifest={MANIFEST} providers={PROVIDERS}>
       {ASSEMBLED ? (
         <Interpreter mount={MOUNT} />
       ) : (

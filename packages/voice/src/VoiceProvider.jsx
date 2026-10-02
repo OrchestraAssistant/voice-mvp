@@ -1,5 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
-import { connectRealtimeSession, isUsable, mintSession } from "./realtimeClient.js";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { isUsable } from "./realtimeClient.js";
+import { openaiRealtime } from "./providers/openaiRealtime.js";
+import { toolCatalog, validateProvider } from "./providers/contract.js";
 import { OverlayProvider } from "./ScreenOverlay.jsx";
 import { createRelayLogger } from "./relayLog.js";
 import { planNavigation, matchPattern } from "./routes.js";
@@ -11,6 +13,14 @@ import { classifyError } from "./errors.js";
 import { retryBudget, screenSteer } from "./policy.js";
 
 const InterpreterContext = createContext(null);
+
+// A friendly name for each built-in provider, used in the engine picker when
+// the host passes a bare provider rather than a { label, provider } entry.
+const PROVIDER_LABELS = {
+  "openai-realtime": "OpenAI Realtime",
+  "parakeet-jev": "Parakeet + JEV",
+  "moonshine-jev": "On-device (Moonshine + JEV)",
+};
 
 /**
  * Performs the request and hands the whole outcome back, status included.
@@ -87,6 +97,26 @@ async function apiFetch(method, url, body) {
 export function VoiceProvider({
   children,
   manifest,
+  /**
+   * The voice-to-action pipeline(s) this app offers. Each is a provider object
+   * -- { id, capabilities, connect } (see PROVIDERS.md) -- or a { label, provider }
+   * pair to name it in the engine picker. The host passes the providers it has
+   * actually wired, because each needs its own server half (the relay for
+   * OpenAI Realtime, a JEV/STT broker for a cascade); the user then picks among
+   * them in Settings, the same way they pick a model.
+   *
+   * Omitted, it defaults to the OpenAI Realtime reference provider pointed at
+   * `relayUrl` -- the single-provider behaviour this widget has always had.
+   * Pass a stable array (define it outside render or memoise it); a fresh array
+   * each render re-validates the providers and is wasted work.
+   */
+  providers,
+  /**
+   * A single provider -- the ergonomic form of a one-entry `providers`. Ignored
+   * when `providers` is given. `provider={openaiRealtime()}` and the default are
+   * the same thing written two ways.
+   */
+  provider,
   relayUrl = "",
   navigate: navigateProp,
   onAfterAction,
@@ -132,6 +162,39 @@ export function VoiceProvider({
   const [options, setOptions] = useState({ models: [], languages: [], defaults: {} });
   const [model, setModelState] = useState(null); // null = the relay's default
   const [language, setLanguageState] = useState("auto");
+
+  // The providers on offer, normalised to { id, label, provider, capabilities }.
+  // Defaults to the one realtime provider when the host passes none, so a plain
+  // <VoiceProvider relayUrl=...> behaves exactly as before.
+  const providerList = useMemo(() => {
+    const raw =
+      providers && providers.length ? providers : provider ? [provider] : [openaiRealtime({ relayUrl })];
+    return raw.map((entry) => {
+      const p = entry && typeof entry.connect === "function" ? entry : entry?.provider;
+      validateProvider(p); // throws at mount on a factory passed uncalled, etc.
+      return {
+        id: p.id,
+        label: entry.label ?? PROVIDER_LABELS[p.id] ?? p.id,
+        provider: p,
+        capabilities: p.capabilities,
+      };
+    });
+  }, [providers, provider, relayUrl]);
+  // Which one is live. null means "the first offered", so the default needs no
+  // initial value that could disagree with the list.
+  const [providerId, setProviderIdState] = useState(null);
+  const activeProvider = providerList.find((p) => p.id === providerId) ?? providerList[0];
+  const capabilities = activeProvider.capabilities;
+  // Read through a ref inside connect/warm so a switch takes effect on the next
+  // connect without those callbacks having to list it as a dependency -- the
+  // same reason model/language reconnects thread an `overrides` object.
+  const activeProviderRef = useRef(activeProvider);
+  activeProviderRef.current = activeProvider;
+
+  // The neutral tool list a non-realtime provider consumes (the realtime one
+  // builds its own on the relay and ignores this). Recomputed only when the
+  // manifest changes.
+  const catalog = useMemo(() => toolCatalog(manifest ?? {}), [manifest]);
   // Purely a display preference, so unlike model and language it changes
   // instantly and never touches the session.
   const [rimMode, setRimMode] = useState("state");
@@ -583,6 +646,9 @@ export function VoiceProvider({
    * check at the point of use is the guarantee; the timer is an optimisation.
    */
   const ensureMinted = useCallback(async (overrides = {}) => {
+    const { provider } = activeProviderRef.current;
+    // No credential to pre-acquire (a per-turn broker) means no mint to call.
+    if (typeof provider.mint !== "function") return null;
     const wanted = {
       model: overrides.model ?? model ?? null,
       language: overrides.language ?? language ?? null,
@@ -604,7 +670,7 @@ export function VoiceProvider({
     if (mintingRef.current) return mintingRef.current;
     mintingRef.current = (async () => {
       try {
-        mintedRef.current = await mintSession({ relayUrl, ...wanted, manifest });
+        mintedRef.current = await provider.mint({ relayUrl, ...wanted, manifest, minted: mintedRef.current });
         return mintedRef.current;
       } catch {
         // Warming must never surface an error: nobody asked for this yet, and
@@ -625,34 +691,41 @@ export function VoiceProvider({
    * whole reason the transport/listening split exists.
    */
   const warm = useCallback(async () => {
-    if (warmup === "off" || sessionRef.current || warmingRef.current) return;
+    const { provider } = activeProviderRef.current;
+    // `!provider.capabilities.warm` kept last so the substring the warm tests
+    // pin (`warmup === "off" || sessionRef.current`) stays intact: a provider
+    // with nothing to pre-open (a per-turn broker) is never warmed.
+    if (warmup === "off" || sessionRef.current || warmingRef.current || !provider.capabilities.warm) return;
     warmingRef.current = (async () => {
       setTransport("connecting");
       try {
-        const session = await connectRealtimeSession({
-          onToolCall: async (name, args) => {
-            const result = await executeTool(name, args);
-            callbacksRef.current.onToolCall?.(name, args, result);
-            return result;
+        const session = await provider.connect({
+          callbacks: {
+            onToolCall: async (name, args) => {
+              const result = await executeTool(name, args);
+              callbacksRef.current.onToolCall?.(name, args, result);
+              return result;
+            },
+            onStatus: (st) => {
+              const next = st === "closed" ? "idle" : st;
+              setTransport(next);
+              if (next === "idle") setMicAttached(false);
+              callbacksRef.current.onTransportChange?.(next);
+            },
+            onTranscript: (turn) => {
+              setTranscript((t) => [...t, turn]);
+              callbacksRef.current.onTranscript?.(turn);
+            },
+            onEvent: (event) => loggerRef.current?.record(event),
+            onActivity: setActivity,
+            onHangUp: (info) => hangUpRef.current?.(info),
           },
-          onStatus: (st) => {
-            const next = st === "closed" ? "idle" : st;
-            setTransport(next);
-            if (next === "idle") setMicAttached(false);
-            callbacksRef.current.onTransportChange?.(next);
-          },
-          onTranscript: (turn) => {
-            setTranscript((t) => [...t, turn]);
-            callbacksRef.current.onTranscript?.(turn);
-          },
-          onEvent: (event) => loggerRef.current?.record(event),
-          onActivity: setActivity,
-          onHangUp: (info) => hangUpRef.current?.(info),
           initialMode: mode,
           relayUrl,
           model,
           language,
           manifest,
+          toolCatalog: catalog,
           minted: await ensureMinted(),
           withMic: false,
         });
@@ -664,7 +737,7 @@ export function VoiceProvider({
       }
     })();
     return warmingRef.current;
-  }, [warmup, mode, relayUrl, model, language, ensureMinted, executeTool]);
+  }, [warmup, mode, relayUrl, model, language, catalog, ensureMinted, executeTool]);
 
   // "eager" mints on mount and keeps it fresh. A key is not a session: nothing
   // is open, nothing is billed, and if it expires unused it costs nothing.
@@ -694,30 +767,37 @@ export function VoiceProvider({
     }
     setTransport("connecting");
     try {
-      const session = await connectRealtimeSession({
-        onToolCall: async (name, args) => {
-          const result = await executeTool(name, args);
-          callbacksRef.current.onToolCall?.(name, args, result);
-          return result;
-        },
-        onStatus: (s) => {
-          const next = s === "closed" ? "idle" : s;
-          setTransport(next);
-          if (next === "idle") setMicAttached(false);
-          callbacksRef.current.onTransportChange?.(next);
-        },
-        onTranscript: (turn) => {
-          setTranscript((t) => [...t, turn]);
-          callbacksRef.current.onTranscript?.(turn);
+      // `overrides.provider` lets a provider switch connect the NEW engine
+      // before its state update has landed in this closure -- the same trick
+      // the model/language reconnect uses for `overrides.model`.
+      const { provider } = overrides.provider ?? activeProviderRef.current;
+      const session = await provider.connect({
+        callbacks: {
+          onToolCall: async (name, args) => {
+            const result = await executeTool(name, args);
+            callbacksRef.current.onToolCall?.(name, args, result);
+            return result;
+          },
+          onStatus: (s) => {
+            const next = s === "closed" ? "idle" : s;
+            setTransport(next);
+            if (next === "idle") setMicAttached(false);
+            callbacksRef.current.onTransportChange?.(next);
+          },
+          onTranscript: (turn) => {
+            setTranscript((t) => [...t, turn]);
+            callbacksRef.current.onTranscript?.(turn);
+          },
+          onEvent: (event) => loggerRef.current?.record(event),
+          onActivity: setActivity,
+          onHangUp: (info) => hangUpRef.current?.(info),
         },
         initialMode: mode,
         relayUrl,
         model: overrides.model ?? model,
         language: overrides.language ?? language,
-        onEvent: (event) => loggerRef.current?.record(event),
-        onActivity: setActivity,
-        onHangUp: (info) => hangUpRef.current?.(info),
         manifest,
+        toolCatalog: catalog,
         minted: await ensureMinted(overrides),
       });
       sessionRef.current = session;
@@ -801,6 +881,22 @@ export function VoiceProvider({
 
   const setModel = (next) => reconfigure(() => setModelState(next), { model: next });
   const setLanguage = (next) => reconfigure(() => setLanguageState(next), { language: next });
+
+  /**
+   * Switch the whole pipeline -- OpenAI Realtime to Moonshine+JEV, say. Unlike
+   * model/language this is a different IMPLEMENTATION, not a parameter, so it is
+   * always a reconnect (a live session is torn down). A minted credential is
+   * provider-specific, so it is dropped: an ephemeral key for Realtime means
+   * nothing to a JEV broker. And a provider that cannot push-to-talk cannot be
+   * left in ptt/ptnt, so the mode falls back to continuous.
+   */
+  const setProvider = (id) => {
+    const next = providerList.find((p) => p.id === id);
+    if (!next || next.id === activeProvider.id) return;
+    mintedRef.current = null;
+    if (!next.capabilities.pushToTalk && mode !== "continuous") setModeState("continuous");
+    reconfigure(() => setProviderIdState(id), { provider: next });
+  };
 
   // Switching modes never reconnects -- same session, same history, same
   // instructions. It just changes who decides when a turn ends (VAD vs. a
@@ -900,6 +996,14 @@ export function VoiceProvider({
         language,
         setModel,
         setLanguage,
+        // The engines on offer and which is live, for an engine picker. A plain
+        // single-provider setup still gets a one-entry list.
+        providers: providerList.map(({ id, label, capabilities }) => ({ id, label, capabilities })),
+        providerId: activeProvider.id,
+        setProvider,
+        // What the LIVE provider can do, so the UI can hide controls it does not
+        // support (push-to-talk, barge-in, text input) instead of showing dead ones.
+        capabilities,
         rimMode,
         setRimMode,
         rimModes: RIM_MODES,

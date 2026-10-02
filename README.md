@@ -183,6 +183,35 @@ route, one deploy. The standalone `relay/` stays the reference and the multi-ten
 option (one service for many apps), where the `security.js` guards earn their keep.
 The same pattern is how a JEV/cascade broker would mount too; see PROVIDERS.md.
 
+### Swap the engine, or offer several
+
+OpenAI Realtime is the default, but the voice-to-action pipeline is a swappable
+**provider** (`{ id, capabilities, connect }` — see PROVIDERS.md). Pass one with
+`provider=`, or pass a list the user can pick from in Settings, exactly like the
+model picker but one level up:
+
+```jsx
+import { VoiceProvider, openaiRealtime, moonshineJev, moonshineStt } from "@yourco/voice";
+
+<VoiceProvider
+  manifest={manifest}
+  providers={[
+    { label: "OpenAI Realtime",       provider: openaiRealtime({ relayUrl }) },
+    { label: "On-device (Moonshine)", provider: moonshineJev({ stt: moonshineStt(), evaluate, generateText }) },
+  ]}
+>
+  <Interpreter />
+</VoiceProvider>
+```
+
+The app offers only the engines it has wired (each needs its own server half — a
+relay, a JEV/STT broker); the user chooses among them. Switching is a reconnect
+(an engine is a whole pipeline, not a parameter), the credential is dropped, and
+the controls follow the engine's `capabilities` — an engine that can't
+push-to-talk simply won't show the button. To see it with no keys, run the dev
+harness at `dev/bubble.html?providers=multi` (two fake engines,
+`dev/fake-providers.js`).
+
 ## What the CLI understands
 
 `voice-cli` reads your source statically — no build, no running app. Each

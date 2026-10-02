@@ -14,6 +14,7 @@ import {
   Palette,
   Settings2,
   SlidersHorizontal,
+  Waypoints,
 } from "lucide-react";
 import useMeasure from "react-use-measure";
 
@@ -239,6 +240,7 @@ function TalkTabContent() {
     cancelManually,
     holdStart,
     holdEnd,
+    capabilities,
   } = useInterpreter();
   const [textInput, setTextInput] = useState("");
   const live = transport === "ready" && micAttached;
@@ -259,7 +261,7 @@ function TalkTabContent() {
         </span>
       </button>
 
-      {live && mode !== "continuous" && (
+      {live && mode !== "continuous" && capabilities.pushToTalk && (
         <button
           type="button"
           className={cn(ROW, "touch-none select-none", holding && "bg-foreground/4")}
@@ -325,6 +327,7 @@ function TalkTabContent() {
         </div>
       )}
 
+      {capabilities.textInput && (
       <form
         className="bg-foreground/4 mt-1 flex h-10 items-center gap-2 rounded-xl px-2"
         onSubmit={(e) => {
@@ -349,6 +352,7 @@ function TalkTabContent() {
           <CornerDownLeft className="size-4" />
         </button>
       </form>
+      )}
     </div>
   );
 }
@@ -525,14 +529,33 @@ function RimTabContent({ tuning, setTuning }) {
 }
 
 function SettingsTabContent() {
-  const { mode, setMode, options, model, language, setModel, setLanguage, rimMode, setRimMode, rimModes } =
-    useInterpreter();
+  const { mode, setMode, options, model, language, setModel, setLanguage, rimMode, setRimMode, rimModes,
+    providers, providerId, setProvider, capabilities } = useInterpreter();
+
+  // Only the modes the live engine supports. A cascade that cannot hold a turn
+  // offers continuous only -- showing push-to-talk would be a dead control.
+  const modes = MODES.filter((m) => m.id === "continuous" || capabilities.pushToTalk);
 
   return (
     <ScrollArea className="mb-2 max-h-72 space-y-2 overflow-y-auto">
-      <div className="flex flex-col gap-0.5">
+      {providers.length > 1 && (
+        <div className="flex flex-col gap-0.5">
+          <span className="text-muted-foreground px-2 py-1 text-xs">Voice engine</span>
+          {providers.map((p) => (
+            <ChoiceRow
+              key={p.id}
+              icon={Waypoints}
+              label={p.label}
+              selected={providerId === p.id}
+              onSelect={() => setProvider(p.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-0.5 pt-2">
         <span className="text-muted-foreground px-2 py-1 text-xs">Microphone</span>
-        {MODES.map((m) => (
+        {modes.map((m) => (
           <ChoiceRow
             key={m.id}
             icon={m.icon}
@@ -557,7 +580,12 @@ function SettingsTabContent() {
         ))}
       </div>
 
-      {options.languages?.length > 0 && (
+      {/* Model and language are the realtime relay's options; they configure
+          that engine's mint and mean nothing to a cascade, whose STT/decision
+          are wired by the host. `capabilities.warm` is the realtime engine's
+          tell (only it pre-mints a credential), so the two sections follow the
+          live engine rather than showing stale controls after a switch. */}
+      {capabilities.warm && options.languages?.length > 0 && (
         <div className="flex flex-col gap-0.5 pt-2">
           <span className="text-muted-foreground px-2 py-1 text-xs">Language</span>
           {options.languages.map((l) => (
@@ -573,7 +601,7 @@ function SettingsTabContent() {
         </div>
       )}
 
-      {options.models?.length > 0 && (
+      {capabilities.warm && options.models?.length > 0 && (
         <div className="flex flex-col gap-0.5 pt-2">
           <span className="text-muted-foreground px-2 py-1 text-xs">Model</span>
           {options.models.map((m) => (
