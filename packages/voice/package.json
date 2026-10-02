@@ -1,6 +1,6 @@
 {
   "name": "@yourco/voice",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Voice control for React apps: realtime agent, manifest-driven actions, DOM fallback.",
   "license": "UNLICENSED",
   "repository": {

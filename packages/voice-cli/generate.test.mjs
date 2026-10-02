@@ -79,22 +79,31 @@ describe("running it the way a consumer would", () => {
 });
 
 describe("what gets published", () => {
-  test("the allowlist ships the code and nothing else", () => {
-    // The runtime package restricts itself to dist/; this one shipped whatever
-    // happened to be in the directory. It is no longer a single file: the
-    // analyser is a core plus a directory per framework, and a published
-    // package missing frameworks/ would resolve nothing at all.
-    const pkg = JSON.parse(readFileSync(join(dirname(CLI), "package.json"), "utf8"));
-    assert.deepEqual(pkg.files, ["generate.js", "probe.js", "skill.js", "registry.js", "core", "frameworks", "schema", "stages", "browsers", "skills", "MANIFEST-FEATURES.md"]);
-    // Every top-level source dir that the code imports must be shipped, or the
-    // published tarball crashes on load -- browsers/ was imported by readiness.js
-    // and omitted, which a hand-maintained allowlist is exactly prone to.
-    const dirs = readdirSync(dirname(CLI), { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !["node_modules", "test", "skills"].includes(e.name))
+  test("the tarball ships the code and excludes tests", () => {
+    // Assert the OUTCOME, not the mechanism: this package ships via .npmignore
+    // (deny-list), not a `files` allow-list, so what matters is what `npm pack`
+    // actually puts in the tarball. The analyser is a core plus a directory per
+    // framework, and a published package missing frameworks/ would resolve
+    // nothing at all; a published package carrying test/ ships dead weight.
+    const pkgDir = dirname(CLI);
+    const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+    const res = spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: pkgDir, encoding: "utf8" });
+    assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
+    const shipped = JSON.parse(res.stdout)[0].files.map((f) => f.path);
+
+    // Every top-level source dir the code imports must ship, or the tarball
+    // crashes on load -- browsers/ was imported by readiness.js and once omitted.
+    const dirs = readdirSync(pkgDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !["node_modules", "test"].includes(e.name))
       .map((e) => e.name);
-    for (const d of dirs) assert.ok(pkg.files.includes(d), `files[] is missing the '${d}' directory`);
+    for (const d of dirs) assert.ok(shipped.some((f) => f.startsWith(`${d}/`)), `tarball is missing the '${d}/' directory`);
+    for (const bin of ["generate.js", "probe.js", "skill.js"]) {
+      assert.ok(shipped.includes(bin), `tarball is missing the bin ${bin}`);
+    }
+    // ...and nothing test-shaped, which a deny-list is exactly prone to leaking.
+    assert.ok(!shipped.some((f) => f.endsWith(".test.mjs")), "test files must not be published");
+    assert.ok(!shipped.some((f) => f === "test" || f.startsWith("test/")), "the test/ dir must not be published");
     assert.equal(pkg.bin["voice-cli"], "./generate.js");
-    assert.ok(!pkg.files.includes("."), "shipping the whole directory is what the allowlist exists to prevent");
   });
 });
 

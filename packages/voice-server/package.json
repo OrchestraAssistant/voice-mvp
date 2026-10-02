@@ -1,6 +1,6 @@
 {
   "name": "@yourco/voice-server",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Server-half handlers for @yourco/voice providers: the OpenAI Realtime relay and the JEV cascade broker, as mountable Web (Request)=>Response handlers.",
   "license": "UNLICENSED",
   "repository": {

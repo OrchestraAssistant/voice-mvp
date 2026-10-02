@@ -39,7 +39,12 @@ export function validateManifest(manifest) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     return { error: "Expected a manifest object. Generate one with `npx @yourco/voice-cli <srcDir> <outDir>` and pass it to VoiceProvider." };
   }
-  const normalised = {};
+  // Keep every top-level field -- `description` (the prompt's opening anchor) and
+  // `groups` (the catalog's topic descriptions) are read downstream by
+  // buildInstructions and rootCatalog. Only the three operation arrays are
+  // normalised/validated; dropping the rest silently reset the prompt to "a web
+  // app" and erased group descriptions.
+  const normalised = { ...manifest };
   for (const key of ["routes", "queries", "actions"]) {
     const value = manifest[key];
     if (value !== undefined && !Array.isArray(value)) {

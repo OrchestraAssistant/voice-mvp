@@ -397,4 +397,25 @@ describe("the app's identity comes from the manifest, not a constant", () => {
     assert.match(buildInstructions(app, null), /embedded in a web app/);
     assert.doesNotMatch(buildInstructions(app, null), /task-management/);
   });
+
+  // The regression: the mint path is validateManifest -> buildInstructions, and
+  // validateManifest used to rebuild the manifest with only routes/queries/actions,
+  // dropping `description` (the opening anchor) and `groups` (topic descriptions)
+  // before the code that reads them. Every prompt then opened with "a web app".
+  test("validateManifest preserves description and groups through to the prompt", () => {
+    const app = {
+      description: "Plane: an issue and project tracker",
+      groups: [{ path: ["availability"], description: "when you are bookable" }],
+      routes: [{ path: "/x" }],
+      queries: [{ name: "q" }],
+      actions: [],
+    };
+    const checked = validateManifest(app);
+    assert.ok(!checked.error);
+    assert.equal(checked.manifest.description, app.description, "description must survive validation");
+    assert.deepEqual(checked.manifest.groups, app.groups, "groups must survive validation");
+    // and it reaches the prompt, not the fallback -- the actual mint path
+    assert.match(buildInstructions(checked.manifest, null), /embedded in Plane: an issue and project tracker/);
+    assert.doesNotMatch(buildInstructions(checked.manifest, null), /embedded in a web app/);
+  });
 });

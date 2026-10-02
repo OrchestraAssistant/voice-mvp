@@ -53,11 +53,11 @@ the host needs no build step and no Tailwind:
 ```bash
 # from a GitHub Release (shareable, no clone):
 npm install \
-  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.2/yourco-voice-0.1.2.tgz \
-  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.2/yourco-voice-cli-0.1.2.tgz
+  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.3/yourco-voice-0.1.3.tgz \
+  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.3/yourco-voice-cli-0.1.3.tgz
 
 # or from local tarballs, built in this repo with `npm run pack:all`:
-npm install ./yourco-voice-0.1.2.tgz ./yourco-voice-cli-0.1.2.tgz
+npm install ./yourco-voice-0.1.3.tgz ./yourco-voice-cli-0.1.3.tgz
 ```
 
 Then generate a manifest from your source:
@@ -68,7 +68,7 @@ npx voice-cli src .voice     # your source dir -> .voice/manifest.json
 
 Maintainers: `npm run pack:all` writes both tarballs to `pkg/` (`@yourco/voice`
 builds its `dist` on pack). Attach those two files to a GitHub Release named
-`v0.1.2` and the URL install above works for anyone.
+`v0.1.3` and the URL install above works for anyone.
 
 Mount it once, wherever your other providers live. It is a leaf, not a
 wrapper -- nothing of yours needs to be inside the provider, because the only
@@ -167,7 +167,7 @@ the same for every engine: set the keys in env → mount the provider's handler 
 `/voice` → point the client at `/voice`.**
 
 ```bash
-npm install @yourco/voice-server   # or the v0.1.2 tarball URL, like the others
+npm install @yourco/voice-server   # or the v0.1.3 tarball URL, like the others
 ```
 
 ```ts
