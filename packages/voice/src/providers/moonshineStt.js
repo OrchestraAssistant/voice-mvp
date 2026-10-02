@@ -21,10 +21,17 @@
  * Returns the STT client the cascade loop drives: start/stop, setEnabled,
  * setTurnDetection (VAD vs push-to-talk), beginTurn/endTurn (PTT), attach/release/hasMic.
  */
+/** Friendly size names -> the onnx-community model ids transformers.js loads. */
+export const MOONSHINE_MODELS = {
+  tiny: "onnx-community/moonshine-tiny-ONNX", // ~27M params: faster, smaller, best on the wasm fallback
+  base: "onnx-community/moonshine-base-ONNX", // ~61M params: more accurate, best on webgpu
+};
+
 export function moonshineStt(options = {}) {
   const {
     loadTransformers,
-    model = "onnx-community/moonshine-base-ONNX",
+    size = "base", // "tiny" | "base"; or pass `model` for any transformers.js ASR id
+    model,
     device = "auto", // "auto" probes for a real WebGPU adapter, else falls back to wasm
 
     silenceMs = 700,
@@ -32,6 +39,7 @@ export function moonshineStt(options = {}) {
     maxTurnMs = 20000,
     sampleRate = 16000, // Moonshine wants 16k mono
   } = options;
+  const modelId = model ?? MOONSHINE_MODELS[size] ?? MOONSHINE_MODELS.base;
 
   let transcriber = null;
   let ctx = null;
@@ -64,11 +72,11 @@ export function moonshineStt(options = {}) {
       try { if (navigator.gpu && (await navigator.gpu.requestAdapter())) dev = "webgpu"; } catch { /* wasm */ }
     }
     try {
-      transcriber = await t.pipeline("automatic-speech-recognition", model, { device: dev });
+      transcriber = await t.pipeline("automatic-speech-recognition", modelId, { device: dev });
     } catch (err) {
       if (dev === "wasm") throw err;
       handlers.onStatus?.("webgpu failed, retrying on wasm");
-      transcriber = await t.pipeline("automatic-speech-recognition", model, { device: "wasm" });
+      transcriber = await t.pipeline("automatic-speech-recognition", modelId, { device: "wasm" });
     }
     return transcriber;
   }

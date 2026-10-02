@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { moonshineJev } from "../src/providers/moonshineJev.js";
-import { moonshineStt } from "../src/providers/moonshineStt.js";
+import { moonshineStt, MOONSHINE_MODELS } from "../src/providers/moonshineStt.js";
 import { validateProvider } from "../src/providers/contract.js";
 
 const CATALOG = [
@@ -61,5 +61,34 @@ describe("moonshineStt — the browser STT client", () => {
   test("start() fails helpfully without a transformers loader", async () => {
     const s = moonshineStt({}); // no loadTransformers
     await assert.rejects(() => s.start({ withMic: false }), /loadTransformers/);
+  });
+});
+
+describe("moonshineStt — model selection (swappable)", () => {
+  // capture the model id transformers.js is asked to load, without a browser
+  const capture = () => {
+    let got = null;
+    const loadTransformers = async () => ({
+      pipeline: async (_task, model) => { got = model; return async () => ({ text: "" }); },
+    });
+    return { loadTransformers, got: () => got };
+  };
+
+  test("defaults to the base model", async () => {
+    const c = capture();
+    await moonshineStt({ loadTransformers: c.loadTransformers }).start({ withMic: false });
+    assert.equal(c.got(), MOONSHINE_MODELS.base);
+  });
+
+  test('size: "tiny" selects the tiny model', async () => {
+    const c = capture();
+    await moonshineStt({ size: "tiny", loadTransformers: c.loadTransformers }).start({ withMic: false });
+    assert.equal(c.got(), MOONSHINE_MODELS.tiny);
+  });
+
+  test("an explicit model id overrides size", async () => {
+    const c = capture();
+    await moonshineStt({ size: "tiny", model: "custom/asr-ONNX", loadTransformers: c.loadTransformers }).start({ withMic: false });
+    assert.equal(c.got(), "custom/asr-ONNX");
   });
 });
