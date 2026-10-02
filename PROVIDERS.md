@@ -257,19 +257,49 @@ only while it is live.
 
 ---
 
-## Package split
-
-Modelled on the AI SDK (`ai` + `@ai-sdk/*`):
+## Packages
 
 ```
-@yourco/voice            core: the widget, the executor, the gate, the manifest runtime
+@yourco/voice            core: the widget, the executor, the gate, the manifest
+                         runtime, AND the client halves of every provider
+                         (openaiRealtime, moonshineJev, parakeetJev, jevBroker)
 @yourco/voice-cli        the manifest generator (build-time)
-@yourco/voice-openai     the OpenAI Realtime provider + its relay      (the reference)
-@yourco/voice-cascade    an STT-LLM-TTS / JEV-cascade provider         (planned)
-@yourco/voice-pipecat    a Pipecat bridge provider                     (planned)
+@yourco/voice-server     the SERVER halves, as mountable Web handlers:
+                           /openai  -> openaiVoiceHandler   (the realtime relay)
+                           /jev     -> jevBrokerHandler + openaiText (the cascade broker)
 ```
 
-The relay ships **inside** `@yourco/voice-openai`, not the core.
+The split is by **side**, not by provider: client halves live in the core (so the
+widget can default to realtime with no extra install), and the credentialed server
+halves live in `@yourco/voice-server` — a separate entry so server code and keys
+never reach the browser bundle. A provider is still a pair that agree on one route;
+the two halves just ship in these two packages.
+
+### The server half: one route, mounted in the app
+
+Every provider needs a server half that holds its keys; none of them need a
+separate service. Mount the provider's handler at a route in the app's own
+backend, and point the client half at the same path. The recipe is uniform:
+
+```ts
+// OpenAI Realtime — app/voice/[...path]/route.ts
+import { openaiVoiceHandler } from "@yourco/voice-server/openai";
+const h = openaiVoiceHandler();            // OPENAI_API_KEY from env; serves /options,/session,/log
+export const GET = h; export const POST = h;
+//   client: <VoiceProvider relayUrl="" provider={openaiRealtime()}>   (same origin)
+
+// JEV cascade — app/voice/[...path]/route.ts
+import { jevBrokerHandler, openaiText } from "@yourco/voice-server/jev";
+export const POST = jevBrokerHandler({ generate: openaiText() });  // JEV_API_KEY + OPENAI_API_KEY
+//   client: provider={moonshineJev({ stt: moonshineStt(), ...jevBroker("") })}
+```
+
+Both expose `toExpressHandler` for non-Web-standard backends. The three server
+shapes differ (see "Where voice is NOT the AI SDK"): the realtime handler is a
+**mint** (one call per session, cheap on serverless); the JEV broker is a
+**per-turn proxy** (hit every turn — put it at the edge for a real app); a
+server-brain pipeline would need a **long-lived connection**, which a route
+handler cannot express.
 
 ---
 
@@ -323,6 +353,10 @@ dark mode" and "turn on notifications" are pure JEV choices.
   contract as its single path** — `warm`/`connect`/`mint` all go through the
   active provider, so `provider`/`providers` select the engine and a live
   **engine picker** switches among several (capability-adaptive controls, driven
-  in-browser by `test/providers-ui.test.mjs`).
-- **Next:** graduate the providers to their own packages (`@yourco/voice-openai`,
-  `@yourco/voice-parakeet-jev`) per the split above.
+  in-browser by `test/providers-ui.test.mjs`); and **`@yourco/voice-server`** —
+  the mountable server halves (`/openai` relay, `/jev` broker + `openaiText`) so a
+  host owns the backend as one route in its own app, with `jevBroker()` the client
+  half in the core.
+- **Next:** a Pipecat / server-brain bridge provider (needs the long-lived-connection
+  server shape, not a route handler); graduating each provider's client half into its
+  own package to match `@yourco/voice-server`'s per-provider server entries.

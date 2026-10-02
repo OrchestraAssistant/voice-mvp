@@ -53,11 +53,11 @@ the host needs no build step and no Tailwind:
 ```bash
 # from a GitHub Release (shareable, no clone):
 npm install \
-  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.1/yourco-voice-0.1.1.tgz \
-  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.1/yourco-voice-cli-0.1.1.tgz
+  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.2/yourco-voice-0.1.2.tgz \
+  https://github.com/OrchestraAssistant/voice-mvp/releases/download/v0.1.2/yourco-voice-cli-0.1.2.tgz
 
 # or from local tarballs, built in this repo with `npm run pack:all`:
-npm install ./yourco-voice-0.1.1.tgz ./yourco-voice-cli-0.1.1.tgz
+npm install ./yourco-voice-0.1.2.tgz ./yourco-voice-cli-0.1.2.tgz
 ```
 
 Then generate a manifest from your source:
@@ -68,7 +68,7 @@ npx voice-cli src .voice     # your source dir -> .voice/manifest.json
 
 Maintainers: `npm run pack:all` writes both tarballs to `pkg/` (`@yourco/voice`
 builds its `dist` on pack). Attach those two files to a GitHub Release named
-`v0.1.1` and the URL install above works for anyone.
+`v0.1.2` and the URL install above works for anyone.
 
 Mount it once, wherever your other providers live. It is a leaf, not a
 wrapper -- nothing of yours needs to be inside the provider, because the only
@@ -158,30 +158,40 @@ A per-client rate limit (`VOICE_RATE_LIMIT`, default 30/min; `VOICE_RATE_WINDOW_
 and a request-body cap (`VOICE_MAX_BODY`, default `256kb`) are always on; behind
 a TLS proxy set `VOICE_TRUST_PROXY=1` so the limiter sees the real client.
 
-### Host it in your own app (no separate relay)
+### Host the backend in your own app (no separate relay)
 
-You don't need to run the relay standalone. Its mint logic is a framework-agnostic
-`(Request) => Response` handler (`relay/mintHandler.js`), so you can mount it as a
-route in your own backend — the OpenAI key lives there, and the route sits behind
-your app's existing auth:
+You don't need to run the relay standalone. Install `@yourco/voice-server` (the
+server halves of the providers) and mount one route in your own backend — the key
+lives there, and the route sits behind your app's existing auth. **The recipe is
+the same for every engine: set the keys in env → mount the provider's handler at
+`/voice` → point the client at `/voice`.**
+
+```bash
+npm install @yourco/voice-server   # or the v0.1.2 tarball URL, like the others
+```
 
 ```ts
-// Next.js App Router — app/api/voice/session/route.ts
-import { createVoiceSessionHandler } from ".../relay/mintHandler.js";
-export const POST = createVoiceSessionHandler(); // reads OPENAI_API_KEY from env
+// OpenAI Realtime — app/voice/[...path]/route.ts (Next.js App Router)
+import { openaiVoiceHandler } from "@yourco/voice-server/openai";
+const handler = openaiVoiceHandler();        // reads OPENAI_API_KEY from env
+export const GET = handler;                   // serves /options, /session, /log
+export const POST = handler;
+// client: <VoiceProvider relayUrl="" …>  (empty = same origin)
 ```
 
-```js
-// Express
-import { createVoiceSessionHandler, toExpressHandler } from ".../relay/mintHandler.js";
-app.post("/api/voice/session", express.json(), toExpressHandler(createVoiceSessionHandler()));
+```ts
+// JEV cascade (browser STT + JEV + a text model) — app/voice/[...path]/route.ts
+import { jevBrokerHandler, openaiText } from "@yourco/voice-server/jev";
+export const POST = jevBrokerHandler({ generate: openaiText() }); // JEV_API_KEY + OPENAI_API_KEY
+// client: provider={moonshineJev({ stt: moonshineStt(), ...jevBroker("") })}
 ```
 
-Then point the widget at that route (same-origin `/api/voice`, or `relayUrl`). For
-a single app this beats a standalone relay — same origin, your own auth gating the
-route, one deploy. The standalone `relay/` stays the reference and the multi-tenant
-option (one service for many apps), where the `security.js` guards earn their keep.
-The same pattern is how a JEV/cascade broker would mount too; see PROVIDERS.md.
+Both expose `toExpressHandler` for non-Web backends (`app.use("/voice",
+express.json(), toExpressHandler(handler))`). For a single app this beats a
+standalone service — same origin, your own auth gating the route, one deploy. The
+standalone `relay/` stays the reference + the multi-tenant option (one service for
+many apps), where `security.js`'s guards earn their keep. Full contract and the
+three server shapes (mint vs per-turn proxy vs long-lived) are in PROVIDERS.md.
 
 ### Swap the engine, or offer several
 

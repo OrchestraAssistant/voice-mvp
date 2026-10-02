@@ -62,4 +62,7 @@ export { parakeetJev } from "./providers/parakeetJev.js";
 export { moonshineJev } from "./providers/moonshineJev.js";
 export { jevCascade } from "./providers/jevCascade.js";
 export { moonshineStt } from "./providers/moonshineStt.js";
+// Client half of the cascade broker: points evaluate/generateText at a route your
+// app serves (jevBrokerHandler from @yourco/voice-server/jev). Keys stay server-side.
+export { jevBroker } from "./providers/jevBroker.js";
 export { toolCatalog, validateProvider, REALTIME_CAPABILITIES } from "./providers/contract.js";

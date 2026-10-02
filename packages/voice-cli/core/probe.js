@@ -36,8 +36,18 @@ export function readOnlyPlan(manifest) {
   }
   for (const query of manifest.queries ?? []) {
     const needed = (query.params ?? []).filter((p) => p.required && p.source === "url");
-    if (needed.length) {
-      plan.push({ kind: "query", name: query.name, skipped: `needs ${needed.map((p) => p.name).join(", ")}` });
+    // The endpoint itself is the authority, not just the `source` label. A
+    // `{param}` still in the template is an unfilled path parameter that no
+    // request can satisfy, whatever the param was TAGGED -- fetching it
+    // literally 404s on the braces. Trusting `source` alone made a manifest with
+    // a mislabelled param (e.g. "path" instead of "url", easy to write by hand
+    // or emit from a new producer) sail past this filter and report a dozen live
+    // endpoints as missing. Routes are already hardened this way (isProbeableRoute);
+    // this brings queries level.
+    const placeholders = (query.endpoint?.match(/\{([^}]+)\}/g) ?? []).map((s) => s.slice(1, -1));
+    const unfilled = [...new Set([...needed.map((p) => p.name), ...placeholders])];
+    if (unfilled.length) {
+      plan.push({ kind: "query", name: query.name, skipped: `needs ${unfilled.join(", ")}` });
       continue;
     }
     plan.push({ kind: "query", name: query.name, method: "GET", url: query.endpoint, operation: query });

@@ -27,6 +27,10 @@ export default defineConfig({
   server: {
     host: true,
     port: 5174,
+    // Vite rejects a Host header it does not recognise with a 400 ("Blocked
+    // request"). Served through the hub tunnel the host is *.hub.tailnet, so
+    // allow it -- this is a dev-only harness, never shipped.
+    allowedHosts: true,
     proxy: { "/voice": "http://localhost:3002" },
   },
 });

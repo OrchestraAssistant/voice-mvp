@@ -27,6 +27,25 @@ describe("what to ask", () => {
     });
     assert.match(plan[0].skipped, /needs id/);
   });
+
+  test("an unfilled {param} in the endpoint is skipped even if its param is MISLABELLED", () => {
+    // scratch-7f3's bug: a hand-written (or newly-produced) manifest tagged the
+    // path param `source: "path"` instead of "url", so the source-only filter
+    // missed it and the planner fetched "/api/tasks/{id}" literally -- a 404 on
+    // the braces, reported as a missing endpoint. The endpoint is the authority:
+    // a brace still in it can never be fetched, whatever the param was tagged.
+    const plan = readOnlyPlan({
+      queries: [{ name: "task", endpoint: "/api/tasks/{id}", params: [{ name: "id", required: true, source: "path" }] }],
+    });
+    assert.ok(plan[0].skipped, "a template with braces was planned as a real fetch");
+    assert.match(plan[0].skipped, /needs id/);
+  });
+
+  test("a query with no params and a clean endpoint is fetched", () => {
+    const plan = readOnlyPlan({ queries: [{ name: "me", endpoint: "/api/me", params: [] }] });
+    assert.equal(plan[0].skipped, undefined);
+    assert.equal(plan[0].url, "/api/me");
+  });
 });
 
 describe("reading the answer", () => {
