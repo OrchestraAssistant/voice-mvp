@@ -1,6 +1,6 @@
 {
   "name": "@yourco/voice",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Voice control for React apps: realtime agent, manifest-driven actions, DOM fallback.",
   "license": "UNLICENSED",
   "repository": {
@@ -20,14 +20,15 @@
     "./inline.css": "./dist/voice.css"
   },
   "files": [
-    "dist"
+    "dist",
+    "PROVIDERS.md"
   ],
   "sideEffects": [
     "*.css"
   ],
   "scripts": {
     "build": "vite build",
-    "prepack": "npm run build",
+    "prepack": "npm run build && node -e \"require('fs').copyFileSync('../../PROVIDERS.md','PROVIDERS.md')\"",
     "dev": "vite build --watch",
     "stress": "vite --config vite.dev.config.js",
     "test": "node --test test/*.test.mjs"

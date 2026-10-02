@@ -1,6 +1,6 @@
 {
   "name": "@yourco/voice-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Static-analysis extractor: turns a React app's source into .voice/manifest.json",
   "repository": {
     "type": "git",

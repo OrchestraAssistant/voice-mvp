@@ -10,3 +10,7 @@ relay/logs/
 # packed tarballs (npm run pack:all)
 pkg/
 *.tgz
+
+# Copied into the package by its prepack so the contract ships with the install;
+# the canonical copy is the repo-root PROVIDERS.md.
+packages/voice/PROVIDERS.md
