@@ -222,11 +222,19 @@ engines the app has wired; the widget shows them in Settings and the user
 switches live:
 
 ```jsx
+// moonshineStt runs the model in-browser via transformers.js (a heavy optional
+// dep the core does NOT bundle): install @huggingface/transformers and pass it as
+// loadTransformers, or moonshineStt throws on connect.
+const moonshine = moonshineJev({
+  stt: moonshineStt({ loadTransformers: () => import("@huggingface/transformers"), size: "base" }),
+  ...jevBroker(""), // evaluate + generateText via the mounted broker route
+});
+
 <VoiceProvider
   manifest={manifest}
   providers={[
     { label: "OpenAI Realtime",        provider: openaiRealtime({ relayUrl }) },
-    { label: "On-device (Moonshine)",  provider: moonshineJev({ stt: moonshineStt(), evaluate, generateText }) },
+    { label: "On-device (Moonshine)",  provider: moonshine },
   ]}
 >
   <Interpreter/>

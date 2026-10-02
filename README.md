@@ -183,7 +183,9 @@ export const POST = handler;
 // JEV cascade (browser STT + JEV + a text model) — app/voice/[...path]/route.ts
 import { jevBrokerHandler, openaiText } from "@yourco/voice-server/jev";
 export const POST = jevBrokerHandler({ generate: openaiText() }); // JEV_API_KEY + OPENAI_API_KEY
-// client: provider={moonshineJev({ stt: moonshineStt(), ...jevBroker("") })}
+// client (install @huggingface/transformers; moonshineStt REQUIRES loadTransformers):
+//   const stt = moonshineStt({ loadTransformers: () => import("@huggingface/transformers"), size: "base" });
+//   provider={moonshineJev({ stt, ...jevBroker("") })}
 ```
 
 Both expose `toExpressHandler` for non-Web backends (`app.use("/voice",
@@ -201,13 +203,21 @@ OpenAI Realtime is the default, but the voice-to-action pipeline is a swappable
 model picker but one level up:
 
 ```jsx
-import { VoiceProvider, openaiRealtime, moonshineJev, moonshineStt } from "@yourco/voice";
+import { VoiceProvider, openaiRealtime, moonshineJev, moonshineStt, jevBroker } from "@yourco/voice";
+
+// Moonshine's speech model runs in the browser via transformers.js — a heavy
+// optional dep the core does NOT bundle, so install @huggingface/transformers and
+// pass it. Without loadTransformers the widget errors ("moonshineStt needs …").
+const moonshine = moonshineJev({
+  stt: moonshineStt({ loadTransformers: () => import("@huggingface/transformers"), size: "base" }),
+  ...jevBroker(""), // the broker route above supplies evaluate + generateText
+});
 
 <VoiceProvider
   manifest={manifest}
   providers={[
     { label: "OpenAI Realtime",       provider: openaiRealtime({ relayUrl }) },
-    { label: "On-device (Moonshine)", provider: moonshineJev({ stt: moonshineStt(), evaluate, generateText }) },
+    { label: "On-device (Moonshine)", provider: moonshine },
   ]}
 >
   <Interpreter />
